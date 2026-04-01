@@ -1,0 +1,31 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: nft-ownership-demo
+
+cardano:
+  network: yaci  # yaci or preprod
+
+  yaci:
+    base-url: http://localhost:8080/api/v1/
+    admin-url: http://localhost:10000
+    # Test mnemonic for Yaci DevKit (DO NOT use in production)
+    mnemonic: "test test test test test test test test test test test test test test test test test test test test test test test sauce"
+
+  preprod:
+    blockfrost-url: https://cardano-preprod.blockfrost.io/api/v0
+    blockfrost-project-id: ${BLOCKFROST_PROJECT_ID:}
+
+zk:
+  # Merkle tree depth for ownership snapshots
+  # 10 = 1024 holders, 14 = 16K, 20 = 1M
+  tree-depth: 10
+
+  # Powers of Tau power for trusted setup (dev/test only)
+  # Must be >= ceil(log2(circuit_constraints))
+  pot-power: 13
+
+  # Context ID for nullifier generation
+  default-context: "nft-demo-v1"

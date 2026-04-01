@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bloxbean.cardano.zeroj.usecases.nft.CircuitTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-04-01T06:52:02.536Z" hostname="Mac" time="25.377">
+  <properties/>
+  <testcase name="circuit_proveAndVerify_depth3()" classname="com.bloxbean.cardano.zeroj.usecases.nft.CircuitTest" time="25.37"/>
+  <testcase name="circuit_compiles()" classname="com.bloxbean.cardano.zeroj.usecases.nft.CircuitTest" time="0.006"/>
+  <system-out><![CDATA[NFT ownership proof: VERIFIED (depth=3)
+NFT ownership circuit (depth=3): 4995 constraints
+]]></system-out>
+  <system-err><![CDATA[WARNING: Single-party Powers of Tau generation (BLS12-381) — for DEVELOPMENT and TESTING only. Use MPC ceremony outputs (Hermez, Zcash PoT) for production.
+WARNING: Single-party Groth16 Phase 2 setup (BLS12-381) — for DEVELOPMENT and TESTING only. Use snarkjs multi-party ceremony for production.
+]]></system-err>
+</testsuite>
