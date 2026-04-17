@@ -6,6 +6,8 @@ import com.bloxbean.cardano.zeroj.circuit.Signal;
 import com.bloxbean.cardano.zeroj.circuit.SignalBuilder;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalMerkle;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParams;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 
 /**
  * ZK circuit for private voting on Cardano.
@@ -23,6 +25,8 @@ import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
  * @param treeDepth Merkle tree depth (10 = 1024 voters, 14 = 16K)
  */
 public class PrivateVoteCircuit implements CircuitSpec {
+
+    private static final PoseidonParams POSEIDON = PoseidonParamsBLS12_381T3.INSTANCE;
 
     private final int treeDepth;
 
@@ -55,17 +59,17 @@ public class PrivateVoteCircuit implements CircuitSpec {
         vote.assertBoolean();
 
         // 2. Nullifier = Poseidon(secretKey, electionId) — deterministic per voter+election
-        c.assertEqual(nullifier, SignalPoseidon.hash(c, secretKey, c.signal("electionId")));
+        c.assertEqual(nullifier, SignalPoseidon.hash(c, POSEIDON, secretKey, c.signal("electionId")));
 
         // 3. Commitment = Poseidon(vote, nullifier) — binds vote to nullifier
-        c.assertEqual(commitment, SignalPoseidon.hash(c, vote, nullifier));
+        c.assertEqual(commitment, SignalPoseidon.hash(c, POSEIDON, vote, nullifier));
 
         // 4. Derive public key from secret key
-        Signal publicKey = SignalPoseidon.hash(c, secretKey, c.constant(0));
+        Signal publicKey = SignalPoseidon.hash(c, POSEIDON, secretKey, c.constant(0));
 
         // 5. Verify voter is in the eligible voter Merkle tree
         SignalMerkle.verifyProof(c, publicKey, c.signal("voterRoot"),
-                siblings, pathBits, SignalPoseidon::hash);
+                siblings, pathBits, (sb, a, b) -> SignalPoseidon.hash(sb, POSEIDON, a, b));
     }
 
     public static CircuitBuilder build(int treeDepth) {

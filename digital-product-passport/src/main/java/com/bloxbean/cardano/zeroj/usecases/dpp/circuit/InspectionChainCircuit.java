@@ -7,6 +7,8 @@ import com.bloxbean.cardano.zeroj.circuit.SignalBuilder;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalComparators;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalMerkle;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParams;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 
 /**
  * Proves N quality inspections passed in chronological order.
@@ -19,6 +21,8 @@ import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
  * @param inspectorTreeDepth Merkle tree depth for approved inspectors
  */
 public class InspectionChainCircuit implements CircuitSpec {
+
+    private static final PoseidonParams POSEIDON = PoseidonParamsBLS12_381T3.INSTANCE;
 
     private final int numCheckpoints;
     private final int inspectorTreeDepth;
@@ -64,9 +68,9 @@ public class InspectionChainCircuit implements CircuitSpec {
             prevTimestamp = timestamp;
 
             // 3. Inspector must be in approved set
-            Signal inspectorHash = SignalPoseidon.hash(c, inspectorKey, c.constant(0));
+            Signal inspectorHash = SignalPoseidon.hash(c, POSEIDON, inspectorKey, c.constant(0));
             SignalMerkle.verifyProof(c, inspectorHash, c.signal("inspectorRoot"),
-                    siblings, pathBits, SignalPoseidon::hash);
+                    siblings, pathBits, (sb, a, b) -> SignalPoseidon.hash(sb, POSEIDON, a, b));
         }
 
         c.assertEqual(allPassed, c.constant(1));

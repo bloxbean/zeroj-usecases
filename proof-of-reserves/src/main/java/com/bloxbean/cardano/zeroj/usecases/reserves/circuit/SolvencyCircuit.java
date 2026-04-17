@@ -6,6 +6,8 @@ import com.bloxbean.cardano.zeroj.circuit.Signal;
 import com.bloxbean.cardano.zeroj.circuit.SignalBuilder;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalComparators;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParams;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 
 /**
  * ZK circuit for Proof of Reserves (solvency proof).
@@ -22,6 +24,8 @@ import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
  * @param treeDepth depth of the Merkle Sum Tree (4 = 16 accounts)
  */
 public class SolvencyCircuit implements CircuitSpec {
+
+    private static final PoseidonParams POSEIDON = PoseidonParamsBLS12_381T3.INSTANCE;
 
     private final int treeDepth;
 
@@ -53,7 +57,7 @@ public class SolvencyCircuit implements CircuitSpec {
             balance.assertInRange(64);
 
             // Leaf hash = Poseidon(accountId, balance)
-            leafHashes[i] = SignalPoseidon.hash(c, accountId, balance);
+            leafHashes[i] = SignalPoseidon.hash(c, POSEIDON, accountId, balance);
 
             // Accumulate total
             computedSum = computedSum.add(balance);
@@ -64,7 +68,7 @@ public class SolvencyCircuit implements CircuitSpec {
         for (int level = 0; level < treeDepth; level++) {
             Signal[] nextLevel = new Signal[currentLevel.length / 2];
             for (int i = 0; i < nextLevel.length; i++) {
-                nextLevel[i] = SignalPoseidon.hash(c, currentLevel[2 * i], currentLevel[2 * i + 1]);
+                nextLevel[i] = SignalPoseidon.hash(c, POSEIDON, currentLevel[2 * i], currentLevel[2 * i + 1]);
             }
             currentLevel = nextLevel;
         }

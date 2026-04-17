@@ -30,7 +30,7 @@ repositories {
 }
 
 ext {
-    zerojVersion = '0.1.0-a4100db-SNAPSHOT'  // Published from zeroj main
+    zerojVersion = '0.1.0-4982a2f-SNAPSHOT'  // Published from zeroj main
     julcVersion = '0.1.0-pre10'
     cclVersion = '0.8.0-pre2'
 }

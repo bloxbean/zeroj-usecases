@@ -6,6 +6,8 @@ import com.bloxbean.cardano.zeroj.circuit.Signal;
 import com.bloxbean.cardano.zeroj.circuit.SignalBuilder;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalComparators;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParams;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 
 /**
  * Generic compliance threshold circuit for DPP claims.
@@ -18,6 +20,8 @@ import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
  * @param comparisonMode 0 = measurement >= threshold (recycled content), 1 = measurement <= threshold (carbon)
  */
 public class ComplianceThresholdCircuit implements CircuitSpec {
+
+    private static final PoseidonParams POSEIDON = PoseidonParamsBLS12_381T3.INSTANCE;
 
     private final int comparisonMode;
 
@@ -41,8 +45,8 @@ public class ComplianceThresholdCircuit implements CircuitSpec {
 
         // 1. Verify auditor signed the measurement
         //    auditorHash == Poseidon(auditorSecret, Poseidon(productId, measurement))
-        Signal claimsHash = SignalPoseidon.hash(c, c.signal("productId"), measurement);
-        c.assertEqual(SignalPoseidon.hash(c, auditorSecret, claimsHash), c.signal("auditorHash"));
+        Signal claimsHash = SignalPoseidon.hash(c, POSEIDON, c.signal("productId"), measurement);
+        c.assertEqual(SignalPoseidon.hash(c, POSEIDON, auditorSecret, claimsHash), c.signal("auditorHash"));
 
         // 2. Check threshold (16-bit comparison — measurements 0-65535)
         Signal passes;

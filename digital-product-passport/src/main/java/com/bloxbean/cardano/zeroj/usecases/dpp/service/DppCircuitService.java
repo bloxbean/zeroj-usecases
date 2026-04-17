@@ -61,6 +61,16 @@ public class DppCircuitService {
 
     @PostConstruct
     public void init() {
+        // Wipe SRS / setup caches if Poseidon parameters changed since they were generated.
+        // Without this check a cached R1CS carries stale Poseidon constants into the next
+        // proof run — manifests as witness-evaluation errors on Merkle / hash constraints.
+        boolean wiped = com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonCacheVersion
+                .ensureFresh(java.nio.file.Path.of(CACHE_DIR),
+                        java.util.List.of("srs.bin", "setup-*", "dpp-trie", "dpp-trie-minted"));
+        if (wiped) {
+            log.info("Poseidon parameters changed since last run — wiped stale SRS / R1CS / trie caches");
+        }
+
         PtauImporterBLS381.SRS srs = loadOrGenerateSrs();
 
         log.info("Compiling DPP circuits...");

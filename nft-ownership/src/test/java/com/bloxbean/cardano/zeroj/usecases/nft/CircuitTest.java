@@ -138,35 +138,12 @@ class CircuitTest {
         System.out.println("NFT ownership proof: VERIFIED (depth=" + depth + ")");
     }
 
-    // --- Poseidon helper (BLS12-381 Fr) ---
+    // --- Poseidon helper (BLS12-381 Fr, standards-compatible per ADR-0015) ---
 
     private BigInteger poseidon(BigInteger a, BigInteger b) {
-        BigInteger p = PRIME;
-        BigInteger[] state = {BigInteger.ZERO, a.mod(p), b.mod(p)};
-        int RF = 8, RP = 57, N = RF + RP;
-        for (int r = 0; r < N; r++) {
-            for (int j = 0; j < 3; j++)
-                state[j] = state[j].add(com.bloxbean.cardano.zeroj.circuit.lib.PoseidonConstants.C[r * 3 + j]).mod(p);
-            if (r < RF / 2 || r >= RF / 2 + RP) {
-                for (int j = 0; j < 3; j++) state[j] = sbox5(state[j], p);
-            } else {
-                state[0] = sbox5(state[0], p);
-            }
-            BigInteger[] t = new BigInteger[3];
-            for (int i = 0; i < 3; i++) {
-                t[i] = BigInteger.ZERO;
-                for (int j = 0; j < 3; j++)
-                    t[i] = t[i].add(state[j].multiply(com.bloxbean.cardano.zeroj.circuit.lib.PoseidonConstants.M[i * 3 + j])).mod(p);
-            }
-            state = t;
-        }
-        return state[0];
-    }
-
-    private BigInteger sbox5(BigInteger x, BigInteger p) {
-        BigInteger x2 = x.multiply(x).mod(p);
-        BigInteger x4 = x2.multiply(x2).mod(p);
-        return x4.multiply(x).mod(p);
+        return com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
+                com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
+                a, b);
     }
 
     private static G1Point toG1(com.bloxbean.cardano.zeroj.crypto.ec.JacobianG1BLS381.AffineG1 p) {

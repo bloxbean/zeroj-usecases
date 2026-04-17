@@ -7,6 +7,8 @@ import com.bloxbean.cardano.zeroj.circuit.SignalBuilder;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalComparators;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalMerkle;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParams;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 
 /**
  * ZK circuit for privacy-preserving KYC credential verification.
@@ -21,6 +23,8 @@ import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
  * @param countryTreeDepth depth of approved countries Merkle tree (4 = 16 countries)
  */
 public class CredentialCircuit implements CircuitSpec {
+
+    private static final PoseidonParams POSEIDON = PoseidonParamsBLS12_381T3.INSTANCE;
 
     private final int countryTreeDepth;
 
@@ -52,15 +56,15 @@ public class CredentialCircuit implements CircuitSpec {
         Signal eligible = c.publicOutput("eligible");
 
         // 1. Verify credential: Poseidon(credentialSecret, Poseidon(age, country)) == credentialHash
-        Signal claimsHash = SignalPoseidon.hash(c, age, country);
-        c.assertEqual(SignalPoseidon.hash(c, credentialSecret, claimsHash), c.signal("credentialHash"));
+        Signal claimsHash = SignalPoseidon.hash(c, POSEIDON, age, country);
+        c.assertEqual(SignalPoseidon.hash(c, POSEIDON, credentialSecret, claimsHash), c.signal("credentialHash"));
 
         // 2. Age check: age >= minAge (8-bit comparison — ages 0-255)
         Signal ageOk = SignalComparators.greaterOrEqual(c, age, c.signal("minAge"), 8);
 
         // 3. Country check: country is in the approved countries Merkle tree
         SignalMerkle.verifyProof(c, country, c.signal("countryRoot"),
-                siblings, pathBits, SignalPoseidon::hash);
+                siblings, pathBits, (sb, a, b) -> SignalPoseidon.hash(sb, POSEIDON, a, b));
 
         // 4. Output eligibility
         c.assertEqual(eligible, ageOk);

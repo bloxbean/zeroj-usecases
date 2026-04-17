@@ -6,6 +6,8 @@ import com.bloxbean.cardano.zeroj.circuit.Signal;
 import com.bloxbean.cardano.zeroj.circuit.SignalBuilder;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalMerkle;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParams;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 
 /**
  * Proves a country is in an approved set (Merkle membership).
@@ -16,6 +18,8 @@ import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
  * @param treeDepth Merkle tree depth (4 = 16 countries)
  */
 public class CountryMembershipCircuit implements CircuitSpec {
+
+    private static final PoseidonParams POSEIDON = PoseidonParamsBLS12_381T3.INSTANCE;
 
     private final int treeDepth;
 
@@ -43,7 +47,7 @@ public class CountryMembershipCircuit implements CircuitSpec {
 
         // Verify country is in the approved set
         SignalMerkle.verifyProof(c, country, c.signal("countryRoot"),
-                siblings, pathBits, SignalPoseidon::hash);
+                siblings, pathBits, (sb, a, b) -> SignalPoseidon.hash(sb, POSEIDON, a, b));
 
         c.assertEqual(isMember, c.constant(1));
     }

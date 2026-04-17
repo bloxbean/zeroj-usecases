@@ -1,7 +1,5 @@
 package com.bloxbean.cardano.zeroj.usecases.nft.service;
 
-import com.bloxbean.cardano.zeroj.circuit.FieldConfig;
-import com.bloxbean.cardano.zeroj.circuit.lib.PoseidonConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,7 +9,6 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Builds and maintains the Merkle tree of NFT holders for ZK ownership proofs.
@@ -24,7 +21,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SnapshotService {
 
     private static final Logger log = LoggerFactory.getLogger(SnapshotService.class);
-    private static final BigInteger PRIME = FieldConfig.BLS12_381.prime();
 
     @Value("${zk.tree-depth}")
     private int treeDepth;

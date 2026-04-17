@@ -116,56 +116,16 @@ public class VoteCircuitService {
         return treeDepth;
     }
 
-    // --- Poseidon computation (same approach as NFT demo ProverService) ---
+    // --- Poseidon computation (standards-compatible BLS12-381, per ADR-0015) ---
 
     private final ConcurrentHashMap<String, BigInteger> poseidonCache = new ConcurrentHashMap<>();
 
     private BigInteger computePoseidon(BigInteger a, BigInteger b) {
         String key = a.toString(16) + ":" + b.toString(16);
-        return poseidonCache.computeIfAbsent(key, k -> {
-            try {
-                var cField = Class.forName("com.bloxbean.cardano.zeroj.circuit.lib.PoseidonConstants")
-                        .getDeclaredField("C");
-                cField.setAccessible(true);
-                BigInteger[] C = (BigInteger[]) cField.get(null);
-
-                var mField = Class.forName("com.bloxbean.cardano.zeroj.circuit.lib.PoseidonConstants")
-                        .getDeclaredField("M");
-                mField.setAccessible(true);
-                BigInteger[] M = (BigInteger[]) mField.get(null);
-
-                BigInteger p = PRIME;
-                BigInteger[] state = {BigInteger.ZERO, a.mod(p), b.mod(p)};
-                int RF = 8, RP = 57, N = RF + RP;
-                for (int r = 0; r < N; r++) {
-                    for (int j = 0; j < 3; j++)
-                        state[j] = state[j].add(C[r * 3 + j]).mod(p);
-                    if (r < RF / 2 || r >= RF / 2 + RP) {
-                        for (int j = 0; j < 3; j++) {
-                            BigInteger x = state[j];
-                            BigInteger x2 = x.multiply(x).mod(p);
-                            BigInteger x4 = x2.multiply(x2).mod(p);
-                            state[j] = x4.multiply(x).mod(p);
-                        }
-                    } else {
-                        BigInteger x = state[0];
-                        BigInteger x2 = x.multiply(x).mod(p);
-                        BigInteger x4 = x2.multiply(x2).mod(p);
-                        state[0] = x4.multiply(x).mod(p);
-                    }
-                    BigInteger[] t = new BigInteger[3];
-                    for (int i = 0; i < 3; i++) {
-                        t[i] = BigInteger.ZERO;
-                        for (int j = 0; j < 3; j++)
-                            t[i] = t[i].add(state[j].multiply(M[i * 3 + j])).mod(p);
-                    }
-                    state = t;
-                }
-                return state[0];
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to compute Poseidon hash", e);
-            }
-        });
+        return poseidonCache.computeIfAbsent(key, k ->
+                com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
+                        com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
+                        a, b));
     }
 
     public record ProofResult(

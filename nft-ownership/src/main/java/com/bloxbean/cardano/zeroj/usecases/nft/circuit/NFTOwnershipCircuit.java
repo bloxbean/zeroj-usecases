@@ -6,6 +6,8 @@ import com.bloxbean.cardano.zeroj.circuit.Signal;
 import com.bloxbean.cardano.zeroj.circuit.SignalBuilder;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalMerkle;
 import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParams;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 
 /**
  * ZK circuit for proving NFT ownership without revealing the holder's wallet.
@@ -28,6 +30,8 @@ import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
  * @param treeDepth Merkle tree depth (e.g., 10 for 1024 holders, 20 for 1M)
  */
 public class NFTOwnershipCircuit implements CircuitSpec {
+
+    private static final PoseidonParams POSEIDON = PoseidonParamsBLS12_381T3.INSTANCE;
 
     private final int treeDepth;
 
@@ -61,20 +65,20 @@ public class NFTOwnershipCircuit implements CircuitSpec {
 
         // 1. Derive owner identifier from secret key
         //    ownerHash = Poseidon(secretKey, 0) — deterministic, one-way
-        Signal ownerHash = SignalPoseidon.hash(c, secretKey, c.constant(0));
+        Signal ownerHash = SignalPoseidon.hash(c, POSEIDON, secretKey, c.constant(0));
 
         // 2. Compute leaf: Poseidon(ownerHash, tokenName)
         //    This is what the snapshot indexer computes for each holder
-        Signal leaf = SignalPoseidon.hash(c, ownerHash, tokenName);
+        Signal leaf = SignalPoseidon.hash(c, POSEIDON, ownerHash, tokenName);
 
         // 3. Verify Merkle inclusion: leaf is in the tree with the published root
         SignalMerkle.verifyProof(c, leaf, c.signal("snapshotRoot"),
-                siblings, pathBits, SignalPoseidon::hash);
+                siblings, pathBits, (sb, a, b) -> SignalPoseidon.hash(sb, POSEIDON, a, b));
 
         // 4. Compute nullifier: Poseidon(tokenName, contextId)
         //    Same NFT + same context = same nullifier (prevents double use)
         //    Different context = different nullifier (allows reuse across events)
-        c.assertEqual(nullifier, SignalPoseidon.hash(c, tokenName, c.signal("contextId")));
+        c.assertEqual(nullifier, SignalPoseidon.hash(c, POSEIDON, tokenName, c.signal("contextId")));
 
         // 5. All constraints satisfied = owner proven
         c.assertEqual(isOwner, c.constant(1));

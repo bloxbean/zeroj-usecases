@@ -171,82 +171,17 @@ public class ProverService {
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
-     * Compute Poseidon(a, b) using the circuit's Poseidon implementation via witness evaluation.
-     * Results are cached for performance.
+     * Compute Poseidon(a, b) over BLS12-381 using the standards-compatible preset.
+     * Results are cached for performance. After ADR-0015, this delegates to
+     * {@link com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash} —
+     * no more reflection into {@code PoseidonConstants}.
      */
     private BigInteger computePoseidon(BigInteger a, BigInteger b) {
         String key = a.toString(16) + ":" + b.toString(16);
-        return poseidonCache.computeIfAbsent(key, k -> {
-            // Build a tiny Poseidon circuit and use witness calculation to extract the hash
-            var poseidonCircuit = com.bloxbean.cardano.zeroj.circuit.CircuitBuilder.create("ph")
-                    .publicVar("out").secretVar("a").secretVar("b")
-                    .define(api -> api.assertEqual(
-                            com.bloxbean.cardano.zeroj.circuit.lib.Poseidon.hash(api, api.var("a"), api.var("b")),
-                            api.var("out")));
-
-            // Use a two-step approach: first compute hash, then verify
-            // The witness calculator evaluates all gates and fills in intermediates
-            // Wire layout: [1, out, a, b, ...intermediates]
-            // The hash value is computed as an intermediate and assigned to 'out'
-            // We need to find 'out' — it's witness[1] (first public var)
-
-            // To get the hash, use the circuit's internal evaluation:
-            // Compile a "compute-only" circuit that doesn't assert equality
-            var computeCircuit = com.bloxbean.cardano.zeroj.circuit.CircuitBuilder.create("pc")
-                    .publicVar("hash").secretVar("a").secretVar("b")
-                    .define(api -> {
-                        var h = com.bloxbean.cardano.zeroj.circuit.lib.Poseidon.hash(api, api.var("a"), api.var("b"));
-                        api.assertEqual(h, api.var("hash"));
-                    });
-
-            // Run with known (1,2) to get the expected hash, verify against test vector
-            // For arbitrary (a,b), use the circuit graph evaluation
-            var graph = computeCircuit.constraintGraph();
-
-            // Use reflection to access PoseidonConstants for direct computation
-            try {
-                var cField = Class.forName("com.bloxbean.cardano.zeroj.circuit.lib.PoseidonConstants")
-                        .getDeclaredField("C");
-                cField.setAccessible(true);
-                BigInteger[] C = (BigInteger[]) cField.get(null);
-
-                var mField = Class.forName("com.bloxbean.cardano.zeroj.circuit.lib.PoseidonConstants")
-                        .getDeclaredField("M");
-                mField.setAccessible(true);
-                BigInteger[] M = (BigInteger[]) mField.get(null);
-
-                BigInteger p = com.bloxbean.cardano.zeroj.circuit.FieldConfig.BLS12_381.prime();
-                BigInteger[] state = {BigInteger.ZERO, a.mod(p), b.mod(p)};
-                int RF = 8, RP = 57, N = RF + RP;
-                for (int r = 0; r < N; r++) {
-                    for (int j = 0; j < 3; j++)
-                        state[j] = state[j].add(C[r * 3 + j]).mod(p);
-                    if (r < RF / 2 || r >= RF / 2 + RP) {
-                        for (int j = 0; j < 3; j++) {
-                            BigInteger x = state[j];
-                            BigInteger x2 = x.multiply(x).mod(p);
-                            BigInteger x4 = x2.multiply(x2).mod(p);
-                            state[j] = x4.multiply(x).mod(p);
-                        }
-                    } else {
-                        BigInteger x = state[0];
-                        BigInteger x2 = x.multiply(x).mod(p);
-                        BigInteger x4 = x2.multiply(x2).mod(p);
-                        state[0] = x4.multiply(x).mod(p);
-                    }
-                    BigInteger[] t = new BigInteger[3];
-                    for (int i = 0; i < 3; i++) {
-                        t[i] = BigInteger.ZERO;
-                        for (int j = 0; j < 3; j++)
-                            t[i] = t[i].add(state[j].multiply(M[i * 3 + j])).mod(p);
-                    }
-                    state = t;
-                }
-                return state[0];
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to compute Poseidon hash", e);
-            }
-        });
+        return poseidonCache.computeIfAbsent(key, k ->
+                com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
+                        com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
+                        a, b));
     }
 
     private static G1Point toG1(com.bloxbean.cardano.zeroj.crypto.ec.JacobianG1BLS381.AffineG1 p) {
