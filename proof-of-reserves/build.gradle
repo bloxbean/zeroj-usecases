@@ -1,0 +1,58 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.0-M3'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.bloxbean.cardano'
+version = '0.1.0-SNAPSHOT'
+
+java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
+springBoot { mainClass = 'com.bloxbean.cardano.zeroj.usecases.reserves.ReservesApplication' }
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+    maven { url = uri("https://central.sonatype.com/repository/maven-snapshots"); content { snapshotsOnly() } }
+    maven { url = uri("https://repo.spring.io/milestone") }
+}
+
+ext {
+    zerojVersion = '0.1.0-a4100db-SNAPSHOT'
+    julcVersion = '0.1.0-pre10'
+    cclVersion = '0.8.0-pre4-SNAPSHOT'
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    runtimeOnly 'com.h2database:h2'
+
+    implementation "com.bloxbean.cardano:zeroj-circuit-dsl:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-circuit-lib:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-crypto:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-verifier-groth16:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-blst:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-api:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-codec:${zerojVersion}"
+
+    implementation "com.bloxbean.cardano:julc-stdlib:${julcVersion}"
+    annotationProcessor "com.bloxbean.cardano:julc-annotation-processor:${julcVersion}"
+
+    implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
+    implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
+    implementation "com.bloxbean.cardano:julc-cardano-client-lib:${julcVersion}"
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+compileJava { options.fork = true; options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED'] }
+compileTestJava { options.compilerArgs.add('-proc:full'); options.fork = true; options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED'] }
+test { useJUnitPlatform(); jvmArgs '--enable-native-access=ALL-UNNAMED' }
+
+def frontendDir = file('frontend')
+tasks.register('npmInstall', Exec) { workingDir frontendDir; commandLine 'npm', 'install' }
+tasks.register('buildFrontend', Exec) { dependsOn 'npmInstall'; workingDir frontendDir; commandLine 'npm', 'run', 'build' }
+if (project.hasProperty('withFrontend')) { processResources.dependsOn buildFrontend }

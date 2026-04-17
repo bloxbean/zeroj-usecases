@@ -18,6 +18,9 @@ cardano:
     blockfrost-url: https://cardano-preprod.blockfrost.io/api/v0
     blockfrost-project-id: ${BLOCKFROST_PROJECT_ID:}
 
+nullifier:
+  mode: on-chain  # "on-chain" or "in-memory"
+
 zk:
   # Merkle tree depth for ownership snapshots
   # 10 = 1024 holders, 14 = 16K, 20 = 1M

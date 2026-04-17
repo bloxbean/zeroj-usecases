@@ -1,6 +1,7 @@
 package com.bloxbean.cardano.zeroj.usecases.nft.controller;
 
-import com.bloxbean.cardano.zeroj.usecases.nft.service.NullifierService;
+import com.bloxbean.cardano.zeroj.usecases.nft.service.NullifierTracker;
+import com.bloxbean.cardano.zeroj.usecases.nft.service.OnChainNullifierService;
 import com.bloxbean.cardano.zeroj.usecases.nft.service.ProverService;
 import com.bloxbean.cardano.zeroj.usecases.nft.service.SnapshotService;
 import org.slf4j.Logger;
@@ -24,16 +25,25 @@ public class ProofController {
 
     private final ProverService proverService;
     private final SnapshotService snapshotService;
-    private final NullifierService nullifierService;
+    private final NullifierTracker nullifierTracker;
+    private final OnChainNullifierService onChainNullifierService;
 
     @Value("${zk.default-context}")
     private String defaultContext;
 
+    // Cache last proof result for on-chain submission
+    private volatile ProverService.ProofResult lastProofResult;
+    private volatile BigInteger lastSnapshotRoot;
+    private volatile BigInteger lastContextId;
+
     public ProofController(ProverService proverService, SnapshotService snapshotService,
-                            NullifierService nullifierService) {
+                            NullifierTracker nullifierTracker,
+                            @org.springframework.beans.factory.annotation.Autowired(required = false)
+                            OnChainNullifierService onChainNullifierService) {
         this.proverService = proverService;
         this.snapshotService = snapshotService;
-        this.nullifierService = nullifierService;
+        this.nullifierTracker = nullifierTracker;
+        this.onChainNullifierService = onChainNullifierService;
     }
 
     // === Snapshot ===
@@ -104,6 +114,11 @@ public class ProofController {
 
             log.info("ZK proof generated in {}ms", elapsed);
 
+            // Cache for on-chain submission via /api/access
+            lastProofResult = result;
+            lastSnapshotRoot = snapshotRoot;
+            lastContextId = contextBigInt;
+
             return ResponseEntity.ok(Map.of(
                     "proof", Map.of(
                             "a_x", result.proof().a().xBigInt().toString(),
@@ -139,7 +154,7 @@ public class ProofController {
             // Full proof verification would reconstruct the Groth16 proof points
 
             // Check nullifier
-            if (nullifierService.isUsed(nullifier)) {
+            if (nullifierTracker.isUsed(nullifier)) {
                 return ResponseEntity.ok(Map.of(
                         "valid", false,
                         "reason", "Nullifier already used (double access attempt)"));
@@ -160,8 +175,29 @@ public class ProofController {
         try {
             BigInteger nullifier = new BigInteger(request.get("nullifier"));
 
-            // Record nullifier (prevents reuse)
-            boolean accepted = nullifierService.recordNullifier(nullifier);
+            // On-chain mode: submit nullifier to sorted linked list on Cardano
+            if (onChainNullifierService != null && lastProofResult != null) {
+                // Check if already used
+                if (onChainNullifierService.isUsed(nullifier)) {
+                    return ResponseEntity.status(403).body(Map.of(
+                            "access", false,
+                            "reason", "Already accessed (nullifier exists on-chain)"));
+                }
+
+                String txHash = onChainNullifierService.insertNullifier(
+                        lastProofResult.proof(), lastSnapshotRoot, lastContextId, nullifier);
+
+                return ResponseEntity.ok(Map.of(
+                        "access", true,
+                        "message", "Access granted! Nullifier recorded on-chain.",
+                        "nullifier", nullifier.toString(),
+                        "txHash", txHash,
+                        "onChain", true,
+                        "totalAccesses", onChainNullifierService.getUsedCount()));
+            }
+
+            // In-memory mode fallback
+            boolean accepted = nullifierTracker.recordNullifier(nullifier);
             if (!accepted) {
                 return ResponseEntity.status(403).body(Map.of(
                         "access", false,
@@ -172,8 +208,9 @@ public class ProofController {
                     "access", true,
                     "message", "Access granted! Welcome, anonymous NFT holder.",
                     "nullifier", nullifier.toString(),
-                    "totalAccesses", nullifierService.getUsedCount()));
+                    "totalAccesses", nullifierTracker.getUsedCount()));
         } catch (Exception e) {
+            log.error("Access request failed", e);
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
@@ -191,7 +228,8 @@ public class ProofController {
                         "epoch", snapshotService.getSnapshotEpoch(),
                         "holderCount", snapshotService.getHolderCount()),
                 "nullifiers", Map.of(
-                        "usedCount", nullifierService.getUsedCount()),
+                        "usedCount", nullifierTracker.getUsedCount(),
+                        "mode", onChainNullifierService != null ? "on-chain" : "in-memory"),
                 "defaultContext", defaultContext));
     }
 }

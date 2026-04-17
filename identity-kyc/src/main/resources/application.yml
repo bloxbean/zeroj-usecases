@@ -1,0 +1,26 @@
+server:
+  port: 8087
+
+spring:
+  application:
+    name: identity-kyc-demo
+
+cardano:
+  network: yaci
+  yaci:
+    base-url: http://localhost:8080/api/v1/
+    admin-url: http://localhost:10000
+    mnemonic: "test test test test test test test test test test test test test test test test test test test test test test test sauce"
+  preprod:
+    blockfrost-url: https://cardano-preprod.blockfrost.io/api/v0
+    blockfrost-project-id: ${BLOCKFROST_PROJECT_ID:}
+
+zk:
+  # Country Merkle tree depth (4 = 16 countries max)
+  country-tree-depth: 4
+  pot-power: 12
+
+credential:
+  # Minimum age for eligibility
+  min-age: 18
+  # Approved countries configured in IssuerService: USA(840), GBR(826), DEU(276), FRA(250), JPN(392)

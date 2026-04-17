@@ -1,0 +1,41 @@
+server:
+  port: 8088
+
+spring:
+  application:
+    name: dpp-demo
+  datasource:
+    url: jdbc:h2:file:./data/dpp-db;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+cardano:
+  network: yaci
+  yaci:
+    base-url: http://localhost:8080/api/v1/
+    admin-url: http://localhost:10000
+    mnemonic: "test test test test test test test test test test test test test test test test test test test test test test test sauce"
+  preprod:
+    blockfrost-url: https://cardano-preprod.blockfrost.io/api/v0
+    blockfrost-project-id: ${BLOCKFROST_PROJECT_ID:}
+
+zk:
+  # Country Merkle tree depth (4 = 16 countries max)
+  country-tree-depth: 4
+  # Inspector Merkle tree depth (3 = 8 inspectors max)
+  inspector-tree-depth: 3
+  pot-power: 12
+
+dpp:
+  # RocksDB path for MPF persistent trie
+  rocksdb-path: ./data/dpp-trie
+  # Compliance thresholds
+  carbon-threshold-kg: 50
+  recycled-threshold-pct: 30

@@ -1,0 +1,223 @@
+package com.bloxbean.cardano.zeroj.usecases.dpp.service;
+
+import com.bloxbean.cardano.zeroj.api.CurveId;
+import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
+import com.bloxbean.cardano.zeroj.circuit.FieldConfig;
+import com.bloxbean.cardano.zeroj.crypto.ec.JacobianG1BLS381;
+import com.bloxbean.cardano.zeroj.crypto.ec.JacobianG2BLS381;
+import com.bloxbean.cardano.zeroj.crypto.field.MontFr381;
+import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
+import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
+import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Prover;
+import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
+import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
+import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
+import com.bloxbean.cardano.zeroj.crypto.setup.SetupCache;
+import com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381;
+import com.bloxbean.cardano.zeroj.usecases.dpp.circuit.ComplianceThresholdCircuit;
+import com.bloxbean.cardano.zeroj.usecases.dpp.circuit.CountryMembershipCircuit;
+import com.bloxbean.cardano.zeroj.usecases.dpp.circuit.InspectionChainCircuit;
+import com.bloxbean.cardano.zeroj.usecases.dpp.mpf.PoseidonCompute;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.springframework.stereotype.Service;
+
+import java.math.BigInteger;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Manages all DPP ZK circuits: compilation, trusted setup, proof generation.
+ * Three circuits: compliance threshold (GTE/LTE), inspection chain, country membership.
+ */
+@Service
+public class DppCircuitService {
+
+    private static final Logger log = LoggerFactory.getLogger(DppCircuitService.class);
+
+    @Value("${zk.country-tree-depth}")
+    private int countryTreeDepth;
+
+    @Value("${zk.inspector-tree-depth}")
+    private int inspectorTreeDepth;
+
+    @Value("${zk.pot-power}")
+    private int potPower;
+
+    // Compiled circuits
+    private CircuitSetup thresholdGte; // recycled >= X
+    private CircuitSetup thresholdLte; // carbon <= X
+    private CircuitSetup inspectionChain; // 3 inspections passed
+    private CircuitSetup countryMembership; // country in set
+
+    private static final String CACHE_DIR = "./data";
+
+    @PostConstruct
+    public void init() {
+        PtauImporterBLS381.SRS srs = loadOrGenerateSrs();
+
+        log.info("Compiling DPP circuits...");
+
+        thresholdGte = compileWithCache("threshold-gte", ComplianceThresholdCircuit.buildGte(), srs);
+        thresholdLte = compileWithCache("threshold-lte", ComplianceThresholdCircuit.buildLte(), srs);
+        inspectionChain = compileWithCache("inspection-chain",
+                InspectionChainCircuit.build(3, inspectorTreeDepth), srs);
+        countryMembership = compileWithCache("country-membership",
+                CountryMembershipCircuit.build(countryTreeDepth), srs);
+
+        log.info("All DPP circuits compiled. Ready to generate proofs.");
+    }
+
+    private PtauImporterBLS381.SRS loadOrGenerateSrs() {
+        Path srsCache = Path.of(CACHE_DIR, "srs.bin");
+        try {
+            if (Files.exists(srsCache)) {
+                log.info("Loading SRS from cache...");
+                long start = System.currentTimeMillis();
+                var srs = SetupCache.loadSrs(srsCache);
+                log.info("SRS loaded from cache in {}ms", System.currentTimeMillis() - start);
+                return srs;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to load SRS cache: {}", e.getMessage());
+        }
+
+        log.info("No SRS cache. Running Powers of Tau ceremony (power={})...", potPower);
+        var srs = PowersOfTauBLS381.generate(potPower);
+        try {
+            SetupCache.saveSrs(srs, srsCache);
+            log.info("SRS cached to {}", srsCache);
+        } catch (Exception e) {
+            log.warn("Failed to save SRS cache: {}", e.getMessage());
+        }
+        return srs;
+    }
+
+    private CircuitSetup compileWithCache(String name, CircuitBuilder circuit, PtauImporterBLS381.SRS srs) {
+        var r1cs = circuit.compileR1CS(CurveId.BLS12_381);
+        log.info("  {} — {} constraints, {} wires, {} public",
+                name, r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs());
+
+        var constraints = r1cs.constraints().stream()
+                .map(c -> new Groth16Prover.R1CSConstraint(c.a(), c.b(), c.c()))
+                .toArray(Groth16Prover.R1CSConstraint[]::new);
+
+        // Try loading setup from cache
+        Path setupCache = Path.of(CACHE_DIR, "setup-" + name + ".bin");
+        Groth16SetupBLS381.SetupResult setup = null;
+        try {
+            if (Files.exists(setupCache)) {
+                long start = System.currentTimeMillis();
+                setup = SetupCache.loadSetup(setupCache);
+                log.info("  {} — loaded from cache in {}ms", name, System.currentTimeMillis() - start);
+            }
+        } catch (Exception e) {
+            log.warn("  {} — cache load failed: {}", name, e.getMessage());
+        }
+
+        if (setup == null) {
+            setup = Groth16SetupBLS381.setup(constraints, r1cs.numWires(),
+                    r1cs.numPublicInputs(), srs.tauScalar());
+            try {
+                SetupCache.saveSetup(setup, setupCache);
+                log.info("  {} — cached to {}", name, setupCache);
+            } catch (Exception e) {
+                log.warn("  {} — cache save failed: {}", name, e.getMessage());
+            }
+        }
+
+        return new CircuitSetup(circuit, r1cs, constraints, setup);
+    }
+
+    // --- Proof generation ---
+
+    public ProofResult proveThresholdGte(BigInteger measurement, BigInteger auditorSecret,
+                                          BigInteger productId, BigInteger threshold,
+                                          BigInteger auditorHash) {
+        return prove(thresholdGte, Map.of(
+                "measurement", List.of(measurement),
+                "auditorSecret", List.of(auditorSecret),
+                "productId", List.of(productId),
+                "threshold", List.of(threshold),
+                "auditorHash", List.of(auditorHash),
+                "isCompliant", List.of(measurement.compareTo(threshold) >= 0 ? BigInteger.ONE : BigInteger.ZERO)));
+    }
+
+    public ProofResult proveThresholdLte(BigInteger measurement, BigInteger auditorSecret,
+                                          BigInteger productId, BigInteger threshold,
+                                          BigInteger auditorHash) {
+        return prove(thresholdLte, Map.of(
+                "measurement", List.of(measurement),
+                "auditorSecret", List.of(auditorSecret),
+                "productId", List.of(productId),
+                "threshold", List.of(threshold),
+                "auditorHash", List.of(auditorHash),
+                "isCompliant", List.of(measurement.compareTo(threshold) <= 0 ? BigInteger.ONE : BigInteger.ZERO)));
+    }
+
+    public ProofResult proveInspections(BigInteger productId, BigInteger inspectorRoot,
+                                         Map<String, List<BigInteger>> inspectionInputs) {
+        var inputs = new HashMap<>(inspectionInputs);
+        inputs.put("productId", List.of(productId));
+        inputs.put("inspectorRoot", List.of(inspectorRoot));
+        inputs.put("allPassed", List.of(BigInteger.ONE));
+        return prove(inspectionChain, inputs);
+    }
+
+    public ProofResult proveCountryMembership(BigInteger country, BigInteger productId,
+                                                BigInteger countryRoot,
+                                                BigInteger[] siblings, BigInteger[] pathBits) {
+        var inputs = new HashMap<String, List<BigInteger>>();
+        inputs.put("country", List.of(country));
+        inputs.put("productId", List.of(productId));
+        inputs.put("countryRoot", List.of(countryRoot));
+        inputs.put("isMember", List.of(BigInteger.ONE));
+        for (int i = 0; i < siblings.length; i++) {
+            inputs.put("sibling_" + i, List.of(siblings[i]));
+            inputs.put("pathBit_" + i, List.of(pathBits[i]));
+        }
+        return prove(countryMembership, inputs);
+    }
+
+    private ProofResult prove(CircuitSetup cs, Map<String, List<BigInteger>> inputs) {
+        BigInteger[] witness = cs.circuit.calculateWitness(inputs, CurveId.BLS12_381);
+        var proof = Groth16ProverBLS381.prove(cs.setup.provingKey(), witness,
+                cs.constraints, cs.r1cs.numWires());
+        return new ProofResult(proof, witness);
+    }
+
+    // --- Poseidon helpers ---
+
+    public BigInteger computeAuditorHash(BigInteger auditorSecret, BigInteger productId, BigInteger measurement) {
+        BigInteger claimsHash = PoseidonCompute.poseidon(productId, measurement);
+        return PoseidonCompute.poseidon(auditorSecret, claimsHash);
+    }
+
+    public BigInteger poseidon(BigInteger a, BigInteger b) {
+        return PoseidonCompute.poseidon(a, b);
+    }
+
+    // --- Getters ---
+
+    public CircuitSetup getThresholdGte() { return thresholdGte; }
+    public CircuitSetup getThresholdLte() { return thresholdLte; }
+    public CircuitSetup getInspectionChain() { return inspectionChain; }
+    public CircuitSetup getCountryMembership() { return countryMembership; }
+    public int getCountryTreeDepth() { return countryTreeDepth; }
+    public int getInspectorTreeDepth() { return inspectorTreeDepth; }
+
+    // --- Records ---
+
+    public record CircuitSetup(CircuitBuilder circuit, R1CSConstraintSystem r1cs,
+                                Groth16Prover.R1CSConstraint[] constraints,
+                                Groth16SetupBLS381.SetupResult setup) {}
+
+    public record ProofResult(Groth16ProofBLS381 proof, BigInteger[] witness) {}
+}

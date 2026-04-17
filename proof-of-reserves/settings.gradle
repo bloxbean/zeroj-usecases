@@ -1,0 +1,7 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        maven { url = uri("https://repo.spring.io/milestone") }
+    }
+}
+rootProject.name = 'proof-of-reserves'

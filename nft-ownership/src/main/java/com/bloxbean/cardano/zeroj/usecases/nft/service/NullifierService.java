@@ -2,6 +2,7 @@ package com.bloxbean.cardano.zeroj.usecases.nft.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
@@ -10,14 +11,11 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
- * Tracks used nullifiers to prevent double-use of ZK proofs.
- *
- * <p>In a production system, nullifiers would be stored on-chain
- * (e.g., sorted linked list pattern). This in-memory implementation
- * is suitable for demos and testing.</p>
+ * In-memory nullifier tracking. Active when {@code nullifier.mode=in-memory} (default).
  */
 @Service
-public class NullifierService {
+@ConditionalOnProperty(name = "nullifier.mode", havingValue = "in-memory", matchIfMissing = true)
+public class NullifierService implements NullifierTracker {
 
     private static final Logger log = LoggerFactory.getLogger(NullifierService.class);
 

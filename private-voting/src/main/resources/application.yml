@@ -1,0 +1,28 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: private-voting-demo
+
+cardano:
+  network: yaci
+
+  yaci:
+    base-url: http://localhost:8080/api/v1/
+    admin-url: http://localhost:10000
+    mnemonic: "test test test test test test test test test test test test test test test test test test test test test test test sauce"
+
+  preprod:
+    blockfrost-url: https://cardano-preprod.blockfrost.io/api/v0
+    blockfrost-project-id: ${BLOCKFROST_PROJECT_ID:}
+
+zk:
+  tree-depth: 10
+  pot-power: 13
+
+election:
+  # Number of test voter accounts to create at startup
+  voter-count: 5
+  # Default election name
+  default-name: "ZeroJ DAO Proposal #1"

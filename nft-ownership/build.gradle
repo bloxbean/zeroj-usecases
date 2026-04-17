@@ -51,16 +51,12 @@ dependencies {
 
     // Julc — on-chain compilation
     implementation "com.bloxbean.cardano:julc-stdlib:${julcVersion}"
-    // Note: Julc annotation processor disabled due to Java 25 compiler NPE
-    // Re-enable when julc-annotation-processor supports Java 25
-    // annotationProcessor "com.bloxbean.cardano:julc-annotation-processor:${julcVersion}"
+    annotationProcessor "com.bloxbean.cardano:julc-annotation-processor:${julcVersion}"
 
     // Cardano Client Lib — tx building, UTXO queries
-    // Note: testImplementation to avoid Java 25 compiler NPE during main compilation
-    // Move to implementation once JDK 25 compiler bug is fixed
-    testImplementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
-    testImplementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
-    testImplementation "com.bloxbean.cardano:julc-cardano-client-lib:${julcVersion}"
+    implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
+    implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
+    implementation "com.bloxbean.cardano:julc-cardano-client-lib:${julcVersion}"
 
     // Test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
@@ -69,10 +65,11 @@ dependencies {
     testRuntimeOnly "com.bloxbean.cardano:julc-vm-java:${julcVersion}"
 }
 
-// Workaround: Java 25 compiler NPE when Spring Boot annotation processor
-// encounters CCL QuickTxBuilder types during compilation
+// Enable Julc annotation processor for on-chain validator compilation.
+// Fork to avoid Java 25 NPE with Spring Boot AP + CCL types.
 compileJava {
-    options.compilerArgs.add('-proc:none')
+    options.fork = true
+    options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED']
 }
 compileTestJava {
     options.compilerArgs.add('-proc:full')
