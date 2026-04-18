@@ -43,13 +43,16 @@ public class CredentialController {
                             "name", u.name(),
                             "age", u.age(),
                             "countryCode", u.countryCode(),
-                            "credentialHash", u.credentialHash().toString(16).substring(0, 16) + "...",
+                            "sigR", u.signature().r().affineU().toString(16).substring(0, 16) + "...",
                             "expectedEligible", ageOk && countryOk);
                 }).toList();
 
+        var issuerPk = issuerService.getIssuerPublicKey();
         return ResponseEntity.ok(Map.of(
                 "users", users,
                 "minAge", issuerService.getMinAge(),
+                "issuerPkU", issuerPk.affineU().toString(16).substring(0, 16) + "...",
+                "issuerPkV", issuerPk.affineV().toString(16).substring(0, 16) + "...",
                 "countryRoot", issuerService.getCountryRoot().toString(16).substring(0, 16) + "...",
                 "lockedUtxos", onChainService.getLockedUtxoCount(),
                 "countryTreeDepth", credentialService.getCountryTreeDepth()));
@@ -82,13 +85,13 @@ public class CredentialController {
                         "reason", "Country " + user.countryCode() + " is not in the approved list"));
             }
 
-            log.info("Generating credential proof for {}...", name);
+            log.info("Generating credential proof for {} (EdDSA-Jubjub)...", name);
             long start = System.currentTimeMillis();
             var result = credentialService.prove(
-                    user.credentialSecret(),
+                    issuerService.getIssuerPublicKey(),
+                    user.signature(),
                     BigInteger.valueOf(user.age()),
                     BigInteger.valueOf(user.countryCode()),
-                    user.credentialHash(),
                     minAge,
                     countryRoot,
                     countryProof.siblings(),
@@ -163,9 +166,10 @@ public class CredentialController {
             }
 
             // Submit to chain — if eligible=false, the on-chain validator will reject
+            var issuerPk = issuerService.getIssuerPublicKey();
             String txHash = onChainService.unlockWithProof(
                     lastProofResult.proof(),
-                    lastProofUser.credentialHash(),
+                    issuerPk.affineU(), issuerPk.affineV(),
                     BigInteger.valueOf(issuerService.getMinAge()),
                     issuerService.getCountryRoot(),
                     lastProofResult.eligible());

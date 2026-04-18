@@ -57,7 +57,8 @@ public class OnChainCredentialService {
                 new BytesPlutusData(vk.ic().get(1)),
                 new BytesPlutusData(vk.ic().get(2)),
                 new BytesPlutusData(vk.ic().get(3)),
-                new BytesPlutusData(vk.ic().get(4)));
+                new BytesPlutusData(vk.ic().get(4)),
+                new BytesPlutusData(vk.ic().get(5)));
 
         scriptAddr = AddressProvider.getEntAddress(script, Networks.testnet()).toBech32();
         log.info("Credential-gated script: {}", scriptAddr.substring(0, 40) + "...");
@@ -96,20 +97,20 @@ public class OnChainCredentialService {
      * Unlock ADA using a ZK credential proof.
      */
     public String unlockWithProof(Groth16ProofBLS381 proof,
-                                    BigInteger credentialHash, BigInteger minAge,
-                                    BigInteger countryRoot, boolean eligible) throws Exception {
+                                    BigInteger pkU, BigInteger pkV,
+                                    BigInteger minAge, BigInteger countryRoot,
+                                    boolean eligible) throws Exception {
         ensureInitialized();
 
         log.info("Unlocking with ZK credential proof (eligible={})...", eligible);
 
-        // Find a script UTXO
         var utxoResult = backendService.getUtxoService().getUtxos(scriptAddr, 10, 1);
         if (!utxoResult.isSuccessful() || utxoResult.getValue().isEmpty()) {
             throw new RuntimeException("No locked funds at script address");
         }
         Utxo scriptUtxo = utxoResult.getValue().get(0);
 
-        // Build redeemer with proof + public inputs
+        // Build redeemer: proof (A,B,C) + public inputs (pkU, pkV, minAge, countryRoot, eligible).
         var compressed = ProofCompressor.compressProof(proof);
         var redeemer = ConstrPlutusData.builder()
                 .alternative(0)
@@ -117,7 +118,8 @@ public class OnChainCredentialService {
                         new BytesPlutusData(compressed.piA()),
                         new BytesPlutusData(compressed.piB()),
                         new BytesPlutusData(compressed.piC()),
-                        new BytesPlutusData(toMinimalBytes(credentialHash)),
+                        new BytesPlutusData(toMinimalBytes(pkU)),
+                        new BytesPlutusData(toMinimalBytes(pkV)),
                         new BytesPlutusData(toMinimalBytes(minAge)),
                         new BytesPlutusData(toMinimalBytes(countryRoot)),
                         new BytesPlutusData(toMinimalBytes(eligible ? BigInteger.ONE : BigInteger.ZERO))))

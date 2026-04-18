@@ -3,6 +3,9 @@ package com.bloxbean.cardano.zeroj.usecases.identity.service;
 import com.bloxbean.cardano.zeroj.api.CurveId;
 import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
 import com.bloxbean.cardano.zeroj.circuit.FieldConfig;
+import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.EdDSAJubjub;
+import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.InCircuitEdDSAJubjub;
+import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.JubjubPoint;
 import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Prover;
@@ -20,11 +23,32 @@ import java.math.BigInteger;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Proves possession of an issuer-signed KYC credential, using in-circuit
+ * EdDSA-Jubjub verification (ADR-0016).
+ *
+ * <p>The flow is:
+ * <ol>
+ *   <li>{@link IssuerService} signs {@code Poseidon(age, country)} with the
+ *       issuer's Jubjub secret key at credential issuance. Holder receives
+ *       {@code (age, country, sigR, sigS)}.</li>
+ *   <li>{@link #prove} runs the credential circuit which:
+ *     <ul>
+ *       <li>Recomputes {@code claimsMsg = Poseidon(age, country)}.</li>
+ *       <li>Asserts {@code EdDSA.verify(issuerPk, claimsMsg, sigR, sigS)}.</li>
+ *       <li>Asserts {@code age ≥ minAge}.</li>
+ *       <li>Verifies the country Merkle-inclusion proof against the
+ *           approved-countries root.</li>
+ *     </ul>
+ *   </li>
+ *   <li>Returns a Groth16 BLS12-381 proof that can be verified on-chain by
+ *       the existing Plutus V3 Groth16 verifier.</li>
+ * </ol>
+ */
 @Service
 public class CredentialService {
 
     private static final Logger log = LoggerFactory.getLogger(CredentialService.class);
-    private static final BigInteger PRIME = FieldConfig.BLS12_381.prime();
 
     @Value("${zk.country-tree-depth}")
     private int countryTreeDepth;
@@ -39,7 +63,8 @@ public class CredentialService {
 
     @PostConstruct
     public void init() {
-        log.info("Compiling credential circuit (countryTreeDepth={})...", countryTreeDepth);
+        log.info("Compiling credential circuit (EdDSA-Jubjub, countryTreeDepth={})...",
+                countryTreeDepth);
 
         circuit = CredentialCircuit.build(countryTreeDepth);
         r1cs = circuit.compileR1CS(CurveId.BLS12_381);
@@ -59,20 +84,44 @@ public class CredentialService {
         log.info("Trusted setup complete. Ready to verify credentials.");
     }
 
-    public ProofResult prove(BigInteger credentialSecret, BigInteger age, BigInteger country,
-                              BigInteger credentialHash, BigInteger minAge, BigInteger countryRoot,
-                              BigInteger[] siblings, BigInteger[] pathBits) {
+    /**
+     * Generates a ZK proof that the caller possesses a valid signed credential
+     * with {@code age ≥ minAge} and {@code country ∈} approved-set.
+     *
+     * @param issuerPk  issuer's Jubjub public key (pk.u, pk.v appear as public inputs)
+     * @param sig       issuer's EdDSA signature over {@code Poseidon(age, country)}
+     * @param age       holder's age (secret)
+     * @param country   holder's country code (secret)
+     * @param minAge    minimum required age (public)
+     * @param countryRoot root of approved-countries Merkle tree (public)
+     * @param siblings  country Merkle proof siblings (secret)
+     * @param pathBits  country Merkle proof path bits (secret)
+     */
+    public ProofResult prove(JubjubPoint issuerPk, EdDSAJubjub.Signature sig,
+                             BigInteger age, BigInteger country,
+                             BigInteger minAge, BigInteger countryRoot,
+                             BigInteger[] siblings, BigInteger[] pathBits) {
 
         BigInteger eligible = age.compareTo(minAge) >= 0 ? BigInteger.ONE : BigInteger.ZERO;
 
+        // Compute the challenge-reduction witnesses required by
+        // InCircuitEdDSAJubjub.verify.
+        var kReduction = InCircuitEdDSAJubjub.witnessComputeKReduction(
+                sig.r(), issuerPk, computePoseidon(age, country));
+
         Map<String, List<BigInteger>> inputs = new HashMap<>();
-        inputs.put("credentialSecret", List.of(credentialSecret));
-        inputs.put("age", List.of(age));
-        inputs.put("country", List.of(country));
-        inputs.put("credentialHash", List.of(credentialHash));
+        inputs.put("pkU", List.of(issuerPk.affineU()));
+        inputs.put("pkV", List.of(issuerPk.affineV()));
         inputs.put("minAge", List.of(minAge));
         inputs.put("countryRoot", List.of(countryRoot));
         inputs.put("eligible", List.of(eligible));
+        inputs.put("age", List.of(age));
+        inputs.put("country", List.of(country));
+        inputs.put("sigRU", List.of(sig.r().affineU()));
+        inputs.put("sigRV", List.of(sig.r().affineV()));
+        inputs.put("sigS", List.of(sig.s()));
+        inputs.put("kModL", List.of(kReduction.kModL()));
+        inputs.put("kQuotient", List.of(kReduction.kQuotient()));
 
         for (int i = 0; i < countryTreeDepth; i++) {
             inputs.put("sibling_" + i, List.of(siblings[i]));
@@ -85,11 +134,6 @@ public class CredentialService {
                 constraints, r1cs.numWires());
 
         return new ProofResult(proof, eligible.equals(BigInteger.ONE), witness);
-    }
-
-    public BigInteger computeCredentialHash(BigInteger credentialSecret, BigInteger age, BigInteger country) {
-        BigInteger claimsHash = computePoseidon(age, country);
-        return computePoseidon(credentialSecret, claimsHash);
     }
 
     public Groth16SetupBLS381.SetupResult getSetupResult() { return setupResult; }

@@ -18,7 +18,10 @@ cardano:
 zk:
   # Country Merkle tree depth (4 = 16 countries max)
   country-tree-depth: 4
-  pot-power: 12
+  # Powers of Tau domain size. 2^pot-power must exceed circuit constraint count.
+  # EdDSA-Jubjub adds ~20k constraints over the old Poseidon-MAC; 2^16 = 65536
+  # safely accommodates 23k constraints + 48k wires.
+  pot-power: 16
 
 credential:
   # Minimum age for eligibility
