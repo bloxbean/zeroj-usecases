@@ -1,0 +1,28 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: personhood-airdrop-demo
+
+cardano:
+  network: yaci
+  yaci:
+    base-url: http://localhost:8080/api/v1/
+    admin-url: http://localhost:10000
+    mnemonic: "test test test test test test test test test test test test test test test test test test test test test test test sauce"
+  preprod:
+    blockfrost-url: https://cardano-preprod.blockfrost.io/api/v0
+    blockfrost-project-id: ${BLOCKFROST_PROJECT_ID:}
+
+zk:
+  # Powers of Tau domain size. 2^pot-power must exceed circuit constraint
+  # count + 1. Circuit ≈ 20.6k constraints; 2^15 = 32768 is sufficient and
+  # ~2x faster than power=16.
+  pot-power: 15
+
+faucet:
+  # ADA paid out per successful claim.
+  ada-per-claim: 2
+  # Demo "epoch" identifier — in production this would be Cardano epoch number.
+  current-epoch: 1

@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Sybil-Resistant Airdrop — ZeroJ</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+        :root {
+            --bg: #0e1117;
+            --panel: #161b22;
+            --border: #30363d;
+            --text: #c9d1d9;
+            --muted: #8b949e;
+            --accent: #58a6ff;
+            --good: #3fb950;
+            --bad: #f85149;
+            --warn: #d29922;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 24px;
+        }
+        h1 { color: var(--accent); margin-top: 0; font-weight: 600; }
+        h2 { color: var(--text); margin-top: 24px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .meta { color: var(--muted); font-size: 13px; }
+        code { background: #21262d; padding: 2px 6px; border-radius: 4px; font-size: 13px; color: #e6edf3; font-family: ui-monospace, monospace; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+        th { color: var(--muted); font-weight: 500; }
+        button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        button:hover { opacity: 0.9; }
+        button:disabled { background: #444c56; color: #8b949e; cursor: not-allowed; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 500; }
+        .badge.ok { background: rgba(63, 185, 80, 0.15); color: var(--good); }
+        .badge.no { background: rgba(248, 81, 73, 0.15); color: var(--bad); }
+        .toast {
+            position: fixed; right: 24px; bottom: 24px;
+            background: var(--panel); border: 1px solid var(--border);
+            padding: 12px 18px; border-radius: 8px; max-width: 480px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-size: 13px;
+            display: none;
+        }
+        .toast.show { display: block; }
+        .toast.good { border-color: var(--good); }
+        .toast.bad { border-color: var(--bad); }
+        .desc { color: var(--muted); margin-bottom: 12px; line-height: 1.6; }
+    </style>
+</head>
+<body>
+    <h1>🪂 Sybil-Resistant Airdrop</h1>
+    <p class="desc">
+        Each personhood credential can claim ADA <strong>once per epoch</strong>.
+        The ZK proof commits to a <em>nullifier</em> = Poseidon(personhoodId, epoch).
+        Cardano enforces nullifier uniqueness on-chain via the minted claim NFT
+        (one NFT per nullifier per policy ID). Same person trying again in the
+        same epoch produces the same nullifier → tx fails to build.
+    </p>
+
+    <div class="panel">
+        <h2 style="margin-top:0; border:none">Issuer & Faucet</h2>
+        <div class="grid">
+            <div><span class="meta">Issuer pkU:</span> <code id="pkU">…</code></div>
+            <div><span class="meta">Issuer pkV:</span> <code id="pkV">…</code></div>
+            <div><span class="meta">Current epoch:</span> <code id="epoch">…</code></div>
+            <div><span class="meta">ADA per claim:</span> <code id="ada">…</code></div>
+            <div><span class="meta">Total claims this run:</span> <code id="totalClaims">…</code></div>
+            <div><span class="meta">Faucet policy ID:</span> <code id="policyId">…</code></div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2 style="margin-top:0; border:none">Personhood Holders</h2>
+        <p class="meta">
+            Each row holds one personhood credential signed by the issuer above.
+            Click <strong>Claim</strong> to generate the ZK proof and mint the
+            claim NFT on-chain (~30-60s per proof for this circuit size).
+        </p>
+        <table>
+            <thead><tr><th>Name</th><th>Personhood ID</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody id="users"></tbody>
+        </table>
+    </div>
+
+    <div class="panel">
+        <h2 style="margin-top:0; border:none">Claim History (this session)</h2>
+        <table>
+            <thead><tr><th>Name</th><th>Nullifier</th><th>Tx Hash</th><th>Proving (ms)</th></tr></thead>
+            <tbody id="history"></tbody>
+        </table>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        async function refresh() {
+            const s = await (await fetch('/api/airdrop/status')).json();
+            document.getElementById('pkU').textContent = s.issuerPkU;
+            document.getElementById('pkV').textContent = s.issuerPkV;
+            document.getElementById('epoch').textContent = s.currentEpoch;
+            document.getElementById('ada').textContent = s.adaPerClaim;
+            document.getElementById('totalClaims').textContent = s.totalClaims;
+            document.getElementById('policyId').textContent = s.policyId;
+
+            const tbody = document.getElementById('users');
+            tbody.innerHTML = '';
+            for (const u of s.users) {
+                const tr = document.createElement('tr');
+                const claimed = u.alreadyClaimedThisEpoch;
+                tr.innerHTML = `
+                    <td><strong>${u.name}</strong></td>
+                    <td><code>${u.personhoodId}</code></td>
+                    <td>${claimed ? '<span class="badge no">Claimed</span>' : '<span class="badge ok">Eligible</span>'}</td>
+                    <td>${claimed ? '<button disabled>Claimed</button>' : `<button onclick="claim('${u.name}')">Claim ${s.adaPerClaim} ADA</button>`}</td>
+                `;
+                tbody.appendChild(tr);
+            }
+
+            const h = await (await fetch('/api/airdrop/history')).json();
+            const hbody = document.getElementById('history');
+            hbody.innerHTML = '';
+            for (const c of h.claims) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${c.name}</td>
+                    <td><code>${c.nullifier}</code></td>
+                    <td><code>${c.txHash.slice(0, 24)}…</code></td>
+                    <td>${c.provingMs}</td>
+                `;
+                hbody.appendChild(tr);
+            }
+        }
+
+        async function claim(name) {
+            toast(`Generating ZK proof for ${name}…`, 'normal');
+            try {
+                const res = await fetch('/api/airdrop/claim', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name})
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    toast(`✓ ${name} claimed ${data.ada} ADA — tx ${data.txHash.slice(0, 16)}…`, 'good');
+                } else if (res.status === 409) {
+                    toast(`✗ ${name}: already claimed this epoch (nullifier ${data.nullifier})`, 'bad');
+                } else if (data.onChainRejection) {
+                    toast(`✗ Plutus validator REJECTED: ${data.error}`, 'bad');
+                } else {
+                    toast(`✗ ${data.error}`, 'bad');
+                }
+            } catch (e) {
+                toast(`✗ Network error: ${e.message}`, 'bad');
+            }
+            await refresh();
+        }
+
+        function toast(msg, kind) {
+            const el = document.getElementById('toast');
+            el.textContent = msg;
+            el.className = 'toast show ' + (kind || 'normal');
+            setTimeout(() => el.classList.remove('show'), 7000);
+        }
+
+        refresh();
+        setInterval(refresh, 5000);
+    </script>
+</body>
+</html>
