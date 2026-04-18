@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Selective Disclosure of Multi-Field VC — ZeroJ</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+        :root {
+            --bg: #0e1117; --panel: #161b22; --border: #30363d;
+            --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
+            --good: #3fb950; --bad: #f85149;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
+        h1 { color: var(--accent); margin-top: 0; }
+        h2 { border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+        .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin-bottom: 14px; }
+        .meta { color: var(--muted); font-size: 13px; }
+        code { background: #21262d; padding: 2px 6px; border-radius: 4px; font-size: 12px; color: #e6edf3; font-family: ui-monospace, monospace; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+        th { color: var(--muted); font-weight: 500; }
+        button { background: var(--accent); color: white; border: none; padding: 5px 12px; border-radius: 5px; cursor: pointer; font-size: 12px; margin-right: 4px; }
+        button.secondary { background: #6e7681; }
+        button:disabled { background: #444; cursor: not-allowed; }
+        .gate { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        .gate-panel { padding: 14px; border: 1px solid var(--border); border-radius: 6px; background: rgba(255,255,255,0.02); }
+        .gate-panel h3 { margin-top: 0; color: var(--accent); }
+        .toast { position: fixed; right: 16px; bottom: 16px; background: var(--panel); border: 1px solid var(--border); padding: 10px 16px; border-radius: 6px; max-width: 480px; font-size: 13px; display: none; }
+        .toast.show { display: block; }
+        .toast.good { border-color: var(--good); }
+        .toast.bad { border-color: var(--bad); }
+        .desc { color: var(--muted); line-height: 1.6; }
+    </style>
+</head>
+<body>
+    <h1>📜 Selective Disclosure of Multi-Field VC</h1>
+    <p class="desc">
+        Each user holds <strong>one</strong> issuer-signed credential containing
+        <code>(dobYear, country, role, salaryBracket, name)</code>. The same credential
+        can prove multiple distinct predicates without revealing the underlying fields.
+        This demo gates two different DApps:
+        <strong>Adult Library</strong> (≥21 + EU resident) and
+        <strong>Healthcare Portal</strong> (Doctor + ≥30).
+    </p>
+
+    <div class="panel">
+        <h2 style="margin-top:0; border:none">Issuer & Demo State</h2>
+        <p class="meta">Issuer pkU: <code id="pkU">…</code></p>
+        <p class="meta">Current Year: <code id="cy">…</code></p>
+    </div>
+
+    <div class="panel">
+        <h2 style="margin-top:0; border:none">Credentials Issued (full view — for demo)</h2>
+        <p class="meta">In a real deployment, fields are <em>secret</em> to verifiers; you'd never see this table.</p>
+        <table>
+            <thead><tr><th>Name</th><th>DOB</th><th>Country</th><th>Role</th><th>Salary</th><th>Adult Resident?</th><th>Senior Doctor?</th></tr></thead>
+            <tbody id="users"></tbody>
+        </table>
+    </div>
+
+    <div class="gate">
+        <div class="gate-panel">
+            <h3>🏛️ Adult Library Gate</h3>
+            <p class="meta">Predicate: age ≥ 21 AND country ∈ {USA, GBR, DEU, FRA, JPN}.</p>
+            <p><code id="adultAddr">…</code></p>
+            <p class="meta">Locked UTxOs: <code id="adultUtxos">0</code></p>
+            <button onclick="lockGate('adult', 5)">Lock 5 ADA</button>
+        </div>
+        <div class="gate-panel">
+            <h3>🏥 Healthcare Portal Gate</h3>
+            <p class="meta">Predicate: role == Doctor AND age ≥ 30.</p>
+            <p><code id="doctorAddr">…</code></p>
+            <p class="meta">Locked UTxOs: <code id="doctorUtxos">0</code></p>
+            <button onclick="lockGate('doctor', 5)">Lock 5 ADA</button>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2 style="margin-top:0; border:none">Prove + Unlock (per user, per gate)</h2>
+        <table>
+            <thead><tr><th>Name</th><th>Adult Library</th><th>Healthcare Portal</th></tr></thead>
+            <tbody id="actions"></tbody>
+        </table>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        async function refresh() {
+            const s = await (await fetch('/api/predicate/status')).json();
+            document.getElementById('pkU').textContent = s.issuerPkU;
+            document.getElementById('cy').textContent = s.currentYear;
+            document.getElementById('adultAddr').textContent = s.adultGateAddr.slice(0, 40) + '...';
+            document.getElementById('doctorAddr').textContent = s.doctorGateAddr.slice(0, 40) + '...';
+            document.getElementById('adultUtxos').textContent = s.adultGateUtxos;
+            document.getElementById('doctorUtxos').textContent = s.doctorGateUtxos;
+
+            const eu = [840, 826, 276, 250, 392];
+            const cy = s.currentYear;
+            const ub = document.getElementById('users');
+            ub.innerHTML = '';
+            for (const u of s.users) {
+                const adult = ((cy - u.dobYear) >= 21) && eu.includes(u.country);
+                const doctor = u.role === 'Doctor' && (cy - u.dobYear) >= 30;
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td><strong>${u.name}</strong></td>
+                    <td>${u.dobYear}</td><td>${u.country}</td>
+                    <td>${u.role}</td><td>${u.salaryBracket}</td>
+                    <td>${adult ? '✓' : '✗'}</td>
+                    <td>${doctor ? '✓' : '✗'}</td>`;
+                ub.appendChild(tr);
+            }
+
+            const ab = document.getElementById('actions');
+            ab.innerHTML = '';
+            for (const u of s.users) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td><strong>${u.name}</strong></td>
+                    <td>
+                        <button onclick="prove('adult','${u.name}')">Prove</button>
+                        <button class="secondary" onclick="unlock('adult','${u.name}')">Unlock</button>
+                    </td>
+                    <td>
+                        <button onclick="prove('doctor','${u.name}')">Prove</button>
+                        <button class="secondary" onclick="unlock('doctor','${u.name}')">Unlock</button>
+                    </td>`;
+                ab.appendChild(tr);
+            }
+        }
+
+        async function prove(pred, name) {
+            toast(`Generating ${pred} proof for ${name}…`);
+            try {
+                const r = await fetch(`/api/predicate/prove-${pred}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name})});
+                const d = await r.json();
+                if (r.ok) toast(`✓ ${name}: ${pred} eligible=${d.eligible} (${d.provingTimeMs}ms)`, d.eligible ? 'good' : 'bad');
+                else toast(`✗ ${d.error}`, 'bad');
+            } catch (e) { toast(`✗ ${e.message}`, 'bad'); }
+        }
+
+        async function unlock(pred, name) {
+            toast(`Submitting ${pred} unlock for ${name}…`);
+            try {
+                const r = await fetch(`/api/predicate/unlock-${pred}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name})});
+                const d = await r.json();
+                if (r.ok) toast(`✓ Unlocked: tx ${d.txHash.slice(0, 16)}…`, 'good');
+                else if (d.onChainRejection) toast(`✗ Plutus REJECTED: ${d.error}`, 'bad');
+                else toast(`✗ ${d.error}`, 'bad');
+            } catch (e) { toast(`✗ ${e.message}`, 'bad'); }
+            await refresh();
+        }
+
+        async function lockGate(gate, ada) {
+            toast(`Locking ${ada} ADA at ${gate}…`);
+            try {
+                const r = await fetch('/api/predicate/lock', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gate, adaAmount: ada})});
+                const d = await r.json();
+                if (r.ok) toast(`✓ Locked tx ${d.txHash.slice(0, 16)}…`, 'good');
+                else toast(`✗ ${d.error}`, 'bad');
+            } catch (e) { toast(`✗ ${e.message}`, 'bad'); }
+            await refresh();
+        }
+
+        function toast(msg, kind) {
+            const el = document.getElementById('toast');
+            el.textContent = msg;
+            el.className = 'toast show ' + (kind || '');
+            setTimeout(() => el.classList.remove('show'), 7000);
+        }
+
+        refresh();
+        setInterval(refresh, 5000);
+    </script>
+</body>
+</html>
