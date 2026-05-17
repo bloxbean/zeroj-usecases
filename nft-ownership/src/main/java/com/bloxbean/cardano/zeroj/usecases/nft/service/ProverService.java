@@ -1,15 +1,19 @@
 package com.bloxbean.cardano.zeroj.usecases.nft.service;
 
 import com.bloxbean.cardano.zeroj.api.CurveId;
+import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
+import com.bloxbean.cardano.zeroj.bls12381.ec.G1Point;
+import com.bloxbean.cardano.zeroj.bls12381.ec.G2Point;
+import com.bloxbean.cardano.zeroj.bls12381.field.Fp;
+import com.bloxbean.cardano.zeroj.bls12381.field.Fp2;
+import com.bloxbean.cardano.zeroj.bls12381.pairing.BLS12381Pairing;
 import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
 import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Prover;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
 import com.bloxbean.cardano.zeroj.usecases.nft.circuit.NFTOwnershipCircuit;
-import com.bloxbean.cardano.zeroj.verifier.groth16.bls12381.field.*;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,7 +44,7 @@ public class ProverService {
 
     private CircuitBuilder circuit;
     private R1CSConstraintSystem r1cs;
-    private Groth16Prover.R1CSConstraint[] constraints;
+    private List<R1CSConstraint> constraints;
     private Groth16SetupBLS381.SetupResult setupResult;
 
     @PostConstruct
@@ -53,9 +57,7 @@ public class ProverService {
         log.info("Circuit compiled: {} constraints, {} wires, {} public inputs",
                 r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs());
 
-        constraints = r1cs.constraints().stream()
-                .map(c -> new Groth16Prover.R1CSConstraint(c.a(), c.b(), c.c()))
-                .toArray(Groth16Prover.R1CSConstraint[]::new);
+        constraints = r1cs.constraints();
 
         // Dev/test trusted setup (single-party — NOT for production)
         log.info("Running dev trusted setup (power={})...", potPower);
@@ -184,12 +186,12 @@ public class ProverService {
                         a, b));
     }
 
-    private static G1Point toG1(com.bloxbean.cardano.zeroj.crypto.ec.JacobianG1BLS381.AffineG1 p) {
+    private static G1Point toG1(com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG1BLS381.AffineG1 p) {
         if (p.isInfinity()) return G1Point.INFINITY;
         return new G1Point(Fp.of(p.xBigInt()), Fp.of(p.yBigInt()));
     }
 
-    private static G2Point toG2(com.bloxbean.cardano.zeroj.crypto.ec.JacobianG2BLS381.AffineG2 p) {
+    private static G2Point toG2(com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG2BLS381.AffineG2 p) {
         if (p.isInfinity()) return G2Point.INFINITY;
         return new G2Point(
                 Fp2.of(Fp.of(p.x().reBigInt()), Fp.of(p.x().imBigInt())),

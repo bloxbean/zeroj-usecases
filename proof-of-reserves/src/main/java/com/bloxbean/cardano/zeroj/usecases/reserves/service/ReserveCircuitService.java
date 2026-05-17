@@ -1,10 +1,10 @@
 package com.bloxbean.cardano.zeroj.usecases.reserves.service;
 
 import com.bloxbean.cardano.zeroj.api.CurveId;
+import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
 import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
 import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Prover;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
@@ -38,7 +38,7 @@ public class ReserveCircuitService {
 
     private CircuitBuilder circuit;
     private R1CSConstraintSystem r1cs;
-    private Groth16Prover.R1CSConstraint[] constraints;
+    private List<R1CSConstraint> constraints;
     private Groth16SetupBLS381.SetupResult setupResult;
 
     @PostConstruct
@@ -52,9 +52,7 @@ public class ReserveCircuitService {
         log.info("Circuit compiled: {} constraints, {} wires, {} public",
                 r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs());
 
-        constraints = r1cs.constraints().stream()
-                .map(c -> new Groth16Prover.R1CSConstraint(c.a(), c.b(), c.c()))
-                .toArray(Groth16Prover.R1CSConstraint[]::new);
+        constraints = r1cs.constraints();
 
         // Setup with cache
         Path setupCache = Path.of(CACHE_DIR, "setup-solvency.bin");

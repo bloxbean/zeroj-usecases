@@ -1,13 +1,16 @@
 package com.bloxbean.cardano.zeroj.usecases.nft;
 
 import com.bloxbean.cardano.zeroj.api.CurveId;
+import com.bloxbean.cardano.zeroj.bls12381.ec.G1Point;
+import com.bloxbean.cardano.zeroj.bls12381.ec.G2Point;
+import com.bloxbean.cardano.zeroj.bls12381.field.Fp;
+import com.bloxbean.cardano.zeroj.bls12381.field.Fp2;
+import com.bloxbean.cardano.zeroj.bls12381.pairing.BLS12381Pairing;
 import com.bloxbean.cardano.zeroj.circuit.FieldConfig;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Prover;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
 import com.bloxbean.cardano.zeroj.usecases.nft.circuit.NFTOwnershipCircuit;
-import com.bloxbean.cardano.zeroj.verifier.groth16.bls12381.field.*;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigInteger;
@@ -43,9 +46,7 @@ class CircuitTest {
         var circuit = NFTOwnershipCircuit.build(depth);
         var r1cs = circuit.compileR1CS(CurveId.BLS12_381);
 
-        var constraints = r1cs.constraints().stream()
-                .map(c -> new Groth16Prover.R1CSConstraint(c.a(), c.b(), c.c()))
-                .toArray(Groth16Prover.R1CSConstraint[]::new);
+        var constraints = r1cs.constraints();
 
         // Simulate: holder with secretKey=42, tokenName=100
         BigInteger secretKey = BigInteger.valueOf(42);
@@ -146,12 +147,12 @@ class CircuitTest {
                 a, b);
     }
 
-    private static G1Point toG1(com.bloxbean.cardano.zeroj.crypto.ec.JacobianG1BLS381.AffineG1 p) {
+    private static G1Point toG1(com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG1BLS381.AffineG1 p) {
         if (p.isInfinity()) return G1Point.INFINITY;
         return new G1Point(Fp.of(p.xBigInt()), Fp.of(p.yBigInt()));
     }
 
-    private static G2Point toG2(com.bloxbean.cardano.zeroj.crypto.ec.JacobianG2BLS381.AffineG2 p) {
+    private static G2Point toG2(com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG2BLS381.AffineG2 p) {
         if (p.isInfinity()) return G2Point.INFINITY;
         return new G2Point(
                 Fp2.of(Fp.of(p.x().reBigInt()), Fp.of(p.x().imBigInt())),

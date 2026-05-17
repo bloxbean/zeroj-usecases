@@ -1,11 +1,11 @@
 package com.bloxbean.cardano.zeroj.usecases.voting.service;
 
 import com.bloxbean.cardano.zeroj.api.CurveId;
+import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
 import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
 import com.bloxbean.cardano.zeroj.circuit.FieldConfig;
 import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Prover;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
@@ -36,7 +36,7 @@ public class VoteCircuitService {
 
     private CircuitBuilder circuit;
     private R1CSConstraintSystem r1cs;
-    private Groth16Prover.R1CSConstraint[] constraints;
+    private List<R1CSConstraint> constraints;
     private Groth16SetupBLS381.SetupResult setupResult;
 
     @PostConstruct
@@ -49,9 +49,7 @@ public class VoteCircuitService {
         log.info("Circuit compiled: {} constraints, {} wires, {} public inputs",
                 r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs());
 
-        constraints = r1cs.constraints().stream()
-                .map(c -> new Groth16Prover.R1CSConstraint(c.a(), c.b(), c.c()))
-                .toArray(Groth16Prover.R1CSConstraint[]::new);
+        constraints = r1cs.constraints();
 
         log.info("Running dev trusted setup (power={})...", potPower);
         var srs = PowersOfTauBLS381.generate(potPower);

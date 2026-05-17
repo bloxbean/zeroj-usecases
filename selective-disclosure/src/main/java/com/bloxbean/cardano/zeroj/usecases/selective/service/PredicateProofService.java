@@ -1,13 +1,13 @@
 package com.bloxbean.cardano.zeroj.usecases.selective.service;
 
 import com.bloxbean.cardano.zeroj.api.CurveId;
+import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
 import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
 import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.EdDSAJubjub;
 import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.InCircuitEdDSAJubjub;
 import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.JubjubPoint;
 import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Prover;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
@@ -86,9 +86,7 @@ public class PredicateProofService {
         var r1cs = circuit.compileR1CS(CurveId.BLS12_381);
         log.info("  {} — {} constraints, {} wires, {} public",
                 name, r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs());
-        var constraints = r1cs.constraints().stream()
-                .map(c -> new Groth16Prover.R1CSConstraint(c.a(), c.b(), c.c()))
-                .toArray(Groth16Prover.R1CSConstraint[]::new);
+        var constraints = r1cs.constraints();
 
         Groth16SetupBLS381.SetupResult setup = null;
         try {
@@ -188,8 +186,8 @@ public class PredicateProofService {
     public int currentYear() { return currentYear; }
 
     public record CompiledPredicate(CircuitBuilder circuit, R1CSConstraintSystem r1cs,
-                                    Groth16Prover.R1CSConstraint[] constraints,
-                                    Groth16SetupBLS381.SetupResult setup) {}
+                                    List<R1CSConstraint> constraints,
+                                    Groth16SetupBLS381.SetupResult  setup) {}
 
     public record ProofBundle(Groth16ProofBLS381 proof, boolean eligible) {}
 }

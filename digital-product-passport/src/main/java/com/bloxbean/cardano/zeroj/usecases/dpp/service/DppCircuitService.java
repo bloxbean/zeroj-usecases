@@ -1,14 +1,11 @@
 package com.bloxbean.cardano.zeroj.usecases.dpp.service;
 
 import com.bloxbean.cardano.zeroj.api.CurveId;
+import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
 import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
 import com.bloxbean.cardano.zeroj.circuit.FieldConfig;
-import com.bloxbean.cardano.zeroj.crypto.ec.JacobianG1BLS381;
-import com.bloxbean.cardano.zeroj.crypto.ec.JacobianG2BLS381;
-import com.bloxbean.cardano.zeroj.crypto.field.MontFr381;
 import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Prover;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
@@ -115,9 +112,7 @@ public class DppCircuitService {
         log.info("  {} — {} constraints, {} wires, {} public",
                 name, r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs());
 
-        var constraints = r1cs.constraints().stream()
-                .map(c -> new Groth16Prover.R1CSConstraint(c.a(), c.b(), c.c()))
-                .toArray(Groth16Prover.R1CSConstraint[]::new);
+        var constraints = r1cs.constraints();
 
         // Try loading setup from cache
         Path setupCache = Path.of(CACHE_DIR, "setup-" + name + ".bin");
@@ -226,7 +221,7 @@ public class DppCircuitService {
     // --- Records ---
 
     public record CircuitSetup(CircuitBuilder circuit, R1CSConstraintSystem r1cs,
-                                Groth16Prover.R1CSConstraint[] constraints,
+                                List<R1CSConstraint> constraints,
                                 Groth16SetupBLS381.SetupResult setup) {}
 
     public record ProofResult(Groth16ProofBLS381 proof, BigInteger[] witness) {}

@@ -1,0 +1,79 @@
+import java.util.Locale
+
+plugins {
+    id 'base'
+}
+
+def usecaseProjects = [
+        'digital-product-passport',
+        'identity-kyc',
+        'nft-ownership',
+        'personhood-airdrop',
+        'private-voting',
+        'proof-of-reserves',
+        'selective-disclosure'
+]
+
+def taskSuffix = { String projectName ->
+    projectName
+            .split('-')
+            .collect { part -> part.substring(0, 1).toUpperCase(Locale.ROOT) + part.substring(1) }
+            .join('')
+}
+
+def wrapperCommand = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')
+        ? 'gradlew.bat'
+        : './gradlew'
+
+def registerUsecaseGradleTask = { String taskPrefix, String gradleTask, List<String> extraArgs, String action ->
+    usecaseProjects.collect { projectName ->
+        def registeredTaskName = "${taskPrefix}${taskSuffix(projectName)}"
+        tasks.register(registeredTaskName, Exec) {
+            group = 'zeroj usecases'
+            description = "${action} ${projectName}"
+            workingDir = layout.projectDirectory.dir(projectName).asFile
+            executable = wrapperCommand
+            args = [gradleTask] + extraArgs
+        }
+        registeredTaskName
+    }
+}
+
+def buildTaskNames = registerUsecaseGradleTask('build', 'build', [], 'Builds')
+def buildNoTestTaskNames = registerUsecaseGradleTask('buildNoTest', 'build', ['-x', 'test'], 'Builds without tests')
+def testTaskNames = registerUsecaseGradleTask('test', 'test', [], 'Runs tests for')
+def cleanTaskNames = registerUsecaseGradleTask('clean', 'clean', [], 'Cleans')
+
+tasks.register('buildAllUsecases') {
+    group = 'zeroj usecases'
+    description = 'Builds every ZeroJ usecase project, including tests.'
+    dependsOn buildTaskNames
+}
+
+tasks.register('buildAllUsecasesNoTests') {
+    group = 'zeroj usecases'
+    description = 'Builds every ZeroJ usecase project without running tests.'
+    dependsOn buildNoTestTaskNames
+}
+
+tasks.register('testAllUsecases') {
+    group = 'zeroj usecases'
+    description = 'Runs tests for every ZeroJ usecase project.'
+    dependsOn testTaskNames
+}
+
+tasks.register('cleanAllUsecases') {
+    group = 'zeroj usecases'
+    description = 'Cleans every ZeroJ usecase project.'
+    dependsOn cleanTaskNames
+}
+
+tasks.named('build') {
+    description = 'Builds every ZeroJ usecase project, including tests.'
+    dependsOn tasks.named('buildAllUsecases')
+}
+
+tasks.named('clean') {
+    description = 'Cleans every ZeroJ usecase project.'
+    dependsOn tasks.named('cleanAllUsecases')
+}

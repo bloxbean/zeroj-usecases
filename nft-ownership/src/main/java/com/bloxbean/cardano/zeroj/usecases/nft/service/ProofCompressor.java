@@ -1,7 +1,7 @@
 package com.bloxbean.cardano.zeroj.usecases.nft.service;
 
-import com.bloxbean.cardano.zeroj.crypto.ec.JacobianG1BLS381;
-import com.bloxbean.cardano.zeroj.crypto.ec.JacobianG2BLS381;
+import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG1BLS381;
+import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG2BLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.onchain.julc.SnarkjsToCardano;
