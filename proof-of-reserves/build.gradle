@@ -18,7 +18,7 @@ repositories {
 }
 
 ext {
-    zerojVersion = '0.1.0-pre2-42aa9a0-SNAPSHOT'
+    zerojVersion = '0.1.0-pre2-029cd50-SNAPSHOT'
     julcVersion = '0.1.0-pre12'
     cclVersion = '0.8.0-pre4'
 }

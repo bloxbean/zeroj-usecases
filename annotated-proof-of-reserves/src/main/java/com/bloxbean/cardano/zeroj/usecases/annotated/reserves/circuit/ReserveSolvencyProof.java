@@ -12,24 +12,22 @@ import com.bloxbean.cardano.zeroj.circuit.annotation.ZkBool;
 import com.bloxbean.cardano.zeroj.circuit.annotation.ZkContext;
 import com.bloxbean.cardano.zeroj.circuit.annotation.ZkField;
 import com.bloxbean.cardano.zeroj.circuit.annotation.ZkUInt;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParams;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 import com.bloxbean.cardano.zeroj.circuit.lib.zk.ZkMerkle;
-import com.bloxbean.cardano.zeroj.circuit.lib.zk.ZkMiMC;
-
-import java.util.Objects;
+import com.bloxbean.cardano.zeroj.circuit.lib.zk.ZkPoseidonN;
 
 @ZKCircuit(
         name = "annotated-reserve-solvency",
-        nameTemplate = "annotated-reserve-solvency-d{depth}-{hashType}",
+        nameTemplate = "annotated-reserve-solvency-d{depth}-bls-poseidon",
         version = 1)
 public class ReserveSolvencyProof {
-    private final int depth;
-    private final ZkMerkle.HashType hashType;
+    private static final PoseidonParams POSEIDON = PoseidonParamsBLS12_381T3.INSTANCE;
 
-    public ReserveSolvencyProof(
-            @CircuitParam("depth") int depth,
-            @CircuitParam("hashType") ZkMerkle.HashType hashType) {
+    private final int depth;
+
+    public ReserveSolvencyProof(@CircuitParam("depth") int depth) {
         this.depth = depth;
-        this.hashType = Objects.requireNonNull(hashType, "hashType");
     }
 
     @Prove
@@ -43,18 +41,20 @@ public class ReserveSolvencyProof {
             @Public @UInt(bits = 64) ZkUInt claimedLiabilities,
             @Secret @FixedSize(param = "depth") ZkArray<ZkField> liabilitySiblings,
             @Secret @FixedSize(param = "depth") ZkArray<ZkBool> liabilityPathBits) {
-        var liabilityLeaf = ZkMiMC.hash(
+        var liabilityLeaf = ZkPoseidonN.hash(
                 zk,
-                ZkMiMC.hash(zk, accountId, accountBalance.asField()),
+                POSEIDON,
+                accountId,
+                accountBalance.asField(),
                 accountSalt);
 
-        var accountIncluded = ZkMerkle.isMember(
+        var accountIncluded = ZkMerkle.isMemberPoseidon(
                 zk,
+                POSEIDON,
                 liabilityLeaf,
                 liabilitiesRoot,
                 liabilitySiblings,
-                liabilityPathBits,
-                hashType);
+                liabilityPathBits);
         var exchangeIsSolvent = assetValue.gte(claimedLiabilities);
         var accountIsCoveredByClaim = accountBalance.lte(claimedLiabilities);
 

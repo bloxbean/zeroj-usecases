@@ -9,10 +9,13 @@ import com.bloxbean.cardano.zeroj.circuit.annotation.ZkBool;
 import com.bloxbean.cardano.zeroj.circuit.annotation.ZkContext;
 import com.bloxbean.cardano.zeroj.circuit.annotation.ZkField;
 import com.bloxbean.cardano.zeroj.circuit.annotation.ZkUInt;
-import com.bloxbean.cardano.zeroj.circuit.lib.zk.ZkMiMC;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParams;
+import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
+import com.bloxbean.cardano.zeroj.circuit.lib.zk.ZkPoseidonN;
 
 @ZKCircuit(name = "annotated-compliance-credential", version = 1)
 public class ComplianceCredentialProof {
+    private static final PoseidonParams POSEIDON = PoseidonParamsBLS12_381T3.INSTANCE;
 
     @Prove
     ZkBool prove(
@@ -24,12 +27,12 @@ public class ComplianceCredentialProof {
             @Public @UInt(bits = 8) ZkUInt minimumAge,
             @Public @UInt(bits = 16) ZkUInt requiredCountryCode,
             @Public ZkField credentialCommitment) {
-        var computedCommitment = ZkMiMC.hash(
+        var computedCommitment = ZkPoseidonN.hash(
                 zk,
-                ZkMiMC.hash(
-                        zk,
-                        ZkMiMC.hash(zk, age.asField(), countryCode.asField()),
-                        notSanctioned.asField()),
+                POSEIDON,
+                age.asField(),
+                countryCode.asField(),
+                notSanctioned.asField(),
                 credentialSalt);
 
         return age.gte(minimumAge)
