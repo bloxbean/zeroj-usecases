@@ -38,7 +38,7 @@ dependencies {
 }
 
 application {
-    mainClass = 'com.bloxbean.cardano.zeroj.usecases.annotated.voting.PrivateVotingDemo'
+    mainClass = 'com.bloxbean.cardano.zeroj.usecases.annotated.matrix.BatchThresholdMatrixDemo'
 }
 
 tasks.withType(JavaCompile).configureEach {

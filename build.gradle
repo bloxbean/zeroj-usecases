@@ -12,6 +12,7 @@ def usecaseProjects = [
         'private-voting',
         'proof-of-reserves',
         'selective-disclosure',
+        'annotated-batch-threshold-matrix',
         'annotated-private-voting',
         'annotated-proof-of-reserves',
         'annotated-compliance-credential'
