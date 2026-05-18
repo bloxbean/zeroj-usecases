@@ -6,7 +6,7 @@ import com.bloxbean.cardano.julc.stdlib.Builtins;
 import com.bloxbean.cardano.julc.stdlib.annotation.Entrypoint;
 import com.bloxbean.cardano.julc.stdlib.annotation.Param;
 import com.bloxbean.cardano.julc.stdlib.annotation.SpendingValidator;
-import com.bloxbean.cardano.zeroj.onchain.julc.Groth16BLS12381;
+import com.bloxbean.cardano.zeroj.onchain.julc.groth16.lib.Groth16BLS12381Lib;
 
 import java.math.BigInteger;
 import java.util.Optional;
@@ -39,8 +39,8 @@ public class SeniorDoctorValidator {
         BigInteger pub2 = Builtins.byteStringToInteger(true, proof.currentYear());
         BigInteger pub3 = Builtins.byteStringToInteger(true, proof.eligible());
 
-        PlutusData publicInputs = Groth16BLS12381.publicInputs(pub0, pub1, pub2, pub3);
-        boolean proofValid = Groth16BLS12381.verify(publicInputs,
+        PlutusData publicInputs = Groth16BLS12381Lib.publicInputs(pub0, pub1, pub2, pub3);
+        boolean proofValid = Groth16BLS12381Lib.verify(publicInputs,
                 proof.piA(), proof.piB(), proof.piC(),
                 vkAlpha, vkBeta, vkGamma, vkDelta, vkIc);
         return isEligible && proofValid;

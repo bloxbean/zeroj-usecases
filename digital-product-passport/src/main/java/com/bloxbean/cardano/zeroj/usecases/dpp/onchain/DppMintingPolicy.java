@@ -12,7 +12,7 @@ import com.bloxbean.cardano.julc.stdlib.annotation.Param;
 import com.bloxbean.cardano.julc.stdlib.lib.ContextsLib;
 import com.bloxbean.cardano.julc.stdlib.lib.OutputLib;
 import com.bloxbean.cardano.julc.stdlib.lib.ValuesLib;
-import com.bloxbean.cardano.zeroj.onchain.julc.Groth16BLS12381;
+import com.bloxbean.cardano.zeroj.onchain.julc.groth16.lib.Groth16BLS12381Lib;
 
 import java.math.BigInteger;
 
@@ -67,7 +67,7 @@ public class DppMintingPolicy {
         boolean isCompliant = pub3.compareTo(BigInteger.ONE) == 0;
 
         // 5. Groth16 BLS12-381 pairing check
-        boolean proofValid = Groth16BLS12381.verify(datumData, proof.piA(), proof.piB(), proof.piC(),
+        boolean proofValid = Groth16BLS12381Lib.verify(datumData, proof.piA(), proof.piB(), proof.piC(),
                 vkAlpha, vkBeta, vkGamma, vkDelta, vkIc);
 
         return mfgSigned && exactlyOne && isCompliant && proofValid;

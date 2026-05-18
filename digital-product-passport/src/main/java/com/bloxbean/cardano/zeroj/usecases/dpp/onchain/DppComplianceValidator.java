@@ -6,7 +6,7 @@ import com.bloxbean.cardano.julc.stdlib.Builtins;
 import com.bloxbean.cardano.julc.stdlib.annotation.Entrypoint;
 import com.bloxbean.cardano.julc.stdlib.annotation.Param;
 import com.bloxbean.cardano.julc.stdlib.annotation.SpendingValidator;
-import com.bloxbean.cardano.zeroj.onchain.julc.Groth16BLS12381;
+import com.bloxbean.cardano.zeroj.onchain.julc.groth16.lib.Groth16BLS12381Lib;
 
 import java.math.BigInteger;
 /**
@@ -41,7 +41,7 @@ public class DppComplianceValidator {
         // isCompliant (pub3) must be 1
         boolean isCompliant = pub3.compareTo(BigInteger.ONE) == 0;
 
-        boolean proofValid = Groth16BLS12381.verify(datum, proof.piA(), proof.piB(), proof.piC(),
+        boolean proofValid = Groth16BLS12381Lib.verify(datum, proof.piA(), proof.piB(), proof.piC(),
                 vkAlpha, vkBeta, vkGamma, vkDelta, vkIc);
 
         return isCompliant && proofValid;

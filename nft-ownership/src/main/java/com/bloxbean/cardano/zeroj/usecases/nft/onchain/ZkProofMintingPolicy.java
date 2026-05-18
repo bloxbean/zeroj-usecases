@@ -9,7 +9,7 @@ import com.bloxbean.cardano.julc.stdlib.annotation.Entrypoint;
 import com.bloxbean.cardano.julc.stdlib.annotation.MintingValidator;
 import com.bloxbean.cardano.julc.stdlib.annotation.Param;
 import com.bloxbean.cardano.julc.stdlib.lib.ValuesLib;
-import com.bloxbean.cardano.zeroj.onchain.julc.Groth16BLS12381;
+import com.bloxbean.cardano.zeroj.onchain.julc.groth16.lib.Groth16BLS12381Lib;
 
 import java.math.BigInteger;
 
@@ -64,8 +64,8 @@ public class ZkProofMintingPolicy {
         BigInteger pub1 = Builtins.byteStringToInteger(true, redeemer.contextId());
         BigInteger pub3 = Builtins.byteStringToInteger(true, redeemer.nullifier());
 
-        PlutusData publicInputs = Groth16BLS12381.publicInputs(pub0, pub1, pub2, pub3);
-        boolean proofValid = Groth16BLS12381.verify(publicInputs,
+        PlutusData publicInputs = Groth16BLS12381Lib.publicInputs(pub0, pub1, pub2, pub3);
+        boolean proofValid = Groth16BLS12381Lib.verify(publicInputs,
                 redeemer.piA(), redeemer.piB(), redeemer.piC(),
                 vkAlpha, vkBeta, vkGamma, vkDelta, vkIc);
 
