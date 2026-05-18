@@ -15,7 +15,8 @@ def usecaseProjects = [
         'annotated-batch-threshold-matrix',
         'annotated-private-voting',
         'annotated-proof-of-reserves',
-        'annotated-compliance-credential'
+        'annotated-compliance-credential',
+        'zk-mpf-private-registry'
 ]
 
 def taskSuffix = { String projectName ->
@@ -30,6 +31,10 @@ def wrapperCommand = System.getProperty('os.name').toLowerCase(Locale.ROOT).cont
         : './gradlew'
 
 def registerUsecaseGradleTask = { String taskPrefix, String gradleTask, List<String> extraArgs, String action ->
+    def forwardedArgs = []
+    if (project.hasProperty('zerojVersion')) {
+        forwardedArgs += "-PzerojVersion=${project.property('zerojVersion')}"
+    }
     usecaseProjects.collect { projectName ->
         def registeredTaskName = "${taskPrefix}${taskSuffix(projectName)}"
         tasks.register(registeredTaskName, Exec) {
@@ -37,7 +42,7 @@ def registerUsecaseGradleTask = { String taskPrefix, String gradleTask, List<Str
             description = "${action} ${projectName}"
             workingDir = layout.projectDirectory.dir(projectName).asFile
             executable = wrapperCommand
-            args = [gradleTask] + extraArgs
+            args = [gradleTask] + extraArgs + forwardedArgs
         }
         registeredTaskName
     }
