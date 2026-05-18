@@ -70,13 +70,7 @@ public class OnChainAirdropService {
                 new BytesPlutusData(vk.beta()),
                 new BytesPlutusData(vk.gamma()),
                 new BytesPlutusData(vk.delta()),
-                new BytesPlutusData(vk.ic().get(0)),
-                new BytesPlutusData(vk.ic().get(1)),
-                new BytesPlutusData(vk.ic().get(2)),
-                new BytesPlutusData(vk.ic().get(3)),
-                new BytesPlutusData(vk.ic().get(4)),
-                new BytesPlutusData(vk.ic().get(5)),
-                new BytesPlutusData(vk.ic().get(6)));
+                vkIcData(vk.ic()));
 
         policyHex = HexUtil.encodeHexString(mintingScript.getScriptHash());
         initialized = true;
@@ -186,6 +180,14 @@ public class OnChainAirdropService {
             System.arraycopy(in, 0, out, width - in.length, in.length);
         }
         return out;
+    }
+
+    private static ListPlutusData vkIcData(List<byte[]> ic) {
+        PlutusData[] values = new PlutusData[ic.size()];
+        for (int i = 0; i < ic.size(); i++) {
+            values[i] = new BytesPlutusData(ic.get(i));
+        }
+        return ListPlutusData.of(values);
     }
 
     private void waitForTx(String txHash) {

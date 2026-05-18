@@ -9,6 +9,9 @@ projects=(
   private-voting
   proof-of-reserves
   selective-disclosure
+  annotated-private-voting
+  annotated-proof-of-reserves
+  annotated-compliance-credential
 )
 
 if [ "$#" -eq 0 ]; then

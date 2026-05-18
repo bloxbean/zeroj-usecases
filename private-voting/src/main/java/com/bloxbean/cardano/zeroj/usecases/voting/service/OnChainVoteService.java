@@ -63,11 +63,7 @@ public class OnChainVoteService {
                 new BytesPlutusData(vk.beta()),
                 new BytesPlutusData(vk.gamma()),
                 new BytesPlutusData(vk.delta()),
-                new BytesPlutusData(vk.ic().get(0)),
-                new BytesPlutusData(vk.ic().get(1)),
-                new BytesPlutusData(vk.ic().get(2)),
-                new BytesPlutusData(vk.ic().get(3)),
-                new BytesPlutusData(vk.ic().get(4)));
+                vkIcData(vk.ic()));
         byte[] zkPolicyHash = zkScript.getScriptHash();
         zkPolicyHex = HexUtil.encodeHexString(zkPolicyHash);
         log.info("ZK minting policy: {}", zkPolicyHex);
@@ -444,6 +440,14 @@ public class OnChainVoteService {
     private static byte[] toMinimalBytes(BigInteger v) {
         byte[] b = v.toByteArray();
         return (b.length > 1 && b[0] == 0) ? Arrays.copyOfRange(b, 1, b.length) : b;
+    }
+
+    private static ListPlutusData vkIcData(List<byte[]> ic) {
+        PlutusData[] values = new PlutusData[ic.size()];
+        for (int i = 0; i < ic.size(); i++) {
+            values[i] = new BytesPlutusData(ic.get(i));
+        }
+        return ListPlutusData.of(values);
     }
 
     private static byte[] concat(byte[] a, byte[] b) {

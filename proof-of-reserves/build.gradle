@@ -18,7 +18,7 @@ repositories {
 }
 
 ext {
-    zerojVersion = '0.1.0-pre1'
+    zerojVersion = '0.1.0-pre2-a948645-SNAPSHOT'
     julcVersion = '0.1.0-pre12'
     cclVersion = '0.8.0-pre4'
 }
@@ -33,6 +33,7 @@ dependencies {
     implementation "com.bloxbean.cardano:zeroj-crypto:${zerojVersion}"
     implementation "com.bloxbean.cardano:zeroj-verifier-groth16:${zerojVersion}"
     implementation "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
+    annotationProcessor "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
     implementation "com.bloxbean.cardano:zeroj-bls12381:${zerojVersion}"
     implementation "com.bloxbean.cardano:zeroj-blst:${zerojVersion}"
     implementation "com.bloxbean.cardano:zeroj-api:${zerojVersion}"

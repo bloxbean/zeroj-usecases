@@ -8,8 +8,8 @@ import com.bloxbean.cardano.julc.stdlib.Builtins;
 import com.bloxbean.cardano.julc.stdlib.annotation.Entrypoint;
 import com.bloxbean.cardano.julc.stdlib.annotation.MintingValidator;
 import com.bloxbean.cardano.julc.stdlib.annotation.Param;
-import com.bloxbean.cardano.julc.stdlib.lib.BlsLib;
 import com.bloxbean.cardano.julc.stdlib.lib.ValuesLib;
+import com.bloxbean.cardano.zeroj.onchain.julc.Groth16BLS12381;
 
 import java.math.BigInteger;
 
@@ -30,11 +30,7 @@ public class ZkProofMintingPolicy {
     @Param static byte[] vkBeta;    // G2 compressed 96 bytes
     @Param static byte[] vkGamma;   // G2 compressed 96 bytes
     @Param static byte[] vkDelta;   // G2 compressed 96 bytes
-    @Param static byte[] vkIc0;     // G1 compressed 48 bytes
-    @Param static byte[] vkIc1;     // G1 compressed 48 bytes
-    @Param static byte[] vkIc2;     // G1 compressed 48 bytes
-    @Param static byte[] vkIc3;     // G1 compressed 48 bytes
-    @Param static byte[] vkIc4;     // G1 compressed 48 bytes
+    @Param static PlutusData vkIc;  // List of G1 compressed IC points
 
     /**
      * ZK proof + public inputs, passed as redeemer.
@@ -63,46 +59,15 @@ public class ZkProofMintingPolicy {
         BigInteger pub2 = Builtins.byteStringToInteger(true, redeemer.isOwner());
         boolean ownerValid = pub2.compareTo(BigInteger.ONE) == 0;
 
-        // --- Groth16 BLS12-381 pairing check (4 public inputs) ---
-        // 1. Uncompress proof points
-        byte[] a = BlsLib.g1Uncompress(redeemer.piA());
-        byte[] b = BlsLib.g2Uncompress(redeemer.piB());
-        byte[] c = BlsLib.g1Uncompress(redeemer.piC());
-
-        // 2. Uncompress VK points
-        byte[] alpha = BlsLib.g1Uncompress(vkAlpha);
-        byte[] beta  = BlsLib.g2Uncompress(vkBeta);
-        byte[] gamma = BlsLib.g2Uncompress(vkGamma);
-        byte[] delta = BlsLib.g2Uncompress(vkDelta);
-        byte[] ic0   = BlsLib.g1Uncompress(vkIc0);
-        byte[] ic1   = BlsLib.g1Uncompress(vkIc1);
-        byte[] ic2   = BlsLib.g1Uncompress(vkIc2);
-        byte[] ic3   = BlsLib.g1Uncompress(vkIc3);
-        byte[] ic4   = BlsLib.g1Uncompress(vkIc4);
-
-        // 3. Public inputs from redeemer
+        // Public inputs from redeemer
         BigInteger pub0 = Builtins.byteStringToInteger(true, redeemer.snapshotRoot());
         BigInteger pub1 = Builtins.byteStringToInteger(true, redeemer.contextId());
         BigInteger pub3 = Builtins.byteStringToInteger(true, redeemer.nullifier());
 
-        // 4. Compute vk_x = IC[0] + pub[0]*IC[1] + pub[1]*IC[2] + pub[2]*IC[3] + pub[3]*IC[4]
-        byte[] s0 = BlsLib.g1ScalarMul(pub0, ic1);
-        byte[] s1 = BlsLib.g1ScalarMul(pub1, ic2);
-        byte[] s2 = BlsLib.g1ScalarMul(pub2, ic3);
-        byte[] s3 = BlsLib.g1ScalarMul(pub3, ic4);
-        byte[] vkX = BlsLib.g1Add(ic0,
-                BlsLib.g1Add(s0, BlsLib.g1Add(s1, BlsLib.g1Add(s2, s3))));
-
-        // 5. Groth16 pairing check
-        byte[] negAlpha = BlsLib.g1Neg(alpha);
-        byte[] lhs = BlsLib.mulMlResult(
-                BlsLib.millerLoop(a, b),
-                BlsLib.millerLoop(negAlpha, beta));
-        byte[] rhs = BlsLib.mulMlResult(
-                BlsLib.millerLoop(vkX, gamma),
-                BlsLib.millerLoop(c, delta));
-
-        boolean proofValid = BlsLib.finalVerify(lhs, rhs);
+        PlutusData publicInputs = Groth16BLS12381.publicInputs(pub0, pub1, pub2, pub3);
+        boolean proofValid = Groth16BLS12381.verify(publicInputs,
+                redeemer.piA(), redeemer.piB(), redeemer.piC(),
+                vkAlpha, vkBeta, vkGamma, vkDelta, vkIc);
 
         return nameCorrect && exactlyOne && ownerValid && proofValid;
     }

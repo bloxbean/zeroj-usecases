@@ -71,7 +71,7 @@ variant pinned at those curve parameters.
 | **Deterministic vote encryption** | ElGamal on Jubjub | Homomorphic tallying; threshold decryption |
 
 All of these produce a Groth16 / PlonK proof that ZeroJ's existing Plutus V3
-verifier (`zeroj-onchain-julc/Groth16BLS12381GenericVerifier`) accepts on-chain.
+verifier (`zeroj-onchain-julc/Groth16BLS12381Verifier`) accepts on-chain.
 **No new Plutus builtins or onchain changes needed** — the full complexity
 is internalized in the SNARK.
 

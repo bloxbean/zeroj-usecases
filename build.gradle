@@ -11,7 +11,10 @@ def usecaseProjects = [
         'personhood-airdrop',
         'private-voting',
         'proof-of-reserves',
-        'selective-disclosure'
+        'selective-disclosure',
+        'annotated-private-voting',
+        'annotated-proof-of-reserves',
+        'annotated-compliance-credential'
 ]
 
 def taskSuffix = { String projectName ->

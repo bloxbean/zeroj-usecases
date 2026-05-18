@@ -9,9 +9,9 @@ import com.bloxbean.cardano.julc.stdlib.Builtins;
 import com.bloxbean.cardano.julc.stdlib.annotation.Entrypoint;
 import com.bloxbean.cardano.julc.stdlib.annotation.MintingValidator;
 import com.bloxbean.cardano.julc.stdlib.annotation.Param;
-import com.bloxbean.cardano.julc.stdlib.lib.BlsLib;
 import com.bloxbean.cardano.julc.stdlib.lib.OutputLib;
 import com.bloxbean.cardano.julc.stdlib.lib.ValuesLib;
+import com.bloxbean.cardano.zeroj.onchain.julc.Groth16BLS12381;
 
 import java.math.BigInteger;
 
@@ -48,13 +48,7 @@ public class FaucetMintingPolicy {
     @Param static byte[] vkBeta;
     @Param static byte[] vkGamma;
     @Param static byte[] vkDelta;
-    @Param static byte[] vkIc0;
-    @Param static byte[] vkIc1;
-    @Param static byte[] vkIc2;
-    @Param static byte[] vkIc3;
-    @Param static byte[] vkIc4;
-    @Param static byte[] vkIc5;
-    @Param static byte[] vkIc6;
+    @Param static PlutusData vkIc;
 
     record AirdropProof(byte[] piA, byte[] piB, byte[] piC) {}
 
@@ -73,15 +67,10 @@ public class FaucetMintingPolicy {
         TxOut firstOutput = txInfo.outputs().get(0);
         PlutusData datumData = OutputLib.getInlineDatum(firstOutput);
         PlutusData inputs = Builtins.unListData(datumData);
-        BigInteger pub0 = Builtins.asInteger(Builtins.headList(inputs));      // pkU
         PlutusData r1 = Builtins.tailList(inputs);
-        BigInteger pub1 = Builtins.asInteger(Builtins.headList(r1));          // pkV
         PlutusData r2 = Builtins.tailList(r1);
-        BigInteger pub2 = Builtins.asInteger(Builtins.headList(r2));          // epoch
         PlutusData r3 = Builtins.tailList(r2);
-        BigInteger pub3 = Builtins.asInteger(Builtins.headList(r3));          // nullifier
         PlutusData r4 = Builtins.tailList(r3);
-        BigInteger pub4 = Builtins.asInteger(Builtins.headList(r4));          // recipient
         PlutusData r5 = Builtins.tailList(r4);
         BigInteger pub5 = Builtins.asInteger(Builtins.headList(r5));          // eligible
 
@@ -89,44 +78,8 @@ public class FaucetMintingPolicy {
         boolean isEligible = pub5.compareTo(BigInteger.ONE) == 0;
 
         // 4. Groth16 BLS12-381 pairing check with 6 public inputs.
-        byte[] a = BlsLib.g1Uncompress(proof.piA());
-        byte[] b = BlsLib.g2Uncompress(proof.piB());
-        byte[] c = BlsLib.g1Uncompress(proof.piC());
-
-        byte[] alpha = BlsLib.g1Uncompress(vkAlpha);
-        byte[] beta  = BlsLib.g2Uncompress(vkBeta);
-        byte[] gamma = BlsLib.g2Uncompress(vkGamma);
-        byte[] delta = BlsLib.g2Uncompress(vkDelta);
-        byte[] ic0   = BlsLib.g1Uncompress(vkIc0);
-        byte[] ic1   = BlsLib.g1Uncompress(vkIc1);
-        byte[] ic2   = BlsLib.g1Uncompress(vkIc2);
-        byte[] ic3   = BlsLib.g1Uncompress(vkIc3);
-        byte[] ic4   = BlsLib.g1Uncompress(vkIc4);
-        byte[] ic5   = BlsLib.g1Uncompress(vkIc5);
-        byte[] ic6   = BlsLib.g1Uncompress(vkIc6);
-
-        byte[] s0 = BlsLib.g1ScalarMul(pub0, ic1);
-        byte[] s1 = BlsLib.g1ScalarMul(pub1, ic2);
-        byte[] s2 = BlsLib.g1ScalarMul(pub2, ic3);
-        byte[] s3 = BlsLib.g1ScalarMul(pub3, ic4);
-        byte[] s4 = BlsLib.g1ScalarMul(pub4, ic5);
-        byte[] s5 = BlsLib.g1ScalarMul(pub5, ic6);
-        byte[] vkX = BlsLib.g1Add(ic0,
-                BlsLib.g1Add(s0,
-                        BlsLib.g1Add(s1,
-                                BlsLib.g1Add(s2,
-                                        BlsLib.g1Add(s3,
-                                                BlsLib.g1Add(s4, s5))))));
-
-        byte[] negAlpha = BlsLib.g1Neg(alpha);
-        byte[] lhs = BlsLib.mulMlResult(
-                BlsLib.millerLoop(a, b),
-                BlsLib.millerLoop(negAlpha, beta));
-        byte[] rhs = BlsLib.mulMlResult(
-                BlsLib.millerLoop(vkX, gamma),
-                BlsLib.millerLoop(c, delta));
-
-        boolean proofValid = BlsLib.finalVerify(lhs, rhs);
+        boolean proofValid = Groth16BLS12381.verify(datumData, proof.piA(), proof.piB(), proof.piC(),
+                vkAlpha, vkBeta, vkGamma, vkDelta, vkIc);
 
         return exactlyOne && isEligible && proofValid;
     }

@@ -60,12 +60,7 @@ public class OnChainGateService {
                 new BytesPlutusData(arVk.beta()),
                 new BytesPlutusData(arVk.gamma()),
                 new BytesPlutusData(arVk.delta()),
-                new BytesPlutusData(arVk.ic().get(0)),
-                new BytesPlutusData(arVk.ic().get(1)),
-                new BytesPlutusData(arVk.ic().get(2)),
-                new BytesPlutusData(arVk.ic().get(3)),
-                new BytesPlutusData(arVk.ic().get(4)),
-                new BytesPlutusData(arVk.ic().get(5)));
+                vkIcData(arVk.ic()));
         adultScriptAddr = AddressProvider.getEntAddress(adultScript, Networks.testnet()).toBech32();
         log.info("Adult-Resident gate: {}", adultScriptAddr.substring(0, 32) + "...");
 
@@ -76,11 +71,7 @@ public class OnChainGateService {
                 new BytesPlutusData(sdVk.beta()),
                 new BytesPlutusData(sdVk.gamma()),
                 new BytesPlutusData(sdVk.delta()),
-                new BytesPlutusData(sdVk.ic().get(0)),
-                new BytesPlutusData(sdVk.ic().get(1)),
-                new BytesPlutusData(sdVk.ic().get(2)),
-                new BytesPlutusData(sdVk.ic().get(3)),
-                new BytesPlutusData(sdVk.ic().get(4)));
+                vkIcData(sdVk.ic()));
         doctorScriptAddr = AddressProvider.getEntAddress(doctorScript, Networks.testnet()).toBech32();
         log.info("Senior-Doctor gate: {}", doctorScriptAddr.substring(0, 32) + "...");
 
@@ -173,6 +164,14 @@ public class OnChainGateService {
             return o;
         }
         return b;
+    }
+
+    private static ListPlutusData vkIcData(List<byte[]> ic) {
+        PlutusData[] values = new PlutusData[ic.size()];
+        for (int i = 0; i < ic.size(); i++) {
+            values[i] = new BytesPlutusData(ic.get(i));
+        }
+        return ListPlutusData.of(values);
     }
 
     public String getAdultGateAddress() { return adultScriptAddr; }

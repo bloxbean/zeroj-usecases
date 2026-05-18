@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
 import java.util.Arrays;
+import java.util.List;
 
 @Service
 public class OnChainCredentialService {
@@ -53,12 +54,7 @@ public class OnChainCredentialService {
                 new BytesPlutusData(vk.beta()),
                 new BytesPlutusData(vk.gamma()),
                 new BytesPlutusData(vk.delta()),
-                new BytesPlutusData(vk.ic().get(0)),
-                new BytesPlutusData(vk.ic().get(1)),
-                new BytesPlutusData(vk.ic().get(2)),
-                new BytesPlutusData(vk.ic().get(3)),
-                new BytesPlutusData(vk.ic().get(4)),
-                new BytesPlutusData(vk.ic().get(5)));
+                vkIcData(vk.ic()));
 
         scriptAddr = AddressProvider.getEntAddress(script, Networks.testnet()).toBech32();
         log.info("Credential-gated script: {}", scriptAddr.substring(0, 40) + "...");
@@ -169,6 +165,14 @@ public class OnChainCredentialService {
     private static byte[] toMinimalBytes(BigInteger v) {
         byte[] b = v.toByteArray();
         return (b.length > 1 && b[0] == 0) ? Arrays.copyOfRange(b, 1, b.length) : b;
+    }
+
+    private static ListPlutusData vkIcData(List<byte[]> ic) {
+        PlutusData[] values = new PlutusData[ic.size()];
+        for (int i = 0; i < ic.size(); i++) {
+            values[i] = new BytesPlutusData(ic.get(i));
+        }
+        return ListPlutusData.of(values);
     }
 
     private void waitForTx(String txHash) throws Exception {
