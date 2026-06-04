@@ -24,7 +24,7 @@ repositories {
 ext {
     zerojVersion = findProperty('zerojVersion')
             ?: System.getenv('ZEROJ_VERSION')
-            ?: '0.1.0-pre2-f3f5196-SNAPSHOT'
+            ?: '0.1.0-pre3'
 }
 
 dependencies {
