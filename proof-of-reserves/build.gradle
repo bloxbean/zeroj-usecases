@@ -11,15 +11,15 @@ java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
 springBoot { mainClass = 'com.bloxbean.cardano.zeroj.usecases.reserves.ReservesApplication' }
 
 repositories {
-    mavenCentral()
     mavenLocal()
+    mavenCentral()
     maven { url = uri("https://central.sonatype.com/repository/maven-snapshots"); content { snapshotsOnly() } }
     maven { url = uri("https://repo.spring.io/milestone") }
 }
 
 ext {
     zerojVersion = '0.1.0-pre3'
-    julcVersion = '0.1.0-pre13'
+    julcVersion = '0.1.0-pre14'
     cclVersion = '0.8.0-pre4'
 }
 
@@ -45,6 +45,7 @@ dependencies {
     implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
     implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
     implementation "com.bloxbean.cardano:julc-cardano-client-lib:${julcVersion}"
+    runtimeOnly "com.bloxbean.cardano:julc-vm-java:${julcVersion}"
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -52,7 +53,13 @@ dependencies {
 
 compileJava { options.fork = true; options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED'] }
 compileTestJava { options.compilerArgs.add('-proc:full'); options.fork = true; options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED'] }
-test { useJUnitPlatform(); jvmArgs '--enable-native-access=ALL-UNNAMED' }
+test {
+    useJUnitPlatform()
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    systemProperty "zeroj.allowInsecureTrustedSetup", "true"
+    systemProperty "zeroj.yaci.e2e", System.getenv("ZEROJ_YACI_E2E") ?: ""
+    environment "ZEROJ_YACI_E2E", System.getenv("ZEROJ_YACI_E2E") ?: ""
+}
 
 def frontendDir = file('frontend')
 tasks.register('npmInstall', Exec) { workingDir frontendDir; commandLine 'npm', 'install' }

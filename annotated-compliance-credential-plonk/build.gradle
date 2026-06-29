@@ -1,0 +1,74 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.bloxbean.cardano.zeroj.usecases'
+version = '0.1.0-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven {
+        url = uri("https://central.sonatype.com/repository/maven-snapshots")
+        content { snapshotsOnly() }
+    }
+}
+
+ext {
+    zerojVersion = project.findProperty('zerojVersion') ?: '0.1.0-pre3'
+    julcVersion = '0.1.0-pre14'
+    cclVersion = '0.8.0-pre4'
+}
+
+dependencies {
+    implementation "com.bloxbean.cardano:zeroj-api:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-circuit-dsl:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-circuit-lib:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-circuit-annotation-api:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-crypto:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-verifier-plonk:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-bls12381:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-blst:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-codec:${zerojVersion}"
+    annotationProcessor "com.bloxbean.cardano:zeroj-circuit-annotation-processor:${zerojVersion}"
+    annotationProcessor "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
+
+    implementation "com.bloxbean.cardano:julc-stdlib:${julcVersion}"
+    implementation "com.bloxbean.cardano:julc-cardano-client-lib:${julcVersion}"
+    runtimeOnly "com.bloxbean.cardano:julc-vm-java:${julcVersion}"
+    annotationProcessor "com.bloxbean.cardano:julc-annotation-processor:${julcVersion}"
+
+    implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
+    implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation "com.bloxbean.cardano:julc-testkit:${julcVersion}"
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+application {
+    mainClass = 'com.bloxbean.cardano.zeroj.usecases.plonk.credential.PlonkComplianceCredentialDemo'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs.add('-proc:full')
+}
+
+test {
+    useJUnitPlatform()
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    systemProperty "zeroj.allowInsecureTrustedSetup", "true"
+    environment "ZEROJ_YACI_E2E", System.getenv("ZEROJ_YACI_E2E") ?: ""
+    testLogging {
+        events "passed", "failed", "skipped"
+    }
+}

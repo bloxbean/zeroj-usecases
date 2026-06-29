@@ -7,9 +7,9 @@ import com.bloxbean.cardano.zeroj.circuit.FieldConfig;
 import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
+import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupCache;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.SetupCache;
 import com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381;
 import com.bloxbean.cardano.zeroj.usecases.dpp.circuit.ComplianceThresholdCircuit;
 import com.bloxbean.cardano.zeroj.usecases.dpp.circuit.CountryMembershipCircuit;
@@ -68,46 +68,26 @@ public class DppCircuitService {
             log.info("Poseidon parameters changed since last run — wiped stale SRS / R1CS / trie caches");
         }
 
-        PtauImporterBLS381.SRS srs = loadOrGenerateSrs();
+        PtauImporterBLS381.SRS[] srsHolder = new PtauImporterBLS381.SRS[1];
 
         log.info("Compiling DPP circuits...");
 
-        thresholdGte = compileWithCache("threshold-gte", ComplianceThresholdCircuit.buildGte(), srs);
-        thresholdLte = compileWithCache("threshold-lte", ComplianceThresholdCircuit.buildLte(), srs);
+        thresholdGte = compileWithCache("threshold-gte", ComplianceThresholdCircuit.buildGte(), srsHolder);
+        thresholdLte = compileWithCache("threshold-lte", ComplianceThresholdCircuit.buildLte(), srsHolder);
         inspectionChain = compileWithCache("inspection-chain",
-                InspectionChainCircuit.build(3, inspectorTreeDepth), srs);
+                InspectionChainCircuit.build(3, inspectorTreeDepth), srsHolder);
         countryMembership = compileWithCache("country-membership",
-                CountryMembershipCircuit.build(countryTreeDepth), srs);
+                CountryMembershipCircuit.build(countryTreeDepth), srsHolder);
 
         log.info("All DPP circuits compiled. Ready to generate proofs.");
     }
 
-    private PtauImporterBLS381.SRS loadOrGenerateSrs() {
-        Path srsCache = Path.of(CACHE_DIR, "srs.bin");
-        try {
-            if (Files.exists(srsCache)) {
-                log.info("Loading SRS from cache...");
-                long start = System.currentTimeMillis();
-                var srs = SetupCache.loadSrs(srsCache);
-                log.info("SRS loaded from cache in {}ms", System.currentTimeMillis() - start);
-                return srs;
-            }
-        } catch (Exception e) {
-            log.warn("Failed to load SRS cache: {}", e.getMessage());
-        }
-
-        log.info("No SRS cache. Running Powers of Tau ceremony (power={})...", potPower);
-        var srs = PowersOfTauBLS381.generate(potPower);
-        try {
-            SetupCache.saveSrs(srs, srsCache);
-            log.info("SRS cached to {}", srsCache);
-        } catch (Exception e) {
-            log.warn("Failed to save SRS cache: {}", e.getMessage());
-        }
-        return srs;
+    private PtauImporterBLS381.SRS generateDevSrs() {
+        log.info("Running in-memory dev Powers of Tau ceremony (power={})...", potPower);
+        return PowersOfTauBLS381.generate(potPower);
     }
 
-    private CircuitSetup compileWithCache(String name, CircuitBuilder circuit, PtauImporterBLS381.SRS srs) {
+    private CircuitSetup compileWithCache(String name, CircuitBuilder circuit, PtauImporterBLS381.SRS[] srsHolder) {
         var r1cs = circuit.compileR1CS(CurveId.BLS12_381);
         log.info("  {} — {} constraints, {} wires, {} public",
                 name, r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs());
@@ -120,18 +100,26 @@ public class DppCircuitService {
         try {
             if (Files.exists(setupCache)) {
                 long start = System.currentTimeMillis();
-                setup = SetupCache.loadSetup(setupCache);
-                log.info("  {} — loaded from cache in {}ms", name, System.currentTimeMillis() - start);
+                setup = Groth16SetupCache.loadBls12381Setup(setupCache);
+                if (matchesCurrentCircuit(setup, r1cs)) {
+                    log.info("  {} — loaded from cache in {}ms", name, System.currentTimeMillis() - start);
+                } else {
+                    log.warn("  {} — setup cache shape does not match current circuit; regenerating", name);
+                    setup = null;
+                }
             }
         } catch (Exception e) {
             log.warn("  {} — cache load failed: {}", name, e.getMessage());
         }
 
         if (setup == null) {
+            if (srsHolder[0] == null) {
+                srsHolder[0] = generateDevSrs();
+            }
             setup = Groth16SetupBLS381.setup(constraints, r1cs.numWires(),
-                    r1cs.numPublicInputs(), srs.tauScalar());
+                    r1cs.numPublicInputs(), srsHolder[0].tauScalar());
             try {
-                SetupCache.saveSetup(setup, setupCache);
+                Groth16SetupCache.saveBls12381Setup(setup, setupCache);
                 log.info("  {} — cached to {}", name, setupCache);
             } catch (Exception e) {
                 log.warn("  {} — cache save failed: {}", name, e.getMessage());
@@ -139,6 +127,12 @@ public class DppCircuitService {
         }
 
         return new CircuitSetup(circuit, r1cs, constraints, setup);
+    }
+
+    private static boolean matchesCurrentCircuit(Groth16SetupBLS381.SetupResult setup, R1CSConstraintSystem r1cs) {
+        var pk = setup.provingKey();
+        return pk.numPublic() == r1cs.numPublicInputs()
+                && pk.pointsA().length == r1cs.numWires();
     }
 
     // --- Proof generation ---

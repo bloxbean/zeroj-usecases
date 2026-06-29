@@ -42,7 +42,7 @@ ZeroJ does all of this in Java: you write the circuit (the statement to prove) a
 
 ## The examples at a glance
 
-There are **12 examples**, in two styles.
+There are **14 examples**, in two styles.
 
 ### Full-stack demos (Spring Boot backend + Svelte UI + real on-chain transactions)
 
@@ -70,7 +70,9 @@ These are smaller, focused examples of ZeroJ's **annotation-based circuit DSL** 
 | 9 | [annotated-compliance-credential](#9-annotated-compliance-credential) | Selective-disclosure credential gate with `ZkUInt`/`ZkBool` constraints |
 | 10 | [annotated-proof-of-reserves](#10-annotated-proof-of-reserves) | Parameterized fixed-depth Merkle circuit with `@CircuitParam`/`@FixedSize` |
 | 11 | [annotated-batch-threshold-matrix](#11-annotated-batch-threshold-matrix) | Nested `ZkArray<ZkArray<…>>` matrix, row-major flattening |
-| 12 | [zk-mpf-private-registry](#12-zk-mpf-private-registry) | Private membership in a Poseidon MPF trie (witness-level demo) |
+| 12 | [annotated-proof-of-reserves-plonk](annotated-proof-of-reserves-plonk/README.md) | End-to-end BLS12-381 PlonK proof-of-reserves with Cardano verifier transaction |
+| 13 | [annotated-compliance-credential-plonk](annotated-compliance-credential-plonk/README.md) | End-to-end BLS12-381 PlonK compliance credential gate with Cardano verifier transaction |
+| 14 | [zk-mpf-private-registry](#14-zk-mpf-private-registry) | Private membership in a Poseidon MPF trie (witness-level demo) |
 
 ---
 
@@ -79,7 +81,7 @@ These are smaller, focused examples of ZeroJ's **annotation-based circuit DSL** 
 | Requirement | Version | How to get it |
 |-------------|---------|---------------|
 | Java (GraalVM) | 25 | `sdk install java 25.0.2-graal` then `sdk use java 25.0.2-graal` (via [SDKMAN](https://sdkman.io/)) |
-| Yaci DevKit | Latest | [github.com/bloxbean/yaci-devkit](https://github.com/bloxbean/yaci-devkit) — *only needed for the full-stack demos (1–7)* |
+| Yaci DevKit | Latest | [github.com/bloxbean/yaci-devkit](https://github.com/bloxbean/yaci-devkit) — *needed for full-stack demos and PlonK on-chain Docker runs* |
 | Node.js | 18+ | Optional — only if you want to rebuild a Svelte frontend yourself |
 | ZeroJ | `0.1.0-pre3` | Pulled from Maven; see [note on local ZeroJ](#using-a-local-zeroj-build) below |
 
@@ -89,7 +91,8 @@ You do **not** need Node.js to run the demos — each ships with a pre-built fro
 
 ## One-time setup
 
-These steps apply to the full-stack demos (1–7). The annotation demos (8–12) need only Java.
+These steps apply to the full-stack demos (1–7). The annotation demos (8–14)
+need only Java unless you run their on-chain Yaci paths.
 
 **1. Start a local Cardano devnet (Yaci DevKit):**
 
@@ -114,6 +117,76 @@ curl -X POST http://localhost:10000/local-cluster/api/addresses/topup \
 ```
 
 > The mnemonic and address are **for local testing only** — never use them on a real network.
+
+---
+
+## Docker Quick Start
+
+For non-Java users, the PlonK on-chain examples can run through Docker Compose.
+Yaci DevKit is still started manually on the host:
+
+```bash
+yaci-cli devkit start
+```
+
+While ZeroJ is consumed from a local snapshot, keep the repos as siblings:
+
+```text
+bloxbean/
+  zeroj/
+  zeroj-usecases/
+```
+
+The Compose build publishes `../zeroj` to Maven local inside the builder image,
+then builds the selected usecase. Run from the `zeroj-usecases` repo root:
+
+```bash
+docker compose --profile proof-of-reserves-plonk up --build --abort-on-container-exit
+docker compose --profile compliance-credential-plonk up --build --abort-on-container-exit
+```
+
+The first run for each PlonK example generates the development Powers of Tau SRS
+and circuit proving key, then stores the proving key in a Compose named volume.
+Later runs for the same circuit profile reuse that proving key and skip the
+minute-scale setup step.
+
+To run both PlonK examples:
+
+```bash
+docker compose --profile plonk up --build --abort-on-container-exit
+```
+
+If the local ZeroJ version changes, pass it to the usecase build:
+
+```bash
+ZEROJ_VERSION=0.1.0-pre3 docker compose --profile plonk up --build --abort-on-container-exit
+```
+
+If Yaci is not on the default host ports, override:
+
+```bash
+YACI_BASE_URL=http://host.docker.internal:8080/api/v1/ \
+YACI_ADMIN_URL=http://host.docker.internal:10000 \
+YACI_HEALTH_URL=http://host.docker.internal:8080/api/v1/epochs/latest \
+docker compose --profile proof-of-reserves-plonk up --build --abort-on-container-exit
+```
+
+For slower local clusters, increase the confirmation wait:
+
+```bash
+ZEROJ_YACI_TX_WAIT_ATTEMPTS=180 docker compose --profile plonk up --build --abort-on-container-exit
+```
+
+This local-snapshot publish step is temporary. Once ZeroJ artifacts are released
+to Maven Central or images are published, the Docker path can build without the
+sibling `zeroj` checkout.
+
+To clear the PlonK proving-key cache:
+
+```bash
+docker volume rm zeroj-usecases_proof-of-reserves-plonk-cache
+docker volume rm zeroj-usecases_compliance-credential-plonk-cache
+```
 
 ---
 
@@ -231,6 +304,12 @@ java --enable-native-access=ALL-UNNAMED -jar build/libs/proof-of-reserves-0.1.0-
 # → http://localhost:8089
 ```
 
+Gated Yaci E2E:
+
+```bash
+ZEROJ_YACI_E2E=true ./gradlew test --tests '*ProofOfReservesYaciE2ETest'
+```
+
 ### 5. digital-product-passport — EU DPP compliance
 
 📄 [Full README](digital-product-passport/README.md)
@@ -315,7 +394,36 @@ cd annotated-batch-threshold-matrix
 ./gradlew test && ./gradlew run
 ```
 
-### 12. zk-mpf-private-registry
+### 12. annotated-proof-of-reserves-plonk
+
+📄 [README](annotated-proof-of-reserves-plonk/README.md)
+
+An end-to-end BLS12-381 PlonK proof-of-reserves example. The circuit is written
+with `@ZKCircuit`, the prover emits the bounded Cardano PlonK MPI profile, and
+the Yaci flow spends through the on-chain `PlonkBLS12381MultiInputVerifier`.
+
+```bash
+cd annotated-proof-of-reserves-plonk
+./gradlew test
+./gradlew run --args='--yaci'
+```
+
+### 13. annotated-compliance-credential-plonk
+
+📄 [README](annotated-compliance-credential-plonk/README.md)
+
+An end-to-end BLS12-381 PlonK selective-disclosure credential gate. The holder
+proves age, jurisdiction, and sanctions-screen predicates over private
+attributes; the bounded Cardano PlonK MPI proof is verified off-chain and by the
+on-chain `PlonkBLS12381MultiInputVerifier` in Yaci.
+
+```bash
+cd annotated-compliance-credential-plonk
+./gradlew test
+./gradlew run --args='--yaci'
+```
+
+### 14. zk-mpf-private-registry
 
 📄 [README](zk-mpf-private-registry/README.md)
 
@@ -398,7 +506,7 @@ Each module reads `zerojVersion` (a Gradle property / env var with a sensible de
 | `UnsatisfiedLinkError` / BLST native errors | Run the JAR with `--enable-native-access=ALL-UNNAMED` and make sure you're on **Java 25 GraalVM** (`sdk use java 25.0.2-graal`). |
 | Transaction / topup fails, "address has no funds" | Make sure `yaci-cli devkit start` is running and you ran the [admin top-up](#one-time-setup) curl. |
 | Port already in use (8085/8086 collisions) | Run only one demo at a time, or change `server.port` in that demo's `src/main/resources/application.yml`. |
-| Startup takes a long time | Expected — circuit compilation + dev trusted setup runs on first boot (30s–8min depending on circuit size). Setups are cached to `./data/` for later boots. |
+| Startup takes a long time | Expected — circuit compilation + dev trusted setup runs on first boot (30s–8min depending on circuit size). Circuit-specific setups are cached to `./data/` for later boots and checked against the current circuit shape before reuse. |
 | `Could not resolve com.bloxbean.cardano:zeroj-*` | Publish ZeroJ locally (`./gradlew publishToMavenLocal` in the zeroj repo) and/or pass `-PzerojVersion=…`. See [Using a local ZeroJ build](#using-a-local-zeroj-build). |
 
 ---

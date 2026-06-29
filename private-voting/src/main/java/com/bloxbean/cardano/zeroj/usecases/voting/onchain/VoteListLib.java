@@ -21,8 +21,6 @@ import java.math.BigInteger;
 @OnchainLibrary
 public class VoteListLib {
 
-    public record ListElement(PlutusData userData, byte[] nextKey) {}
-
     static byte[] extractNodeKey(byte[] tokenName, int prefixLen) {
         return ByteStringLib.drop(tokenName, prefixLen);
     }
@@ -43,8 +41,8 @@ public class VoteListLib {
                                        byte[] rootKey, Address scriptAddr) {
         boolean atScript = Builtins.equalsData(rootOutput.address(), scriptAddr);
 
-        ListElement datum = PlutusData.cast(OutputLib.getInlineDatum(rootOutput), ListElement.class);
-        boolean emptyNext = Builtins.equalsByteString(datum.nextKey(), Builtins.emptyByteString());
+        PlutusData datum = OutputLib.getInlineDatum(rootOutput);
+        boolean emptyNext = Builtins.equalsByteString(elementNextKey(datum), Builtins.emptyByteString());
 
         BigInteger rootQty = ValuesLib.assetOf(mint, policyId, rootKey);
         boolean rootMinted = rootQty.compareTo(BigInteger.ONE) == 0;
@@ -75,21 +73,21 @@ public class VoteListLib {
         boolean contAtScript = Builtins.equalsData(contAnchorOutput.address(), scriptAddr);
         boolean newAtScript = Builtins.equalsData(newElementOutput.address(), scriptAddr);
 
-        ListElement anchorOld = PlutusData.cast(OutputLib.getInlineDatum(anchorInputResolved), ListElement.class);
-        ListElement contAnchor = PlutusData.cast(OutputLib.getInlineDatum(contAnchorOutput), ListElement.class);
-        ListElement newElement = PlutusData.cast(OutputLib.getInlineDatum(newElementOutput), ListElement.class);
+        PlutusData anchorOld = OutputLib.getInlineDatum(anchorInputResolved);
+        PlutusData contAnchor = OutputLib.getInlineDatum(contAnchorOutput);
+        PlutusData newElement = OutputLib.getInlineDatum(newElementOutput);
 
         // Anchor userData unchanged (root has unit data, stays unit)
-        boolean dataUnchanged = Builtins.equalsData(anchorOld.userData(), contAnchor.userData());
+        boolean dataUnchanged = Builtins.equalsData(elementUserData(anchorOld), elementUserData(contAnchor));
 
-        boolean contNextOk = Builtins.equalsByteString(contAnchor.nextKey(), newKey);
-        boolean newNextOk = Builtins.equalsByteString(newElement.nextKey(), anchorOld.nextKey());
+        byte[] anchorOldNextKey = elementNextKey(anchorOld);
+        boolean contNextOk = Builtins.equalsByteString(elementNextKey(contAnchor), newKey);
+        boolean newNextOk = Builtins.equalsByteString(elementNextKey(newElement), anchorOldNextKey);
 
-        byte[] oldNextKey = anchorOld.nextKey();
-        boolean insertAtEnd = Builtins.equalsByteString(oldNextKey, Builtins.emptyByteString());
+        boolean insertAtEnd = Builtins.equalsByteString(anchorOldNextKey, Builtins.emptyByteString());
         byte[] anchorKey = extractNodeKey(anchorTokenName, prefixLen);
         boolean orderOk = (anchorIsRoot || ByteStringLib.lessThan(anchorKey, newKey))
-                && (insertAtEnd || ByteStringLib.lessThan(newKey, oldNextKey));
+                && (insertAtEnd || ByteStringLib.lessThan(newKey, anchorOldNextKey));
 
         BigInteger mintCount = ValuesLib.countTokensWithQty(mint, policyId, BigInteger.ONE);
         boolean exactlyOne = mintCount.compareTo(BigInteger.ONE) == 0;
@@ -99,5 +97,16 @@ public class VoteListLib {
         return nameCorrect && anchorPreserved && contAtScript && newAtScript
                 && dataUnchanged && contNextOk && newNextOk && orderOk
                 && exactlyOne && zkProofVerified;
+    }
+
+    private static PlutusData elementUserData(PlutusData elementDatum) {
+        PlutusData fields = Builtins.constrFields(elementDatum);
+        return Builtins.headList(fields);
+    }
+
+    private static byte[] elementNextKey(PlutusData elementDatum) {
+        PlutusData fields = Builtins.constrFields(elementDatum);
+        PlutusData afterUserData = Builtins.tailList(fields);
+        return Builtins.unBData(Builtins.headList(afterUserData));
     }
 }

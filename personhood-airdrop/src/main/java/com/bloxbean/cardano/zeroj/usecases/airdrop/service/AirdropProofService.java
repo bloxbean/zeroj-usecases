@@ -13,8 +13,8 @@ import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
+import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupCache;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.SetupCache;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import com.bloxbean.cardano.zeroj.usecases.airdrop.circuit.PersonhoodAirdropCircuit;
@@ -62,7 +62,6 @@ public class AirdropProofService {
 
     private Groth16SetupBLS381.SetupResult loadOrRunSetup() {
         Path cacheDir = Path.of("./data");
-        Path srsCache = cacheDir.resolve("srs.bin");
         Path setupCache = cacheDir.resolve("setup-airdrop.bin");
         try { Files.createDirectories(cacheDir); } catch (Exception ignore) {}
 
@@ -71,40 +70,35 @@ public class AirdropProofService {
             if (Files.exists(setupCache)) {
                 log.info("Loading Groth16 setup from cache...");
                 long t = System.currentTimeMillis();
-                var s = SetupCache.loadSetup(setupCache);
-                log.info("Setup loaded from cache in {}ms", System.currentTimeMillis() - t);
-                return s;
+                var s = Groth16SetupCache.loadBls12381Setup(setupCache);
+                if (matchesCurrentCircuit(s)) {
+                    log.info("Setup loaded from cache in {}ms", System.currentTimeMillis() - t);
+                    return s;
+                }
+                log.warn("Setup cache shape does not match current circuit; regenerating");
             }
         } catch (Exception e) {
             log.warn("Setup cache load failed: {}", e.getMessage());
         }
 
-        var srs = loadOrGenerateSrs(srsCache);
+        var srs = generateDevSrs();
         log.info("Running Groth16 Phase-2 setup (power={})...", potPower);
         var s = Groth16SetupBLS381.setup(constraints, r1cs.numWires(),
                 r1cs.numPublicInputs(), srs.tauScalar());
-        try { SetupCache.saveSetup(s, setupCache); log.info("Cached setup → {}", setupCache); }
+        try { Groth16SetupCache.saveBls12381Setup(s, setupCache); log.info("Cached setup → {}", setupCache); }
         catch (Exception e) { log.warn("Setup cache save failed: {}", e.getMessage()); }
         return s;
     }
 
-    private com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS loadOrGenerateSrs(Path srsCache) {
-        try {
-            if (Files.exists(srsCache)) {
-                log.info("Loading SRS from cache...");
-                long t = System.currentTimeMillis();
-                var srs = SetupCache.loadSrs(srsCache);
-                log.info("SRS loaded in {}ms", System.currentTimeMillis() - t);
-                return srs;
-            }
-        } catch (Exception e) {
-            log.warn("SRS cache load failed: {}", e.getMessage());
-        }
-        log.info("Running Powers of Tau (power={})...", potPower);
-        var srs = PowersOfTauBLS381.generate(potPower);
-        try { SetupCache.saveSrs(srs, srsCache); log.info("Cached SRS"); }
-        catch (Exception e) { log.warn("SRS cache save failed: {}", e.getMessage()); }
-        return srs;
+    private boolean matchesCurrentCircuit(Groth16SetupBLS381.SetupResult setup) {
+        var pk = setup.provingKey();
+        return pk.numPublic() == r1cs.numPublicInputs()
+                && pk.pointsA().length == r1cs.numWires();
+    }
+
+    private com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS generateDevSrs() {
+        log.info("Running in-memory dev Powers of Tau (power={})...", potPower);
+        return PowersOfTauBLS381.generate(potPower);
     }
 
     /**

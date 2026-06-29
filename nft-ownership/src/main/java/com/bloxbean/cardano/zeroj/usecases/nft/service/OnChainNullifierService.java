@@ -2,6 +2,8 @@ package com.bloxbean.cardano.zeroj.usecases.nft.service;
 
 import com.bloxbean.cardano.client.account.Account;
 import com.bloxbean.cardano.client.address.AddressProvider;
+import com.bloxbean.cardano.client.api.TransactionEvaluator;
+import com.bloxbean.cardano.client.api.model.EvaluationResult;
 import com.bloxbean.cardano.client.api.model.Amount;
 import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.cardano.client.backend.api.BackendService;
@@ -47,6 +49,8 @@ public class OnChainNullifierService implements NullifierTracker {
     static final byte[] ROOT_KEY = "NROOT".getBytes();
     static final byte[] PREFIX = "N".getBytes();
     static final BigInteger PREFIX_LEN = BigInteger.ONE;
+    private static final BigInteger MIN_MEM_PADDING = BigInteger.valueOf(50_000);
+    private static final BigInteger PADDING_DIVISOR = BigInteger.valueOf(4);
     // Nullifier keys are 31 bytes (truncated from 32-byte field element)
     // to fit Cardano's 32-byte asset name limit: PREFIX (1 byte) + key (31 bytes) = 32 bytes
     static final int NULL_KEY_WIDTH = 31;
@@ -260,6 +264,7 @@ public class OnChainNullifierService implements NullifierTracker {
 
         var quickTx = new QuickTxBuilder(backendService);
         var result = quickTx.compose(tx)
+                .withTxEvaluator(createJulcEvaluator())
                 .withSigner(SignerProviders.signerFrom(adminAccount))
                 .feePayer(adminAccount.baseAddress())
                 .collateralPayer(adminAccount.baseAddress())
@@ -327,6 +332,7 @@ public class OnChainNullifierService implements NullifierTracker {
 
         var quickTx = new QuickTxBuilder(backendService);
         var result = quickTx.compose(initTx)
+                .withTxEvaluator(createJulcEvaluator())
                 .withSigner(SignerProviders.signerFrom(adminAccount))
                 .feePayer(adminAccount.baseAddress())
                 .collateralPayer(adminAccount.baseAddress())
@@ -502,13 +508,28 @@ public class OnChainNullifierService implements NullifierTracker {
         return result;
     }
 
-    private JulcTransactionEvaluator createJulcEvaluator() {
+    private TransactionEvaluator createJulcEvaluator() {
         SlotConfig slotConfig = deriveSlotConfig();
-        return new JulcTransactionEvaluator(
+        var evaluator = new JulcTransactionEvaluator(
                 new DefaultUtxoSupplier(backendService.getUtxoService()),
                 new DefaultProtocolParamsSupplier(backendService.getEpochService()),
                 new DefaultScriptSupplier(backendService.getScriptService()),
                 slotConfig);
+        return (tx, utxos) -> {
+            var result = evaluator.evaluateTx(tx, utxos);
+            if (result.isSuccessful() && result.getValue() != null) {
+                for (EvaluationResult eval : result.getValue()) {
+                    eval.setExUnits(pad(eval.getExUnits()));
+                }
+            }
+            return result;
+        };
+    }
+
+    private static ExUnits pad(ExUnits units) {
+        var memPadding = units.getMem().divide(PADDING_DIVISOR).max(MIN_MEM_PADDING);
+        var stepsPadding = units.getSteps().divide(PADDING_DIVISOR);
+        return new ExUnits(units.getMem().add(memPadding), units.getSteps().add(stepsPadding));
     }
 
     private SlotConfig deriveSlotConfig() {

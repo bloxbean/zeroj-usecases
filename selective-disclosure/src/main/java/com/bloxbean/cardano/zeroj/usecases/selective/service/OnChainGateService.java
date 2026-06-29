@@ -117,6 +117,7 @@ public class OnChainGateService {
                 .payToAddress(adminAccount.baseAddress(), Amount.ada(4.5))
                 .attachSpendingValidator(script);
         var r = new QuickTxBuilder(backendService).compose(tx)
+                .withTxEvaluator(LocalJulcEvaluator.create(backendService))
                 .withSigner(SignerProviders.signerFrom(adminAccount))
                 .feePayer(adminAccount.baseAddress())
                 .collateralPayer(adminAccount.baseAddress())

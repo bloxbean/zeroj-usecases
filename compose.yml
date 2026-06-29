@@ -1,0 +1,56 @@
+name: zeroj-usecases
+
+x-yaci-env: &yaci-env
+  RUN_YACI: ${RUN_YACI:-true}
+  YACI_BASE_URL: ${YACI_BASE_URL:-http://host.docker.internal:8080/api/v1/}
+  YACI_ADMIN_URL: ${YACI_ADMIN_URL:-http://host.docker.internal:10000}
+  YACI_HEALTH_URL: ${YACI_HEALTH_URL:-http://host.docker.internal:8080/api/v1/epochs/latest}
+  ZEROJ_YACI_TX_WAIT_ATTEMPTS: ${ZEROJ_YACI_TX_WAIT_ATTEMPTS:-90}
+  ZEROJ_YACI_TX_WAIT_MILLIS: ${ZEROJ_YACI_TX_WAIT_MILLIS:-2000}
+  ZEROJ_PLONK_SETUP_CACHE_DIR: ${ZEROJ_PLONK_SETUP_CACHE_DIR:-/var/cache/zeroj-plonk}
+  ZEROJ_ALLOW_INSECURE_TRUSTED_SETUP: ${ZEROJ_ALLOW_INSECURE_TRUSTED_SETUP:-true}
+
+x-host-yaci: &host-yaci
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  proof-of-reserves-plonk:
+    profiles: ["proof-of-reserves-plonk", "plonk"]
+    <<: *host-yaci
+    build:
+      context: .
+      additional_contexts:
+        zeroj-src: ${ZEROJ_SOURCE_CONTEXT:-../zeroj}
+      dockerfile: docker/cli-usecase.Dockerfile
+      args:
+        USECASE_DIR: annotated-proof-of-reserves-plonk
+        APP_NAME: annotated-proof-of-reserves-plonk
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre3}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+    environment:
+      <<: *yaci-env
+    volumes:
+      - proof-of-reserves-plonk-cache:/var/cache/zeroj-plonk
+
+  compliance-credential-plonk:
+    profiles: ["compliance-credential-plonk", "plonk"]
+    <<: *host-yaci
+    build:
+      context: .
+      additional_contexts:
+        zeroj-src: ${ZEROJ_SOURCE_CONTEXT:-../zeroj}
+      dockerfile: docker/cli-usecase.Dockerfile
+      args:
+        USECASE_DIR: annotated-compliance-credential-plonk
+        APP_NAME: annotated-compliance-credential-plonk
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre3}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+    environment:
+      <<: *yaci-env
+    volumes:
+      - compliance-credential-plonk-cache:/var/cache/zeroj-plonk
+
+volumes:
+  proof-of-reserves-plonk-cache:
+  compliance-credential-plonk-cache:

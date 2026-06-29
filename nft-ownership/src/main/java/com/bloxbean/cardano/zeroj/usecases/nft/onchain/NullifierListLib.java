@@ -24,12 +24,6 @@ import java.math.BigInteger;
 @OnchainLibrary
 public class NullifierListLib {
 
-    /**
-     * Each list node stores optional user data and a pointer to the next key.
-     * Empty nextKey = end of list.
-     */
-    public record ListElement(PlutusData userData, byte[] nextKey) {}
-
     // === Helpers ===
 
     static byte[] extractNodeKey(byte[] tokenName, int prefixLen) {
@@ -61,8 +55,8 @@ public class NullifierListLib {
                                        byte[] rootKey, Address scriptAddr) {
         boolean atScript = Builtins.equalsData(rootOutput.address(), scriptAddr);
 
-        ListElement datum = PlutusData.cast(OutputLib.getInlineDatum(rootOutput), ListElement.class);
-        boolean emptyNext = Builtins.equalsByteString(datum.nextKey(), Builtins.emptyByteString());
+        PlutusData datum = OutputLib.getInlineDatum(rootOutput);
+        boolean emptyNext = Builtins.equalsByteString(elementNextKey(datum), Builtins.emptyByteString());
 
         BigInteger rootQty = ValuesLib.assetOf(mint, policyId, rootKey);
         boolean rootMinted = rootQty.compareTo(BigInteger.ONE) == 0;
@@ -107,25 +101,25 @@ public class NullifierListLib {
         boolean newAtScript = Builtins.equalsData(newElementOutput.address(), scriptAddr);
 
         // Extract datums
-        ListElement anchorOld = PlutusData.cast(OutputLib.getInlineDatum(anchorInputResolved), ListElement.class);
-        ListElement contAnchor = PlutusData.cast(OutputLib.getInlineDatum(contAnchorOutput), ListElement.class);
-        ListElement newElement = PlutusData.cast(OutputLib.getInlineDatum(newElementOutput), ListElement.class);
+        PlutusData anchorOld = OutputLib.getInlineDatum(anchorInputResolved);
+        PlutusData contAnchor = OutputLib.getInlineDatum(contAnchorOutput);
+        PlutusData newElement = OutputLib.getInlineDatum(newElementOutput);
 
         // Anchor userData unchanged
-        boolean dataUnchanged = Builtins.equalsData(anchorOld.userData(), contAnchor.userData());
+        boolean dataUnchanged = Builtins.equalsData(elementUserData(anchorOld), elementUserData(contAnchor));
 
         // Continuing anchor's nextKey = new node's key
-        boolean contNextOk = Builtins.equalsByteString(contAnchor.nextKey(), newKey);
+        byte[] anchorOldNextKey = elementNextKey(anchorOld);
+        boolean contNextOk = Builtins.equalsByteString(elementNextKey(contAnchor), newKey);
 
         // New element's nextKey = anchor's old nextKey
-        boolean newNextOk = Builtins.equalsByteString(newElement.nextKey(), anchorOld.nextKey());
+        boolean newNextOk = Builtins.equalsByteString(elementNextKey(newElement), anchorOldNextKey);
 
         // Ordering: anchorKey < newKey (skip if root), newKey < oldNextKey (skip if end)
-        byte[] oldNextKey = anchorOld.nextKey();
-        boolean insertAtEnd = Builtins.equalsByteString(oldNextKey, Builtins.emptyByteString());
+        boolean insertAtEnd = Builtins.equalsByteString(anchorOldNextKey, Builtins.emptyByteString());
         byte[] anchorKey = extractNodeKey(anchorTokenName, prefixLen);
         boolean orderOk = (anchorIsRoot || ByteStringLib.lessThan(anchorKey, newKey))
-                && (insertAtEnd || ByteStringLib.lessThan(newKey, oldNextKey));
+                && (insertAtEnd || ByteStringLib.lessThan(newKey, anchorOldNextKey));
 
         // Exactly 1 new NFT minted under list policy
         BigInteger mintCount = ValuesLib.countTokensWithQty(mint, policyId, BigInteger.ONE);
@@ -137,5 +131,16 @@ public class NullifierListLib {
         return nameCorrect && anchorPreserved && contAtScript && newAtScript
                 && dataUnchanged && contNextOk && newNextOk && orderOk
                 && exactlyOne && zkProofVerified;
+    }
+
+    private static PlutusData elementUserData(PlutusData elementDatum) {
+        PlutusData fields = Builtins.constrFields(elementDatum);
+        return Builtins.headList(fields);
+    }
+
+    private static byte[] elementNextKey(PlutusData elementDatum) {
+        PlutusData fields = Builtins.constrFields(elementDatum);
+        PlutusData afterUserData = Builtins.tailList(fields);
+        return Builtins.unBData(Builtins.headList(afterUserData));
     }
 }

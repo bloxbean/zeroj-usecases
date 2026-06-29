@@ -135,6 +135,7 @@ public class OnChainAirdropService {
 
         var result = new QuickTxBuilder(backendService)
                 .compose(mintTx)
+                .withTxEvaluator(LocalJulcEvaluator.create(backendService))
                 .withSigner(SignerProviders.signerFrom(adminAccount))
                 .feePayer(adminAccount.baseAddress())
                 .collateralPayer(adminAccount.baseAddress())

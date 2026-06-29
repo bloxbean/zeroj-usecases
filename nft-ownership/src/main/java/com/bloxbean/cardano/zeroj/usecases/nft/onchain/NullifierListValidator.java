@@ -70,7 +70,7 @@ public class NullifierListValidator {
     }
 
     @Entrypoint(purpose = Purpose.SPEND)
-    public static boolean spend(Optional<PlutusData> datum, PlutusData redeemer, ScriptContext ctx) {
+    public static boolean spend(PlutusData datum, PlutusData redeemer, ScriptContext ctx) {
         TxInfo txInfo = ctx.txInfo();
         byte[] ownHash = ContextsLib.ownHash(ctx);
         return NullifierListLib.requireListTokensMintedOrBurned(txInfo.mint(), ownHash);

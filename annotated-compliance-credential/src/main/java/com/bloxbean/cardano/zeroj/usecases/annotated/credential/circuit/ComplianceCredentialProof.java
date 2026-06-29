@@ -13,6 +13,16 @@ import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParams;
 import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 import com.bloxbean.cardano.zeroj.circuit.lib.zk.ZkPoseidonN;
 
+/**
+ * Compliance-credential circuit (v1) — demonstrates the commitment + predicate pattern.
+ *
+ * <p><b>Security note:</b> this circuit is <em>not sound on its own</em>. The
+ * {@code credentialCommitment} is a public input chosen by the prover, and nothing forces it
+ * to be a commitment a trusted issuer actually created. An attacker can pick any compliant
+ * attributes, compute the matching Poseidon commitment themselves, and produce a valid proof.
+ * It proves internal consistency, not legitimacy. See {@link ComplianceCredentialProofV2} for
+ * the hardened version that roots trust in an in-circuit issuer EdDSA-Jubjub signature.
+ */
 @ZKCircuit(name = "annotated-compliance-credential", version = 1)
 public class ComplianceCredentialProof {
     private static final PoseidonParams POSEIDON = PoseidonParamsBLS12_381T3.INSTANCE;

@@ -9,7 +9,6 @@ import com.bloxbean.cardano.julc.stdlib.annotation.SpendingValidator;
 import com.bloxbean.cardano.zeroj.onchain.julc.groth16.lib.Groth16BLS12381Lib;
 
 import java.math.BigInteger;
-import java.util.Optional;
 
 /**
  * Senior Doctor DApp Plutus validator. Public inputs (4):
@@ -30,7 +29,7 @@ public class SeniorDoctorValidator {
                              byte[] currentYear, byte[] eligible) {}
 
     @Entrypoint
-    public static boolean validate(Optional<PlutusData> datum, SeniorDoctorProof proof, ScriptContext ctx) {
+    public static boolean validate(PlutusData datum, SeniorDoctorProof proof, ScriptContext ctx) {
         BigInteger eligibleVal = Builtins.byteStringToInteger(true, proof.eligible());
         boolean isEligible = eligibleVal.compareTo(BigInteger.ONE) == 0;
 
@@ -39,7 +38,15 @@ public class SeniorDoctorValidator {
         BigInteger pub2 = Builtins.byteStringToInteger(true, proof.currentYear());
         BigInteger pub3 = Builtins.byteStringToInteger(true, proof.eligible());
 
-        PlutusData publicInputs = Groth16BLS12381Lib.publicInputs(pub0, pub1, pub2, pub3);
+        PlutusData publicInputs = Builtins.listData(Builtins.mkCons(
+                Builtins.iData(pub0),
+                Builtins.mkCons(
+                        Builtins.iData(pub1),
+                        Builtins.mkCons(
+                                Builtins.iData(pub2),
+                                Builtins.mkCons(
+                                        Builtins.iData(pub3),
+                                        Builtins.mkNilData())))));
         boolean proofValid = Groth16BLS12381Lib.verify(publicInputs,
                 proof.piA(), proof.piB(), proof.piC(),
                 vkAlpha, vkBeta, vkGamma, vkDelta, vkIc);

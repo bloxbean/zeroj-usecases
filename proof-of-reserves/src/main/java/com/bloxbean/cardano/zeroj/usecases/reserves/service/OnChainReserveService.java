@@ -126,6 +126,7 @@ public class OnChainReserveService {
 
         var result = new QuickTxBuilder(backendService)
                 .compose(unlockTx)
+                .withTxEvaluator(LocalJulcEvaluator.create(backendService))
                 .withSigner(SignerProviders.signerFrom(adminAccount))
                 .feePayer(adminAccount.baseAddress())
                 .collateralPayer(adminAccount.baseAddress())

@@ -29,6 +29,17 @@ java --enable-native-access=ALL-UNNAMED -jar build/libs/proof-of-reserves-0.1.0-
 
 Open **http://localhost:8089**
 
+The first run creates a local development Groth16 setup cache in `./data/`.
+This can take a few minutes for the default depth-4 Merkle circuit. Later runs
+reuse the circuit-specific setup cache after checking it matches the current
+wire/public-input shape.
+
+To run the gated Yaci DevKit E2E test:
+
+```bash
+ZEROJ_YACI_E2E=true ./gradlew test --tests '*ProofOfReservesYaciE2ETest'
+```
+
 ## Test Scenarios
 
 | Scenario | Reserves | Liabilities | Result |
@@ -74,7 +85,7 @@ Proves in zero knowledge:
 | Component | Technology |
 |-----------|-----------|
 | Backend | Spring Boot 3.5.0-M3, H2 (persistent accounts) |
-| ZK Proofs | ZeroJ (Groth16, BLS12-381, pure Java, SetupCache) |
+| ZK Proofs | ZeroJ (Groth16, BLS12-381, pure Java, Groth16SetupCache) |
 | On-chain | Julc → Plutus V3 spending validator |
 | Frontend | Svelte 5 + Vite |
 | Devnet | Yaci DevKit |

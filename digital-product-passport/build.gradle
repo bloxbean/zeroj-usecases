@@ -18,8 +18,8 @@ springBoot {
 }
 
 repositories {
-    mavenCentral()
     mavenLocal()
+    mavenCentral()
     maven {
         url = uri("https://central.sonatype.com/repository/maven-snapshots")
         content { snapshotsOnly() }
@@ -31,7 +31,7 @@ repositories {
 
 ext {
     zerojVersion = '0.1.0-pre3'
-    julcVersion = '0.1.0-pre13'
+    julcVersion = '0.1.0-pre14'
     cclVersion = '0.8.0-pre4'  // pre4: CommitmentScheme exposed in MpfTrie constructor
 }
 
@@ -60,6 +60,7 @@ dependencies {
     implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
     implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
     implementation "com.bloxbean.cardano:julc-cardano-client-lib:${julcVersion}"
+    runtimeOnly "com.bloxbean.cardano:julc-vm-java:${julcVersion}"
 
     // MPF — Merkle Patricia Forestry with RocksDB persistence
     implementation "com.bloxbean.cardano:cardano-client-merkle-patricia-forestry:${cclVersion}"
@@ -86,6 +87,7 @@ compileTestJava {
 test {
     useJUnitPlatform()
     jvmArgs '--enable-native-access=ALL-UNNAMED'
+    systemProperty "zeroj.allowInsecureTrustedSetup", "true"
     testLogging {
         events "passed", "failed", "skipped"
         showStandardStreams = true

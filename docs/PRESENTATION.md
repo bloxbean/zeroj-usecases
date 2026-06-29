@@ -32,7 +32,7 @@ Java Circuit DSL → R1CS → Groth16 Prove (pure Java) → 192-byte proof → P
 | Frontend | Svelte 5 + Vite |
 | Persistence | H2 (metadata), RocksDB (Merkle trees) |
 | Local Devnet | Yaci DevKit |
-| Proof Caching | SetupCache (binary SRS + setup serialization) |
+| Proof Caching | Groth16SetupCache / PlonkSetupCache (binary SRS + setup serialization) |
 
 ---
 
@@ -207,7 +207,7 @@ Manufacturer → Register products in Poseidon MPF (RocksDB, persistent)
 
 **4. Full Persistence**
 - H2 database for product metadata (survives restarts)
-- SetupCache for SRS + setup (startup: 60s → 14s)
+- Groth16SetupCache / PlonkSetupCache for SRS + setup (startup: 60s → 14s)
 - Server-side pagination for large product lists
 
 ### Demo Scenarios
@@ -283,7 +283,7 @@ Each demo showcases a different Cardano UTXO pattern:
 | Proof generation (simple circuit, ~1,700 constraints) | **3-8 seconds** |
 | Proof generation (complex circuit, ~10,800 constraints) | **15-30 seconds** |
 | On-chain verification cost | **~0.3-0.5 ADA** per Groth16 pairing check |
-| Startup with SetupCache | **~14 seconds** (vs ~60s cold start) |
+| Startup with proof-system setup cache | **~14 seconds** (vs ~60s cold start) |
 | Circuit compilation | **< 1 second** |
 
 ---
@@ -296,7 +296,7 @@ Each demo showcases a different Cardano UTXO pattern:
 | **Soundness** | BLS12-381 pairing check — computationally infeasible to forge |
 | **On-chain enforcement** | Plutus V3 validators verify proofs — can't bypass by using a different UI |
 | **Anti-replay** | Nullifiers (NFT, Voting), stateless reuse (KYC), per-product minting (DPP) |
-| **Persistence** | H2 + RocksDB + SetupCache — survives restarts |
+| **Persistence** | H2 + RocksDB + proof-system setup cache — survives restarts |
 | **Deterministic setup** | Same tau → same SRS → same policy IDs across restarts |
 
 ---
@@ -366,7 +366,7 @@ zeroj-usecases/
 2. **Multiple UTXO patterns** demonstrated — sorted linked lists, stateless validators, minting policies, attestation UTXOs
 3. **Real-world use cases** — NFT privacy, DAO governance, KYC compliance, EU DPP regulation, exchange solvency
 4. **Production path clear** — MPC ceremonies replace dev setup, circuits are the same, on-chain verifiers are identical
-5. **Full persistence** — H2 + RocksDB + SetupCache means demos survive restarts and scale realistically
+5. **Full persistence** — H2 + RocksDB + proof-system setup cache means demos survive restarts and scale realistically
 
 ---
 

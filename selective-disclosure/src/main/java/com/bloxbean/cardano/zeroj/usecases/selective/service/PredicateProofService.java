@@ -10,8 +10,8 @@ import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
+import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupCache;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.SetupCache;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import com.bloxbean.cardano.zeroj.usecases.selective.circuit.AdultResidentCircuit;
@@ -53,35 +53,25 @@ public class PredicateProofService {
         var cacheDir = Path.of("./data");
         try { Files.createDirectories(cacheDir); } catch (Exception ignore) {}
 
-        var srs = loadOrGenerateSrs(cacheDir.resolve("srs.bin"));
+        com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS[] srsHolder =
+                new com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS[1];
 
         adultResident = compile("adult-resident",
                 AdultResidentCircuit.build(RichCredentialIssuerService.COUNTRY_TREE_DEPTH),
-                srs, cacheDir.resolve("setup-adult.bin"));
+                srsHolder, cacheDir.resolve("setup-adult.bin"));
         seniorDoctor = compile("senior-doctor", SeniorDoctorCircuit.build(),
-                srs, cacheDir.resolve("setup-doctor.bin"));
+                srsHolder, cacheDir.resolve("setup-doctor.bin"));
 
         log.info("All predicate circuits compiled. Ready for proofs.");
     }
 
-    private com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS loadOrGenerateSrs(Path cache) {
-        try {
-            if (Files.exists(cache)) {
-                log.info("Loading SRS from cache...");
-                long t = System.currentTimeMillis();
-                var s = SetupCache.loadSrs(cache);
-                log.info("SRS loaded in {}ms", System.currentTimeMillis() - t);
-                return s;
-            }
-        } catch (Exception e) { log.warn("SRS cache load failed: {}", e.getMessage()); }
-        log.info("Running Powers of Tau (power={})...", potPower);
-        var srs = PowersOfTauBLS381.generate(potPower);
-        try { SetupCache.saveSrs(srs, cache); log.info("Cached SRS"); } catch (Exception ignore) {}
-        return srs;
+    private com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS generateDevSrs() {
+        log.info("Running in-memory dev Powers of Tau (power={})...", potPower);
+        return PowersOfTauBLS381.generate(potPower);
     }
 
     private CompiledPredicate compile(String name, CircuitBuilder circuit,
-                                      com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS srs,
+                                      com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS[] srsHolder,
                                       Path setupCache) {
         var r1cs = circuit.compileR1CS(CurveId.BLS12_381);
         log.info("  {} — {} constraints, {} wires, {} public",
@@ -92,19 +82,33 @@ public class PredicateProofService {
         try {
             if (Files.exists(setupCache)) {
                 long t = System.currentTimeMillis();
-                setup = SetupCache.loadSetup(setupCache);
-                log.info("  {} — loaded setup from cache in {}ms", name, System.currentTimeMillis() - t);
+                setup = Groth16SetupCache.loadBls12381Setup(setupCache);
+                if (matchesCurrentCircuit(setup, r1cs)) {
+                    log.info("  {} — loaded setup from cache in {}ms", name, System.currentTimeMillis() - t);
+                } else {
+                    log.warn("  {} — setup cache shape does not match current circuit; regenerating", name);
+                    setup = null;
+                }
             }
         } catch (Exception e) { log.warn("  {} — cache load failed: {}", name, e.getMessage()); }
 
         if (setup == null) {
             log.info("  {} — running Phase-2 setup...", name);
+            if (srsHolder[0] == null) {
+                srsHolder[0] = generateDevSrs();
+            }
             setup = Groth16SetupBLS381.setup(constraints, r1cs.numWires(),
-                    r1cs.numPublicInputs(), srs.tauScalar());
-            try { SetupCache.saveSetup(setup, setupCache); log.info("  {} — cached setup", name); }
+                    r1cs.numPublicInputs(), srsHolder[0].tauScalar());
+            try { Groth16SetupCache.saveBls12381Setup(setup, setupCache); log.info("  {} — cached setup", name); }
             catch (Exception e) { log.warn("  {} — cache save failed: {}", name, e.getMessage()); }
         }
         return new CompiledPredicate(circuit, r1cs, constraints, setup);
+    }
+
+    private static boolean matchesCurrentCircuit(Groth16SetupBLS381.SetupResult setup, R1CSConstraintSystem r1cs) {
+        var pk = setup.provingKey();
+        return pk.numPublic() == r1cs.numPublicInputs()
+                && pk.pointsA().length == r1cs.numWires();
     }
 
     public ProofBundle proveAdultResident(JubjubPoint pk, EdDSAJubjub.Signature sig,

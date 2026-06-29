@@ -181,6 +181,7 @@ public class OnChainVoteService {
 
         var result = new QuickTxBuilder(backendService)
                 .compose(tx)
+                .withTxEvaluator(LocalJulcEvaluator.create(backendService))
                 .withSigner(SignerProviders.signerFrom(adminAccount))
                 .feePayer(adminAccount.baseAddress())
                 .collateralPayer(adminAccount.baseAddress())
@@ -297,6 +298,7 @@ public class OnChainVoteService {
 
         var result = new QuickTxBuilder(backendService)
                 .compose(initTx)
+                .withTxEvaluator(LocalJulcEvaluator.create(backendService))
                 .withSigner(SignerProviders.signerFrom(adminAccount))
                 .feePayer(adminAccount.baseAddress())
                 .collateralPayer(adminAccount.baseAddress())

@@ -128,6 +128,7 @@ public class OnChainDppService {
 
         var result = new QuickTxBuilder(backendService)
                 .compose(mintTx)
+                .withTxEvaluator(LocalJulcEvaluator.create(backendService))
                 .withSigner(SignerProviders.signerFrom(adminAccount))
                 .withRequiredSigners(manufacturerPkh)
                 .feePayer(adminAccount.baseAddress())
