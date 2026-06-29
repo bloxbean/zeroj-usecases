@@ -13,7 +13,7 @@ import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
 import com.bloxbean.cardano.client.quicktx.ScriptTx;
 import com.bloxbean.cardano.client.quicktx.Tx;
 import com.bloxbean.cardano.julc.clientlib.JulcScriptLoader;
-import com.bloxbean.cardano.zeroj.onchain.julc.plonk.validator.PlonkBLS12381MultiInputVerifier;
+import com.bloxbean.cardano.zeroj.usecases.plonk.credential.onchain.CredentialPlonkVerifier;
 
 public final class PlonkCredentialOnChainService {
     private static final int TX_WAIT_ATTEMPTS = Integer.getInteger("zeroj.yaci.txWaitAttempts", 90);
@@ -31,7 +31,7 @@ public final class PlonkCredentialOnChainService {
         long startNanos = System.nanoTime();
         long scriptStartNanos = System.nanoTime();
         PlutusScript script = JulcScriptLoader.load(
-                PlonkBLS12381MultiInputVerifier.class,
+                CredentialPlonkVerifier.class,
                 PlonkCardanoData.verifierParams(bundle.vk(), bundle.publicInputs().length));
         String scriptAddress = AddressProvider.getEntAddress(script, Networks.testnet()).toBech32();
         System.out.println("[plonk-credential] onChainScriptLoad=" + elapsedMillis(scriptStartNanos) + "ms");

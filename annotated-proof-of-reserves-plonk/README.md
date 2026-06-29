@@ -6,7 +6,7 @@ flow on Cardano.
 It uses an annotated `@ZKCircuit` for the reserve statement, generates a
 ZeroJ Cardano-profile PlonK MPI proof, verifies it with the pure Java off-chain
 verifier, and can submit a Yaci DevKit transaction that spends through
-`PlonkBLS12381MultiInputVerifier`.
+`ReservePlonkVerifier`, an app-local validator that reuses `PlonkBLS12381Lib`.
 
 The exchange proves a compact reserve-unit statement:
 
@@ -28,7 +28,9 @@ claimedLiabilities
 ```
 
 On-chain, these values are supplied as datum and the proof is supplied as the
-redeemer. The script verifies the bounded PlonK MPI profile with 3 public inputs.
+redeemer. The script verifies the bounded PlonK MPI profile with 3 public inputs
+and enforces the demo reserve policy that public assets are not below public
+claimed liabilities.
 
 The commitment in this demo is deliberately compact so proving and on-chain
 testing remain practical in Yaci DevKit. It is a deterministic test commitment,

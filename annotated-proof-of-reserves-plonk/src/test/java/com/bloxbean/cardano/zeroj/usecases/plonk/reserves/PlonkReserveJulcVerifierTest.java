@@ -7,15 +7,12 @@ import com.bloxbean.cardano.julc.testkit.TestDataBuilder;
 import com.bloxbean.cardano.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano;
 import com.bloxbean.cardano.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano.MultiInputProofCompressed;
 import com.bloxbean.cardano.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano.VkCompressed;
-import com.bloxbean.cardano.zeroj.onchain.julc.plonk.validator.PlonkBLS12381MultiInputVerifier;
+import com.bloxbean.cardano.zeroj.usecases.plonk.reserves.onchain.ReservePlonkVerifier;
 import com.bloxbean.cardano.zeroj.usecases.plonk.reserves.service.PlonkReserveProofService;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
 
 class PlonkReserveJulcVerifierTest extends ContractTest {
     private static Fixture cachedFixture;
@@ -50,29 +47,9 @@ class PlonkReserveJulcVerifierTest extends ContractTest {
     private Fixture createFixture() throws Exception {
         var prover = new PlonkReserveProofService(SampleReserveStatement.ACCOUNT_COUNT, 10);
         var bundle = prover.prove(SampleReserveStatement.solventFixture().inputs());
-        var compiled = compileValidator(PlonkBLS12381MultiInputVerifier.class, zerojOnchainSourceRoot());
+        var compiled = compileValidator(ReservePlonkVerifier.class);
         Program program = applyParams(compiled.program(), bundle.vk(), bundle.publicInputs().length);
         return new Fixture(program, bundle.cardanoProof(), bundle.publicInputs());
-    }
-
-    private static Path zerojOnchainSourceRoot() {
-        String override = System.getProperty("zeroj.onchain.sourceRoot");
-        if (override != null && !override.isBlank()) {
-            return Path.of(override).toAbsolutePath().normalize();
-        }
-
-        List<Path> candidates = List.of(
-                Path.of("..", "..", "zeroj", "zeroj-onchain-julc", "src", "main", "java"),
-                Path.of("..", "zeroj", "zeroj-onchain-julc", "src", "main", "java"),
-                Path.of("zeroj-onchain-julc", "src", "main", "java"));
-        for (Path candidate : candidates) {
-            Path sourceRoot = candidate.toAbsolutePath().normalize();
-            if (Files.exists(sourceRoot.resolve(
-                    "com/bloxbean/cardano/zeroj/onchain/julc/plonk/validator/PlonkBLS12381MultiInputVerifier.java"))) {
-                return sourceRoot;
-            }
-        }
-        throw new IllegalStateException("Cannot locate zeroj-onchain-julc source root. Set -Dzeroj.onchain.sourceRoot.");
     }
 
     private PlutusData context(Fixture fixture, PlutusData datum) {

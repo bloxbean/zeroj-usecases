@@ -6,7 +6,7 @@ flow on Cardano.
 It uses an annotated `@ZKCircuit` for a private compliance gate, generates a
 ZeroJ Cardano-profile PlonK MPI proof, verifies it with the pure Java off-chain
 verifier, and can submit a Yaci DevKit transaction that spends through
-`PlonkBLS12381MultiInputVerifier`.
+`CredentialPlonkVerifier`, an app-local validator that reuses `PlonkBLS12381Lib`.
 
 The credential holder proves:
 
@@ -26,7 +26,8 @@ requiredJurisdiction
 ```
 
 On-chain, these values are supplied as datum and the proof is supplied as the
-redeemer. The script verifies the bounded PlonK MPI profile with 3 public inputs.
+redeemer. The script verifies the bounded PlonK MPI profile with 3 public inputs
+and enforces the demo policy of minimum age 18 and required jurisdiction 1.
 
 The commitment in this demo is deliberately compact so proving and on-chain
 testing remain practical in Yaci DevKit. It is a deterministic test commitment,

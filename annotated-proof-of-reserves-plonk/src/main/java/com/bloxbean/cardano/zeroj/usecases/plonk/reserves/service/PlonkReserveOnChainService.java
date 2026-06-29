@@ -13,7 +13,7 @@ import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
 import com.bloxbean.cardano.client.quicktx.ScriptTx;
 import com.bloxbean.cardano.client.quicktx.Tx;
 import com.bloxbean.cardano.julc.clientlib.JulcScriptLoader;
-import com.bloxbean.cardano.zeroj.onchain.julc.plonk.validator.PlonkBLS12381MultiInputVerifier;
+import com.bloxbean.cardano.zeroj.usecases.plonk.reserves.onchain.ReservePlonkVerifier;
 
 import java.math.BigInteger;
 
@@ -33,7 +33,7 @@ public final class PlonkReserveOnChainService {
         long startNanos = System.nanoTime();
         long scriptStartNanos = System.nanoTime();
         PlutusScript script = JulcScriptLoader.load(
-                PlonkBLS12381MultiInputVerifier.class,
+                ReservePlonkVerifier.class,
                 PlonkCardanoData.verifierParams(bundle.vk(), bundle.publicInputs().length));
         String scriptAddress = AddressProvider.getEntAddress(script, Networks.testnet()).toBech32();
         System.out.println("[plonk-reserves] onChainScriptLoad=" + elapsedMillis(scriptStartNanos) + "ms");

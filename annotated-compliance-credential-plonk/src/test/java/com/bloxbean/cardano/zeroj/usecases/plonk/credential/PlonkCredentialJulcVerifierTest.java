@@ -7,15 +7,13 @@ import com.bloxbean.cardano.julc.testkit.TestDataBuilder;
 import com.bloxbean.cardano.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano;
 import com.bloxbean.cardano.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano.MultiInputProofCompressed;
 import com.bloxbean.cardano.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano.VkCompressed;
-import com.bloxbean.cardano.zeroj.onchain.julc.plonk.validator.PlonkBLS12381MultiInputVerifier;
+import com.bloxbean.cardano.zeroj.usecases.plonk.credential.onchain.CredentialPlonkVerifier;
+import com.bloxbean.cardano.zeroj.usecases.plonk.credential.circuit.ComplianceCredentialGateProofCircuit;
 import com.bloxbean.cardano.zeroj.usecases.plonk.credential.service.PlonkCredentialProofService;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
 
 class PlonkCredentialJulcVerifierTest extends ContractTest {
     private static Fixture cachedFixture;
@@ -40,39 +38,37 @@ class PlonkCredentialJulcVerifierTest extends ContractTest {
         assertFailure(result);
     }
 
+    @Test
+    void julcVerifierRejectsProofBelowOnChainMinimumAgePolicy() throws Exception {
+        var fixture = createFixture(ComplianceCredentialGateProofCircuit.inputs()
+                .credentialCommitment(SampleComplianceCredential.credentialCommitment(
+                        BigInteger.valueOf(29), BigInteger.ONE, BigInteger.ONE, BigInteger.valueOf(555_777)))
+                .minimumAge(BigInteger.valueOf(17))
+                .requiredJurisdiction(BigInteger.ONE)
+                .age(BigInteger.valueOf(29))
+                .ageSurplus(BigInteger.valueOf(12))
+                .jurisdiction(BigInteger.ONE)
+                .notSanctioned(BigInteger.ONE)
+                .credentialSalt(BigInteger.valueOf(555_777)));
+
+        var result = evaluate(fixture.program(), context(fixture, datum(fixture.publicInputs())));
+
+        assertFailure(result);
+    }
+
     private Fixture fixture() throws Exception {
         if (cachedFixture == null) {
-            cachedFixture = createFixture();
+            cachedFixture = createFixture(SampleComplianceCredential.validFixture().inputs());
         }
         return cachedFixture;
     }
 
-    private Fixture createFixture() throws Exception {
+    private Fixture createFixture(ComplianceCredentialGateProofCircuit.Inputs inputs) throws Exception {
         var prover = new PlonkCredentialProofService(10);
-        var bundle = prover.prove(SampleComplianceCredential.validFixture().inputs());
-        var compiled = compileValidator(PlonkBLS12381MultiInputVerifier.class, zerojOnchainSourceRoot());
+        var bundle = prover.prove(inputs);
+        var compiled = compileValidator(CredentialPlonkVerifier.class);
         Program program = applyParams(compiled.program(), bundle.vk(), bundle.publicInputs().length);
         return new Fixture(program, bundle.cardanoProof(), bundle.publicInputs());
-    }
-
-    private static Path zerojOnchainSourceRoot() {
-        String override = System.getProperty("zeroj.onchain.sourceRoot");
-        if (override != null && !override.isBlank()) {
-            return Path.of(override).toAbsolutePath().normalize();
-        }
-
-        List<Path> candidates = List.of(
-                Path.of("..", "..", "zeroj", "zeroj-onchain-julc", "src", "main", "java"),
-                Path.of("..", "zeroj", "zeroj-onchain-julc", "src", "main", "java"),
-                Path.of("zeroj-onchain-julc", "src", "main", "java"));
-        for (Path candidate : candidates) {
-            Path sourceRoot = candidate.toAbsolutePath().normalize();
-            if (Files.exists(sourceRoot.resolve(
-                    "com/bloxbean/cardano/zeroj/onchain/julc/plonk/validator/PlonkBLS12381MultiInputVerifier.java"))) {
-                return sourceRoot;
-            }
-        }
-        throw new IllegalStateException("Cannot locate zeroj-onchain-julc source root. Set -Dzeroj.onchain.sourceRoot.");
     }
 
     private PlutusData context(Fixture fixture, PlutusData datum) {
