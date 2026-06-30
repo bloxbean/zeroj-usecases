@@ -22,7 +22,7 @@ repositories {
 }
 
 ext {
-    zerojVersion = project.findProperty('zerojVersion') ?: '0.1.0-pre3'
+    zerojVersion = project.findProperty('zerojVersion') ?: '0.1.0-pre4'
     julcVersion = '0.1.0-pre14'
     cclVersion = '0.8.0-pre4'
 }

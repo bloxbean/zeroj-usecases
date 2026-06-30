@@ -22,7 +22,7 @@ repositories {
 }
 
 ext {
-    zerojVersion = '0.1.0-pre3'
+    zerojVersion = '0.1.0-pre4'
 }
 
 dependencies {

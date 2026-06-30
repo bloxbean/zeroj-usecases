@@ -83,7 +83,7 @@ These are smaller, focused examples of ZeroJ's **annotation-based circuit DSL** 
 | Java (GraalVM) | 25 | `sdk install java 25.0.2-graal` then `sdk use java 25.0.2-graal` (via [SDKMAN](https://sdkman.io/)) |
 | Yaci DevKit | Latest | [github.com/bloxbean/yaci-devkit](https://github.com/bloxbean/yaci-devkit) — *needed for full-stack demos and PlonK on-chain Docker runs* |
 | Node.js | 18+ | Optional — only if you want to rebuild a Svelte frontend yourself |
-| ZeroJ | `0.1.0-pre3` | Pulled from Maven; see [note on local ZeroJ](#using-a-local-zeroj-build) below |
+| ZeroJ | `0.1.0-pre4` | Pulled from Maven; see [note on local ZeroJ](#using-a-local-zeroj-build) below |
 
 You do **not** need Node.js to run the demos — each ships with a pre-built frontend bundled in the JAR.
 
@@ -159,7 +159,7 @@ docker compose --profile plonk up --build --abort-on-container-exit
 If the local ZeroJ version changes, pass it to the usecase build:
 
 ```bash
-ZEROJ_VERSION=0.1.0-pre3 docker compose --profile plonk up --build --abort-on-container-exit
+ZEROJ_VERSION=0.1.0-pre4 docker compose --profile plonk up --build --abort-on-container-exit
 ```
 
 If Yaci is not on the default host ports, override:
@@ -461,7 +461,7 @@ There's also a convenience script that builds a subset sequentially:
 
 ### Using a local ZeroJ build
 
-The examples depend on ZeroJ `0.1.0-pre3` from Maven. To test against a ZeroJ build from source, publish it to your local Maven repository and pass the version through:
+The examples depend on ZeroJ `0.1.0-pre4` from Maven. To test against a ZeroJ build from source, publish it to your local Maven repository and pass the version through:
 
 ```bash
 # In the zeroj checkout
@@ -470,7 +470,7 @@ cd ../zeroj
 
 # Then build a usecase with that version
 cd ../zeroj-usecases
-./gradlew buildAllUsecasesNoTests -PzerojVersion=0.1.0-pre3
+./gradlew buildAllUsecasesNoTests -PzerojVersion=0.1.0-pre4
 ```
 
 Each module reads `zerojVersion` (a Gradle property / env var with a sensible default), so `-PzerojVersion=…` is forwarded to every example.

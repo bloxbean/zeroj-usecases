@@ -2,7 +2,7 @@ FROM eclipse-temurin:25-jdk AS build
 
 ARG USECASE_DIR
 ARG APP_NAME
-ARG ZEROJ_VERSION=0.1.0-pre3
+ARG ZEROJ_VERSION=0.1.0-pre4
 ARG PUBLISH_LOCAL_ZEROJ=true
 ARG ZEROJ_PUBLISH_TASKS=":zeroj-api:publishToMavenLocal :zeroj-backend-spi:publishToMavenLocal :zeroj-codec:publishToMavenLocal :zeroj-bls12381:publishToMavenLocal :zeroj-blst:publishToMavenLocal :zeroj-crypto:publishToMavenLocal :zeroj-circuit-dsl:publishToMavenLocal :zeroj-circuit-annotation-api:publishToMavenLocal :zeroj-circuit-lib:publishToMavenLocal :zeroj-circuit-annotation-processor:publishToMavenLocal :zeroj-verifier-groth16:publishToMavenLocal :zeroj-verifier-plonk:publishToMavenLocal :zeroj-onchain-julc:publishToMavenLocal"
 
