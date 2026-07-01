@@ -4,6 +4,7 @@
   let currentPage = $state('home');
   let status = $state<any>(null);
   let verifyResult = $state<any>(null);
+  let mintResult = $state<any>(null);
   let loading = $state(false);
   let message = $state('');
   let addCount = $state(5);
@@ -48,7 +49,8 @@
   }
 
   async function mintNft(id: string, type: string) {
-    loading = true; message = `Step 1/2: Generating ZK compliance proof off-chain for ${id}...`;
+    loading = true; mintResult = null;
+    message = `Step 1/2: Generating ZK compliance proof off-chain for ${id}...`;
     try {
       // Step 1: Off-chain ZK proof generation (pure Java Groth16 BLS12-381)
       const vr = await api.verify(id, type);
@@ -69,6 +71,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, forceOnChain: disableOffchain }),
       }).then(r => r.json());
+      mintResult = mr;
       if (mr.error) {
         let detail = mr.onChainRejection ? ' — REJECTED BY ON-CHAIN PLUTUS VALIDATOR' : '';
         message = mr.existingTx
@@ -282,6 +285,13 @@
           <button onclick={() => loadPage(page + 1)} disabled={page >= pageData.totalPages - 1}>Next</button>
         </div>
       {/if}
+      {#if mintResult?.onChainValidation}
+        <div class="onchain-error">
+          <h3>{mintResult.onChainValidation.title}</h3>
+          <p>{mintResult.onChainValidation.summary}</p>
+          <pre>{mintResult.onChainValidation.detail}</pre>
+        </div>
+      {/if}
       {#if message}<div class="message">{message}</div>{/if}
     </section>
 
@@ -335,6 +345,10 @@
   .minted-card { border-color: #238636; }
   .btn-mint { margin-top: 6px; padding: 6px 16px; border: none; border-radius: 6px; background: #1f6feb; color: white; cursor: pointer; font-weight: bold; font-size: 0.85em; }
   .btn-mint:disabled { opacity: 0.5; }
+  .onchain-error { background: #2d1214; border: 1px solid #da3633; border-radius: 8px; padding: 16px; margin: 16px 0; }
+  .onchain-error h3 { color: #f85149; margin: 0 0 8px; }
+  .onchain-error p { margin: 0 0 12px; }
+  .onchain-error pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #ffb4ad; padding: 12px; max-height: 260px; overflow-y: auto; }
   .message { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin: 12px 0; color: #58a6ff; }
   .result { border-radius: 8px; padding: 14px; margin: 12px 0; }
   .compliant { background: #0d2818; border: 1px solid #238636; }

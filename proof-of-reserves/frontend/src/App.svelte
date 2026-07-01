@@ -130,6 +130,13 @@
           {#if proveResult.provingTimeMs}<p>Proof time: {proveResult.provingTimeMs}ms</p>{/if}
         </div>
       {/if}
+      {#if proveResult?.onChainValidation}
+        <div class="onchain-error">
+          <h3>{proveResult.onChainValidation.title}</h3>
+          <p>{proveResult.onChainValidation.summary}</p>
+          <pre>{proveResult.onChainValidation.detail}</pre>
+        </div>
+      {/if}
       {#if message}<div class="message">{message}</div>{/if}
     </section>
 
@@ -185,6 +192,10 @@
   .result { border-radius: 8px; padding: 16px; margin: 16px 0; }
   .solvent { background: #0d2818; border: 1px solid #238636; }
   .insolvent { background: #2d1214; border: 1px solid #da3633; }
+  .onchain-error { background: #2d1214; border: 1px solid #da3633; border-radius: 8px; padding: 16px; margin: 16px 0; }
+  .onchain-error h3 { color: #f85149; margin: 0 0 8px; }
+  .onchain-error p { margin: 0 0 12px; }
+  .onchain-error pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #ffb4ad; padding: 12px; max-height: 260px; overflow-y: auto; }
   .message { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin: 12px 0; color: #58a6ff; }
   button { cursor: pointer; } button:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

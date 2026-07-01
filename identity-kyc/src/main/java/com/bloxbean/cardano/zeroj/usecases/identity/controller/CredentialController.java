@@ -185,10 +185,33 @@ public class CredentialController {
             // Check if the on-chain validator rejected
             boolean onChainRejection = errorMsg != null &&
                     (errorMsg.contains("script") || errorMsg.contains("Plutus") || errorMsg.contains("evaluating"));
-            return ResponseEntity.status(onChainRejection ? 403 : 400).body(Map.of(
-                    "error", errorMsg,
-                    "onChainRejection", onChainRejection,
-                    "name", (String) request.get("name")));
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("error", errorMsg);
+            body.put("onChainRejection", onChainRejection);
+            body.put("name", (String) request.get("name"));
+            if (onChainRejection) {
+                body.put("onChainValidation", Map.of(
+                        "title", "On-chain validator rejected this unlock",
+                        "summary", "The transaction was built and evaluated locally, but the Plutus script returned false before it could be submitted.",
+                        "detail", scriptEvaluationDetail(e)));
+            }
+            return ResponseEntity.status(onChainRejection ? 403 : 400).body(body);
         }
+    }
+
+    private static String scriptEvaluationDetail(Throwable throwable) {
+        StringBuilder detail = new StringBuilder();
+        Throwable current = throwable;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && !message.isBlank() && detail.indexOf(message) < 0) {
+                if (!detail.isEmpty()) {
+                    detail.append("\n\nCaused by: ");
+                }
+                detail.append(message);
+            }
+            current = current.getCause();
+        }
+        return detail.isEmpty() ? "Script evaluation failed." : detail.toString();
     }
 }

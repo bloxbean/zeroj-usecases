@@ -98,7 +98,9 @@ public class VoteController {
                     "provingTimeMs", elapsed));
         } catch (Exception e) {
             log.error("Vote failed", e);
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            boolean onChainRejection = isOnChainRejection(e.getMessage());
+            return ResponseEntity.status(onChainRejection ? 403 : 400)
+                    .body(errorBody(e, onChainRejection));
         }
     }
 
@@ -131,5 +133,39 @@ public class VoteController {
                 "votes", Map.of(
                         "count", onChainVoteService.getVoteCount(),
                         "mode", "on-chain")));
+    }
+
+    private static boolean isOnChainRejection(String message) {
+        return message != null && (message.contains("script")
+                || message.contains("Plutus") || message.contains("evaluating"));
+    }
+
+    private static Map<String, Object> errorBody(Throwable throwable, boolean onChainRejection) {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("error", throwable.getMessage());
+        body.put("onChainRejection", onChainRejection);
+        if (onChainRejection) {
+            body.put("onChainValidation", Map.of(
+                    "title", "On-chain validator rejected this transaction",
+                    "summary", "The transaction was built and evaluated locally, but the Plutus script returned false before it could be submitted.",
+                    "detail", scriptEvaluationDetail(throwable)));
+        }
+        return body;
+    }
+
+    private static String scriptEvaluationDetail(Throwable throwable) {
+        StringBuilder detail = new StringBuilder();
+        Throwable current = throwable;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && !message.isBlank() && detail.indexOf(message) < 0) {
+                if (!detail.isEmpty()) {
+                    detail.append("\n\nCaused by: ");
+                }
+                detail.append(message);
+            }
+            current = current.getCause();
+        }
+        return detail.isEmpty() ? "Script evaluation failed." : detail.toString();
     }
 }

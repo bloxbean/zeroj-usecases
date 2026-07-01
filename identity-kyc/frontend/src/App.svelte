@@ -51,6 +51,7 @@
   async function verifyAndUnlock(name: string, forceOnChain: boolean) {
     loading = true;
     message = `Generating ZK proof for ${name}...`;
+    unlockResult = null;
     try {
       const vr = await api.verify(name);
       if (vr.error || vr.reason) {
@@ -174,6 +175,14 @@
         </div>
       </div>
 
+      {#if unlockResult?.onChainValidation}
+        <div class="onchain-error">
+          <h3>{unlockResult.onChainValidation.title}</h3>
+          <p>{unlockResult.onChainValidation.summary}</p>
+          <pre>{unlockResult.onChainValidation.detail}</pre>
+        </div>
+      {/if}
+
       {#if message}<div class="message">{message}</div>{/if}
     </section>
   {/if}
@@ -202,6 +211,10 @@
   .user-card button { margin-top: 8px; padding: 8px 20px; border: none; border-radius: 6px; background: #238636; color: white; cursor: pointer; font-weight: bold; }
   .user-card button:disabled { opacity: 0.5; }
   .message { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin: 16px 0; color: #58a6ff; }
+  .onchain-error { background: #2d1214; border: 1px solid #da3633; border-radius: 8px; padding: 16px; margin: 16px 0; }
+  .onchain-error h3 { color: #f85149; margin: 0 0 8px; }
+  .onchain-error p { margin: 0 0 12px; }
+  .onchain-error pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #ffb4ad; padding: 12px; max-height: 260px; overflow-y: auto; }
   .result { border-radius: 8px; padding: 16px; margin: 16px 0; }
   .eligible { background: #0d2818; border: 1px solid #238636; }
   .ineligible { background: #2d1214; border: 1px solid #da3633; }

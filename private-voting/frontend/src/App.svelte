@@ -5,6 +5,7 @@
   let status = $state<any>(null);
   let election = $state<any>(null);
   let voteResults = $state<any>(null);
+  let voteResult = $state<any>(null);
   let loading = $state(false);
   let message = $state('');
   let voteTxHashes = $state<{label: string, vote: string, txHash: string}[]>([]);
@@ -16,9 +17,11 @@
 
   async function castVote(voterLabel: string, vote: number) {
     loading = true;
+    voteResult = null;
     message = `${voterLabel} is voting ${vote === 1 ? 'YES' : 'NO'}... (generating ZK proof + on-chain tx)`;
     try {
       const result = await api.castVote(voterLabel, vote);
+      voteResult = result;
       if (result.error) {
         message = `Failed: ${result.error}`;
       } else {
@@ -102,6 +105,14 @@
               </div>
             </div>
           {/each}
+        </div>
+      {/if}
+
+      {#if voteResult?.onChainValidation}
+        <div class="onchain-error">
+          <h3>{voteResult.onChainValidation.title}</h3>
+          <p>{voteResult.onChainValidation.summary}</p>
+          <pre>{voteResult.onChainValidation.detail}</pre>
         </div>
       {/if}
 
@@ -215,6 +226,26 @@
   .vote-buttons button:disabled { opacity: 0.5; cursor: not-allowed; }
   .yes { background: #238636; }
   .no { background: #da3633; }
+  .onchain-error {
+    background: #2d1214;
+    border: 1px solid #da3633;
+    border-radius: 8px;
+    padding: 16px;
+    margin: 16px 0;
+  }
+  .onchain-error h3 { color: #f85149; margin: 0 0 8px; }
+  .onchain-error p { margin: 0 0 12px; }
+  .onchain-error pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #ffb4ad;
+    padding: 12px;
+    max-height: 260px;
+    overflow-y: auto;
+  }
   .message {
     background: #161b22;
     border: 1px solid #30363d;

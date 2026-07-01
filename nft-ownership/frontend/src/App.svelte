@@ -165,6 +165,14 @@
         <p>Generate a proof first (go to Prove tab).</p>
       {/if}
 
+      {#if result?.onChainValidation}
+        <div class="onchain-error">
+          <h3>{result.onChainValidation.title}</h3>
+          <p>{result.onChainValidation.summary}</p>
+          <pre>{result.onChainValidation.detail}</pre>
+        </div>
+      {/if}
+
       {#if result?.access === true}
         <div class="result success">
           <h3>🎉 Access Granted!</h3>
@@ -292,6 +300,26 @@
 
   .result.success { border-color: #238636; }
   .result.error { border-color: #da3633; }
+  .onchain-error {
+    background: #2d1214;
+    border: 1px solid #da3633;
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 1rem;
+  }
+  .onchain-error h3 { color: #f85149; margin: 0 0 8px; }
+  .onchain-error p { margin: 0 0 12px; }
+  .onchain-error pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #ffb4ad;
+    padding: 12px;
+    max-height: 260px;
+    overflow-y: auto;
+  }
 
   pre {
     background: #0d1117;

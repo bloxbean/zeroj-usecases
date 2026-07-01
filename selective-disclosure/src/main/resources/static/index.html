@@ -31,6 +31,11 @@
         .toast.good { border-color: var(--good); }
         .toast.bad { border-color: var(--bad); }
         .desc { color: var(--muted); line-height: 1.6; }
+        .onchain-error { display: none; background: #2d1214; border-color: var(--bad); }
+        .onchain-error.show { display: block; }
+        .onchain-error h2 { color: var(--bad); }
+        .onchain-error p { margin: 0 0 12px; }
+        .onchain-error pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; color: #ffb4ad; padding: 12px; max-height: 260px; overflow-y: auto; }
     </style>
 </head>
 <body>
@@ -82,6 +87,12 @@
             <thead><tr><th>Name</th><th>Adult Library</th><th>Healthcare Portal</th></tr></thead>
             <tbody id="actions"></tbody>
         </table>
+    </div>
+
+    <div class="panel onchain-error" id="onchainError">
+        <h2 style="margin-top:0; border:none" id="onchainTitle">On-chain validator rejected this transaction</h2>
+        <p id="onchainSummary"></p>
+        <pre id="onchainDetail"></pre>
     </div>
 
     <div class="toast" id="toast"></div>
@@ -140,12 +151,20 @@
         }
 
         async function unlock(pred, name) {
+            clearOnChainError();
             toast(`Submitting ${pred} unlock for ${name}…`);
             try {
                 const r = await fetch(`/api/predicate/unlock-${pred}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name})});
                 const d = await r.json();
                 if (r.ok) toast(`✓ Unlocked: tx ${d.txHash.slice(0, 16)}…`, 'good');
-                else if (d.onChainRejection) toast(`✗ Plutus REJECTED: ${d.error}`, 'bad');
+                else if (d.onChainRejection) {
+                    showOnChainError(d.onChainValidation || {
+                        title: 'On-chain validator rejected this transaction',
+                        summary: 'The transaction was evaluated by the Plutus script and rejected.',
+                        detail: d.error
+                    });
+                    toast(`✗ Plutus REJECTED: ${d.error}`, 'bad');
+                }
                 else toast(`✗ ${d.error}`, 'bad');
             } catch (e) { toast(`✗ ${e.message}`, 'bad'); }
             await refresh();
@@ -160,6 +179,18 @@
                 else toast(`✗ ${d.error}`, 'bad');
             } catch (e) { toast(`✗ ${e.message}`, 'bad'); }
             await refresh();
+        }
+
+        function showOnChainError(validation) {
+            document.getElementById('onchainTitle').textContent = validation.title || 'On-chain validator rejected this transaction';
+            document.getElementById('onchainSummary').textContent = validation.summary || '';
+            document.getElementById('onchainDetail').textContent = validation.detail || '';
+            document.getElementById('onchainError').classList.add('show');
+        }
+
+        function clearOnChainError() {
+            document.getElementById('onchainError').classList.remove('show');
+            document.getElementById('onchainDetail').textContent = '';
         }
 
         function toast(msg, kind) {
