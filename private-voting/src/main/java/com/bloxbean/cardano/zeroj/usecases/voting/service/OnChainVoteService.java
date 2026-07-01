@@ -124,8 +124,6 @@ public class OnChainVoteService {
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("No separate wallet UTXO"));
 
-        int anchorIdx = computeInputIndex(List.of(anchor.utxo, walletUtxo), anchor.utxo);
-
         var compressedProof = ProofCompressor.compressProof(proof);
 
         // ZK redeemer: electionId, voterRoot, nullifier(full), commitment
@@ -141,11 +139,11 @@ public class OnChainVoteService {
                         new BytesPlutusData(toMinimalBytes(commitment))))
                 .build();
 
-        // List redeemer: InsertNode(anchorIdx, 0, 1)
+        // List redeemer: InsertNode(anchorTokenName, 0, 1)
         var listRedeemer = ConstrPlutusData.builder()
                 .alternative(1)
                 .data(ListPlutusData.of(
-                        BigIntPlutusData.of(anchorIdx),
+                        new BytesPlutusData(anchor.tokenName),
                         BigIntPlutusData.of(0),
                         BigIntPlutusData.of(1)))
                 .build();
@@ -154,9 +152,10 @@ public class OnChainVoteService {
 
         var listAsset = new Asset("0x" + nodeTokenHex, BigInteger.ONE);
         var zkAsset = new Asset("0x" + nullFullHex, BigInteger.ONE);
+        var contAnchorAmounts = continuingAnchorAmounts(anchor.utxo);
 
-        // Anchor datum stays the same (just update nextKey)
-        var contAnchorDatum = listElementDatum(ConstrPlutusData.of(0), nullKey);
+        // Anchor userData must be preserved; only nextKey changes.
+        var contAnchorDatum = listElementDatum(anchor.userData, nullKey);
 
         // New node stores commitment in userData
         var commitmentData = BigIntPlutusData.of(commitment);
@@ -169,9 +168,7 @@ public class OnChainVoteService {
                 .collectFrom(walletUtxo)
                 .mintAsset(listScript, List.of(listAsset), listRedeemer)
                 .mintAsset(zkScript, List.of(zkAsset), zkRedeemer)
-                .payToContract(registryAddr,
-                        List.of(Amount.ada(2), new Amount(listPolicyHex + anchorTokenHex, BigInteger.ONE)),
-                        contAnchorDatum)
+                .payToContract(registryAddr, contAnchorAmounts, contAnchorDatum)
                 .payToContract(registryAddr,
                         List.of(Amount.ada(2),
                                 new Amount(listPolicyHex + nodeTokenHex, BigInteger.ONE),
@@ -318,15 +315,32 @@ public class OnChainVoteService {
         return result.getValue();
     }
 
-    record AnchorInfo(Utxo utxo, byte[] tokenName, byte[] oldNextKey) {}
+    private List<Amount> continuingAnchorAmounts(Utxo anchorUtxo) {
+        List<Amount> amounts = new ArrayList<>();
+        amounts.add(Amount.ada(2));
+        if (anchorUtxo.getAmount() != null) {
+            for (var amount : anchorUtxo.getAmount()) {
+                String unit = amount.getUnit();
+                if (unit != null && !"lovelace".equals(unit)) {
+                    amounts.add(new Amount(unit, amount.getQuantity()));
+                }
+            }
+        }
+        return amounts;
+    }
+
+    record AnchorInfo(Utxo utxo, byte[] tokenName, byte[] oldNextKey, com.bloxbean.cardano.client.plutus.spec.PlutusData userData) {}
+
+    record ListDatum(com.bloxbean.cardano.client.plutus.spec.PlutusData userData, byte[] nextKey) {}
 
     private AnchorInfo findAnchor(List<Utxo> utxos, byte[] newKey) {
         String rootTokenHex = HexUtil.encodeHexString(ROOT_KEY);
         for (var utxo : utxos) {
             byte[] tokenName = findListToken(utxo);
             if (tokenName == null) continue;
-            byte[] nextKey = extractNextKey(utxo);
-            if (nextKey == null) continue;
+            ListDatum datum = extractListDatum(utxo);
+            if (datum == null) continue;
+            byte[] nextKey = datum.nextKey;
 
             boolean isRoot = HexUtil.encodeHexString(tokenName).equals(rootTokenHex);
             byte[] anchorKey = isRoot ? null : extractKey(tokenName);
@@ -334,7 +348,7 @@ public class OnChainVoteService {
             boolean leftOk = isRoot || lessThan(anchorKey, newKey);
             boolean rightOk = nextKey.length == 0 || lessThan(newKey, nextKey);
 
-            if (leftOk && rightOk) return new AnchorInfo(utxo, tokenName, nextKey);
+            if (leftOk && rightOk) return new AnchorInfo(utxo, tokenName, nextKey, datum.userData);
         }
         return null;
     }
@@ -363,6 +377,11 @@ public class OnChainVoteService {
     }
 
     private byte[] extractNextKey(Utxo utxo) {
+        ListDatum datum = extractListDatum(utxo);
+        return datum == null ? null : datum.nextKey;
+    }
+
+    private ListDatum extractListDatum(Utxo utxo) {
         try {
             var inlineDatumHex = utxo.getInlineDatum();
             if (inlineDatumHex == null || inlineDatumHex.isEmpty()) return null;
@@ -371,7 +390,7 @@ public class OnChainVoteService {
             if (plutusData instanceof ConstrPlutusData constr) {
                 var fields = constr.getData().getPlutusDataList();
                 if (fields.size() >= 2 && fields.get(1) instanceof BytesPlutusData bpd) {
-                    return bpd.getValue();
+                    return new ListDatum(fields.get(0), bpd.getValue());
                 }
             }
             return null;

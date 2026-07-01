@@ -7,6 +7,7 @@ import com.bloxbean.cardano.julc.stdlib.annotation.MultiValidator;
 import com.bloxbean.cardano.julc.stdlib.annotation.Param;
 import com.bloxbean.cardano.julc.stdlib.annotation.Purpose;
 import com.bloxbean.cardano.julc.stdlib.lib.ContextsLib;
+import com.bloxbean.cardano.julc.stdlib.lib.OutputLib;
 
 import java.math.BigInteger;
 import java.util.Optional;
@@ -35,7 +36,7 @@ public class NullifierListValidator {
 
     sealed interface ListAction permits InitList, InsertNode {}
     record InitList(BigInteger rootOutputIndex) implements ListAction {}
-    record InsertNode(BigInteger anchorInputIndex,
+    record InsertNode(byte[] anchorTokenName,
                       BigInteger contAnchorOutputIndex,
                       BigInteger newElementOutputIndex) implements ListAction {}
 
@@ -58,7 +59,8 @@ public class NullifierListValidator {
                 Address scriptAddr = new Address(
                         new Credential.ScriptCredential(PlutusData.cast(policyBytes, ScriptHash.class)),
                         Optional.empty());
-                TxInInfo anchorInput = txInfo.inputs().get(insert.anchorInputIndex().intValue());
+                TxInInfo anchorInput = OutputLib.findInputWithToken(
+                        txInfo.inputs(), policyBytes, policyBytes, insert.anchorTokenName());
                 yield NullifierListLib.validateInsert(
                         anchorInput.resolved(), txInfo.outputs(),
                         txInfo.mint(), policyBytes, rootKey, prefix, prefixLen.intValue(),

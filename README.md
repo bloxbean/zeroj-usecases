@@ -1,609 +1,284 @@
 # ZeroJ Use Case Demos
 
-A collection of runnable, end-to-end examples that show how to build **zero-knowledge (ZK) applications on Cardano in pure Java** — no circom, no snarkjs, no native toolchains.
+Runnable examples for building zero-knowledge applications on Cardano with
+[ZeroJ](https://github.com/bloxbean/zeroj). The top-level projects are
+end-to-end Spring Boot demos with UI, REST APIs, proof generation, and real
+Yaci DevKit transactions. Smaller developer examples live under
+`examples/minimal-circuits`.
 
-Every demo is built with **[ZeroJ](https://github.com/bloxbean/zeroj)** — a pure-Java zero-knowledge toolkit for Cardano (Groth16 proofs over the BLS12-381 curve, Poseidon hashing, a circuit DSL, and on-chain verifiers compiled to Plutus V3 via [Julc](https://github.com/bloxbean/zeroj)).
+Most end-to-end demos now use ZeroJ symbolic circuit annotations. The Digital
+Product Passport demo is intentionally kept as the lower-level `CircuitSpec`
+example. On-chain Groth16 and Plonk verification is delegated to ZeroJ's tested
+on-chain verifier libraries:
 
-> **New to zero-knowledge proofs?** Jump to [What is a zero-knowledge proof?](#what-is-a-zero-knowledge-proof) and [Glossary](#glossary-plain-english) first, then come back to [Quick Start](#quick-start).
+- `Groth16BLS12381Lib`
+- `PlonkBLS12381Lib`
 
----
+## Start Here
 
-## Table of Contents
-
-- [What is a zero-knowledge proof?](#what-is-a-zero-knowledge-proof)
-- [The examples at a glance](#the-examples-at-a-glance)
-- [Prerequisites](#prerequisites)
-- [One-time setup](#one-time-setup)
-- [Quick Start](#quick-start)
-- [Two kinds of demo](#two-kinds-of-demo)
-- [The examples in detail](#the-examples-in-detail)
-- [Building everything at once](#building-everything-at-once)
-- [Glossary (plain English)](#glossary-plain-english)
-- [Troubleshooting](#troubleshooting)
-- [Learn more](#learn-more)
-
----
-
-## What is a zero-knowledge proof?
-
-A zero-knowledge proof lets you **prove a statement is true without revealing why it is true**.
-
-Classic examples you'll see in this repo:
-
-- "I am over 18 and from an approved country" — *without revealing your age or country* ([identity-kyc](#1-identity-kyc--privacy-preserving-kyc)).
-- "I own an NFT from this collection" — *without revealing which wallet or which NFT* ([nft-ownership](#2-nft-ownership--private-token-gated-access)).
-- "Our exchange holds enough reserves to cover all customer balances" — *without revealing any individual balance* ([proof-of-reserves](#4-proof-of-reserves--zk-solvency)).
-
-On Cardano, the proof is verified **on-chain** by a Plutus V3 script using the built-in BLS12-381 pairing operations, so a smart contract can gate funds or mint tokens based only on "the proof is valid."
-
-ZeroJ does all of this in Java: you write the circuit (the statement to prove) as Java code, generate the proof on a plain JVM, and the matching on-chain verifier is generated for you.
-
----
-
-## The examples at a glance
-
-There are **14 examples**, in two styles.
-
-### Full-stack demos (Spring Boot backend + Svelte UI + real on-chain transactions)
-
-These run against a local Cardano devnet (Yaci DevKit), build and submit real transactions, and ship with a browser UI.
-
-| # | Demo | What you prove | Port | On-chain pattern |
-|---|------|----------------|------|------------------|
-| 1 | [identity-kyc](#1-identity-kyc--privacy-preserving-kyc) | Age ≥ 18 AND country approved, without revealing them | 8087 | Spending validator (reusable proof) |
-| 2 | [nft-ownership](#2-nft-ownership--private-token-gated-access) | I own an NFT, without revealing my wallet | 8085 | Nullifier in a sorted linked list (one-time) |
-| 3 | [private-voting](#3-private-voting--anonymous-dao-governance) | I'm an eligible voter, without revealing identity/vote | 8086 | Nullifier list + vote commitments |
-| 4 | [proof-of-reserves](#4-proof-of-reserves--zk-solvency) | Reserves ≥ liabilities, without revealing balances | 8089 | Merkle Sum Tree + attestation UTXO |
-| 5 | [digital-product-passport](#5-digital-product-passport--eu-dpp-compliance) | Product is compliant (carbon, recycled %, origin) | 8088 | Poseidon MPF trie + spending validator |
-| 6 | [personhood-airdrop](#6-personhood-airdrop--sybil-resistant-faucet) | I'm a unique human, claim once per epoch | 8086 | Nullifier as NFT asset name (sybil resistance) |
-| 7 | [selective-disclosure](#7-selective-disclosure--one-credential-many-proofs) | Many predicates from one signed credential | 8085 | Two predicate-gated validators |
-
-> Ports 8085/8086 are reused across demos — run **one demo at a time**, or change the port in that demo's `src/main/resources/application.yml`.
-
-Full-stack demos 1-4, 6, and 7 use ZeroJ symbolic annotations for their zk circuits. `digital-product-passport` is kept as the full-stack `CircuitSpec` example for the lower-level builder style.
-
-### Annotation-style circuit demos (command-line, no devnet needed)
-
-These are smaller, focused examples of ZeroJ's **annotation-based circuit DSL** — you describe the circuit with Java annotations (`@ZkBool`, `@ZkUInt`, `@FixedSize`, …) and a companion circuit class is generated. They run with `./gradlew run` and print results to the console; great for understanding circuits in isolation.
-
-| # | Demo | What it teaches |
-|---|------|-----------------|
-| 8 | [annotated-private-voting](#8-annotated-private-voting) | Voting circuit via symbolic annotations (registry root, vote commitment, nullifier) |
-| 9 | [annotated-compliance-credential](#9-annotated-compliance-credential) | Selective-disclosure credential gate with `ZkUInt`/`ZkBool` constraints |
-| 10 | [annotated-proof-of-reserves](#10-annotated-proof-of-reserves) | Parameterized fixed-depth Merkle circuit with `@CircuitParam`/`@FixedSize` |
-| 11 | [annotated-batch-threshold-matrix](#11-annotated-batch-threshold-matrix) | Nested `ZkArray<ZkArray<…>>` matrix, row-major flattening |
-| 12 | [annotated-proof-of-reserves-plonk](annotated-proof-of-reserves-plonk/README.md) | End-to-end BLS12-381 PlonK proof-of-reserves with Cardano verifier transaction |
-| 13 | [annotated-compliance-credential-plonk](annotated-compliance-credential-plonk/README.md) | End-to-end BLS12-381 PlonK compliance credential gate with Cardano verifier transaction |
-| 14 | [zk-mpf-private-registry](#14-zk-mpf-private-registry) | Private membership in a Poseidon MPF trie (witness-level demo) |
-
----
-
-## Prerequisites
-
-| Requirement | Version | How to get it |
-|-------------|---------|---------------|
-| Java (GraalVM) | 25 | `sdk install java 25.0.2-graal` then `sdk use java 25.0.2-graal` (via [SDKMAN](https://sdkman.io/)) |
-| Yaci DevKit | Latest | [github.com/bloxbean/yaci-devkit](https://github.com/bloxbean/yaci-devkit) — *needed for full-stack demos and PlonK on-chain Docker runs* |
-| Node.js | 18+ | Optional — only if you want to rebuild a Svelte frontend yourself |
-| ZeroJ | `0.1.0-pre4` | Pulled from Maven; see [note on local ZeroJ](#using-a-local-zeroj-build) below |
-
-You do **not** need Node.js to run the demos — each ships with a pre-built frontend bundled in the JAR.
-
----
-
-## One-time setup
-
-These steps apply to the full-stack demos (1–7). The annotation demos (8–14)
-need only Java unless you run their on-chain Yaci paths.
-
-**1. Start a local Cardano devnet (Yaci DevKit):**
+For a first run, use a top-level Spring Boot demo. These exercise the complete
+flow: circuit, proof, Cardano transaction, and on-chain verification.
 
 ```bash
-yaci-cli devkit start
-```
+# 1. Start Yaci DevKit outside this repo
+$ devkit start
+yaci-cli> create-node -o --start
 
-This gives you a local Cardano network at `http://localhost:8080` with an admin API at `http://localhost:10000`.
-
-**2. Select Java 25:**
-
-```bash
-sdk use java 25.0.2-graal
-```
-
-**3. Fund the demo's admin wallet** (the demos share one hardcoded test address):
-
-```bash
-curl -X POST http://localhost:10000/local-cluster/api/addresses/topup \
-  -H "Content-Type: application/json" \
-  -d '{"address":"addr_test1qryvgass5dsrf2kxl3vgfz76uhp83kv5lagzcp29tcana68ca5aqa6swlq6llfamln09tal7n5kvt4275ckwedpt4v7q48uhex","adaAmount":10000}'
-```
-
-> The mnemonic and address are **for local testing only** — never use them on a real network.
-
----
-
-## Docker Quick Start
-
-For the full-stack Spring Boot demos, start Yaci DevKit on the host and use the
-demo compose launcher:
-
-```bash
-yaci-cli devkit start
+# 2. Run a full end-to-end demo through Docker
 ./demo.sh proof-of-reserves --run
+```
+
+Then open the UI URL printed by `demo.sh`.
+
+`demo.sh` starts only the selected demo app container. Yaci DevKit is expected
+to be running externally on the host. The script waits for the
+Blockfrost-compatible API, tops up the shared demo wallet through Yaci's admin
+API, starts the app, opens the UI, and can run a happy-path curl flow with
+`--run`.
+
+```bash
+./demo.sh proof-of-reserves --run
+./demo.sh identity-kyc --run
+./demo.sh nft-ownership --run
 ./demo.sh voting --run
 ./demo.sh airdrop --run
 ./demo.sh dpp --run
+./demo.sh selective-disclosure --run
 ```
 
-This uses `compose.demo.yml`, which starts only the selected demo app container.
-`demo.sh` waits for the external Blockfrost-compatible provider, tops up the
-shared demo wallet through the Yaci admin API by default, opens the UI, and
-optionally runs a happy-path curl flow with `--run`.
+Stop a demo without stopping Yaci:
 
-Normal demo starts seed precomputed development setup artifacts from
-`demo-cache/<module-dir>` into the container's `/app/data` volume. This avoids
-the slow first-run trusted setup during presentations. The app still validates
-the cached setup before using it, so loading can take tens of seconds for larger
-circuits.
+```bash
+./demo.sh proof-of-reserves --stop
+```
 
-To force a fresh local setup generation for a usecase:
+## Repository Layout
+
+```text
+zeroj-usecases/
+  proof-of-reserves/              Spring Boot E2E
+  identity-kyc/                   Spring Boot E2E
+  nft-ownership/                  Spring Boot E2E
+  private-voting/                 Spring Boot E2E
+  personhood-airdrop/             Spring Boot E2E
+  digital-product-passport/       Spring Boot E2E, CircuitSpec reference
+  selective-disclosure/           Spring Boot E2E
+
+  examples/
+    minimal-circuits/
+      batch-threshold-matrix/     lightweight symbolic circuit example
+      zk-mpf-private-registry/    witness-level Poseidon MPF circuit example
+      plonk/
+        proof-of-reserves/        Plonk proof + Yaci verifier transaction
+        compliance-credential/    Plonk proof + Yaci verifier transaction
+```
+
+## Full E2E Demos
+
+| Demo | What it proves | Default `demo.sh` port | Circuit style |
+|---|---|---:|---|
+| [proof-of-reserves](proof-of-reserves/README.md) | Reserves cover liabilities without exposing balances | 8089 | Symbolic annotations |
+| [identity-kyc](identity-kyc/README.md) | Age and country eligibility without revealing personal data | 8087 | Symbolic annotations |
+| [nft-ownership](nft-ownership/README.md) | NFT ownership without revealing wallet or token | 8085 | Symbolic annotations |
+| [private-voting](private-voting/README.md) | Eligible voter, one private vote, no double-vote | 8086 | Symbolic annotations |
+| [personhood-airdrop](personhood-airdrop/SYBIL_AIRDROP_TUTORIAL.md) | One claim per person per epoch | 8083 | Symbolic annotations |
+| [digital-product-passport](digital-product-passport/README.md) | Product compliance without exposing supply-chain data | 8088 | `CircuitSpec` |
+| [selective-disclosure](selective-disclosure/SELECTIVE_DISCLOSURE_TUTORIAL.md) | Multiple predicates from one signed credential | 8091 | Symbolic annotations |
+
+Some apps have native Spring ports that overlap, such as 8085. The Docker demo
+maps them to distinct host ports so multiple profiles can exist without port
+collisions. For direct local Java runs, run one app at a time or update
+`server.port` in that module.
+
+## Requirements
+
+For the Docker demo path:
+
+- Docker with Compose v2
+- Yaci DevKit running on the host
+
+Docker demos use the released ZeroJ version configured by `ZEROJ_VERSION`
+(`0.1.0-pre4` by default). A sibling ZeroJ checkout is optional and only needed
+when you explicitly opt into publishing a local ZeroJ build during Docker image
+builds.
+
+For direct Java runs:
+
+- Java 25, preferably GraalVM
+- Yaci DevKit for any on-chain flow
+- Node.js is optional; frontends are already built into the Spring JARs
+
+The demo mnemonic and address are local-devnet only. Do not use them on public
+or production networks.
+
+## Running With Docker
+
+Start Yaci DevKit first:
+
+```bash
+$ devkit start
+yaci-cli> create-node -o --start
+```
+
+Run a demo:
+
+```bash
+./demo.sh proof-of-reserves --run
+```
+
+Run from a fresh trusted setup instead of committed presentation cache:
 
 ```bash
 ./demo.sh proof-of-reserves --clean-cache --run
 ```
 
 `--clean-cache` removes only the selected usecase's Docker volume and disables
-demo-cache seeding for that run. These committed cache files are development
-artifacts generated with an insecure single-party setup; do not reuse them for
-production circuits.
+demo-cache seeding for that run.
 
-To stop a running demo without stopping the external Yaci DevKit:
-
-```bash
-./demo.sh proof-of-reserves --stop
-./demo.sh voting --stop
-```
-
-You can also use Compose directly:
-
-```bash
-docker compose -f compose.demo.yml --profile voting up -d --build
-docker compose -f compose.demo.yml --profile dpp up -d --build
-```
-
-The Spring demo profiles currently available are `proof-of-reserves`, `voting`,
-`airdrop`, and `dpp`.
-
-By default the containers use local Yaci DevKit on the host:
+By default the containers reach host Yaci through:
 
 ```text
 BLOCKFROST_BASE_URL=http://host.docker.internal:8080/api/v1/
-PROVIDER_HEALTH_URL=<derived from BLOCKFROST_BASE_URL>/epochs/latest
 YACI_ADMIN_URL=http://host.docker.internal:10000
 ```
 
-`demo.sh` itself runs on the host, so it checks local Yaci at
-`http://localhost:8080/api/v1/` and the published app port at
-`http://localhost:<demo-port>`. Inside Docker, `localhost` would mean the app
-container, so the compose defaults use `host.docker.internal` to reach the Yaci
-DevKit running on the host. This works on Docker Desktop for macOS/Windows; on
-Linux, `compose.demo.yml` also maps it through Docker's `host-gateway`.
+The script derives provider health from `BLOCKFROST_BASE_URL` as
+`<base>/epochs/latest`. Override it only if your provider uses a different
+health endpoint:
 
-To target another Blockfrost-compatible testnet endpoint, provide the endpoint
-and project id, disable Yaci top-up, and fund the configured demo mnemonic
-manually on that network:
+```bash
+PROVIDER_HEALTH_URL=http://host.docker.internal:8080/api/v1/epochs/latest \
+./demo.sh voting --run
+```
+
+To run against a public Blockfrost-compatible testnet endpoint, fund the
+configured mnemonic on that network and disable local Yaci top-up:
 
 ```bash
 DEMO_TOPUP_ENABLED=false \
 BLOCKFROST_BASE_URL=https://cardano-preprod.blockfrost.io/api/v0 \
-BLOCKFROST_PROJECT_ID=<your-project-id> \
+BLOCKFROST_PROJECT_ID=<project-id> \
 CARDANO_NETWORK=preprod \
 ./demo.sh dpp --run
 ```
 
-If the provider's health endpoint does not follow the usual
-`<BLOCKFROST_BASE_URL>/epochs/latest` shape, set `PROVIDER_HEALTH_URL`
-explicitly. Set `WAIT_FOR_PROVIDER=false` only when you want the app container
-to start without waiting for the backend API.
-
-For non-Java users, the PlonK on-chain examples can run through Docker Compose.
-Yaci DevKit is still started manually on the host:
+To build Docker demos against a local ZeroJ checkout instead of the released
+artifact:
 
 ```bash
-yaci-cli devkit start
+PUBLISH_LOCAL_ZEROJ=true \
+ZEROJ_SOURCE_CONTEXT=../zeroj \
+./demo.sh proof-of-reserves --run
 ```
 
-While ZeroJ is consumed from a local snapshot, keep the repos as siblings:
+## Running Directly With Java
 
-```text
-bloxbean/
-  zeroj/
-  zeroj-usecases/
+Use this when you want to develop a module locally:
+
+```bash
+cd proof-of-reserves
+./gradlew clean build -x test
+java --enable-native-access=ALL-UNNAMED -jar build/libs/proof-of-reserves-0.1.0-SNAPSHOT.jar
 ```
 
-The Compose build publishes `../zeroj` to Maven local inside the builder image,
-then builds the selected usecase. Run from the `zeroj-usecases` repo root:
+The same pattern works for every top-level Spring Boot module. Some modules
+take several minutes on first boot because they generate or validate
+development trusted setup artifacts.
+
+## Minimal Circuit Examples
+
+These examples are for developers who want to inspect a circuit in isolation.
+They do not replace the E2E demos.
+
+```bash
+cd examples/minimal-circuits/batch-threshold-matrix
+./gradlew test
+./gradlew run
+
+cd ../zk-mpf-private-registry
+./gradlew test
+./gradlew run
+```
+
+## Plonk Examples
+
+The Plonk examples live under `examples/minimal-circuits/plonk`. They can run
+locally with Java or through Docker Compose. They submit lock/unlock
+transactions to Yaci when run with `--yaci`.
+
+```bash
+cd examples/minimal-circuits/plonk/proof-of-reserves
+./gradlew test
+./gradlew run --args='--yaci'
+
+cd ../compliance-credential
+./gradlew test
+./gradlew run --args='--yaci'
+```
+
+Docker Compose from the repo root:
 
 ```bash
 docker compose --profile proof-of-reserves-plonk up --build --abort-on-container-exit
 docker compose --profile compliance-credential-plonk up --build --abort-on-container-exit
-```
-
-The first run for each PlonK example generates the development Powers of Tau SRS
-and circuit proving key, then stores the proving key in a Compose named volume.
-Later runs for the same circuit profile reuse that proving key and skip the
-minute-scale setup step.
-
-To run both PlonK examples:
-
-```bash
 docker compose --profile plonk up --build --abort-on-container-exit
 ```
 
-If the local ZeroJ version changes, pass it to the usecase build:
-
-```bash
-ZEROJ_VERSION=0.1.0-pre4 docker compose --profile plonk up --build --abort-on-container-exit
-```
-
-If Yaci is not on the default host ports, override:
-
-```bash
-YACI_BASE_URL=http://host.docker.internal:8080/api/v1/ \
-YACI_ADMIN_URL=http://host.docker.internal:10000 \
-YACI_HEALTH_URL=http://host.docker.internal:8080/api/v1/epochs/latest \
-docker compose --profile proof-of-reserves-plonk up --build --abort-on-container-exit
-```
-
-For slower local clusters, increase the confirmation wait:
-
-```bash
-ZEROJ_YACI_TX_WAIT_ATTEMPTS=180 docker compose --profile plonk up --build --abort-on-container-exit
-```
-
-This local-snapshot publish step is temporary. Once ZeroJ artifacts are released
-to Maven Central or images are published, the Docker path can build without the
-sibling `zeroj` checkout.
-
-To clear the PlonK proving-key cache:
+Plonk proving-key caches are stored in named Docker volumes:
 
 ```bash
 docker volume rm zeroj-usecases_proof-of-reserves-plonk-cache
 docker volume rm zeroj-usecases_compliance-credential-plonk-cache
 ```
 
----
+## Building Everything
 
-## Quick Start
-
-Run your first full-stack demo (identity-kyc) end to end:
+From the repository root:
 
 ```bash
-# Prerequisites: yaci-devkit running, Java 25 selected, admin wallet funded (see above)
+# If Gradle is installed locally, use the root aggregate tasks:
+gradle buildAllUsecasesNoTests
+gradle testAllUsecases
 
-cd identity-kyc
-
-# Build (skip tests for speed)
-./gradlew clean build -x test
-
-# Run
-java --enable-native-access=ALL-UNNAMED -jar build/libs/identity-kyc-0.1.0-SNAPSHOT.jar
+# Or use the repo script, which runs each module's wrapper:
+./build-all.sh build -x test
 ```
 
-First startup takes ~30–60s (it compiles the ZK circuit and runs a dev trusted setup). When you see `Started …Application`, open:
-
-### http://localhost:8087
-
-Click through the UI, or drive it from the command line:
+To test against a local ZeroJ build:
 
 ```bash
-# Verify Alice (eligible: age 25, USA) — generates a real ZK proof
-curl -X POST http://localhost:8087/api/credential/verify \
-  -H "Content-Type: application/json" -d '{"name":"Alice"}'
-
-# Verify Charlie (not eligible: under 18)
-curl -X POST http://localhost:8087/api/credential/verify \
-  -H "Content-Type: application/json" -d '{"name":"Charlie"}'
-```
-
-The proof reveals **only** `eligible: YES/NO` — never the age or country.
-
-For your first command-line (annotation) demo, no devnet is needed:
-
-```bash
-cd annotated-compliance-credential
-./gradlew run
-```
-
----
-
-## Two kinds of demo
-
-| | Full-stack (1–7) | Annotation circuits (8–12) |
-|---|------------------|----------------------------|
-| Needs Yaci DevKit | ✅ Yes | ❌ No |
-| How to run | Build a JAR, then `java -jar …` | `./gradlew run` |
-| UI | Browser (Svelte) | Console output |
-| Submits Cardano txs | ✅ Yes | ❌ No (witness/circuit only) |
-| Good for | Seeing the full ZK + on-chain flow | Learning the circuit DSL |
-
-**Why `java -jar` instead of `./gradlew bootRun` for the full-stack demos?**
-ZeroJ uses the native BLST library for BLS12-381, which needs the `--enable-native-access=ALL-UNNAMED` JVM flag. Running the built JAR is the reliable way to pass it. (`./gradlew bootRun` also works for some demos but the JAR form is recommended.)
-
----
-
-## The examples in detail
-
-Each demo has its own README/tutorial with full API references and architecture notes — linked below. What follows is a beginner-oriented summary and the minimal run steps.
-
-### 1. identity-kyc — Privacy-preserving KYC
-
-📄 [Full README](identity-kyc/README.md) · 🔑 [EdDSA/Jubjub tutorial](identity-kyc/EDDSA_JUBJUB_TUTORIAL.md)
-
-Prove you meet KYC requirements (**age ≥ 18 AND country in an approved list**) without revealing your age, country, or identity. A KYC provider issues a Poseidon-signed credential; you generate a proof; ADA locked at a Plutus V3 script is unlockable only with a valid proof. The proof is **reusable** (no nullifier) — appropriate for ongoing DeFi access. Ships with 5 test users (some eligible, some not).
-
-```bash
-cd identity-kyc
-./gradlew clean build -x test
-java --enable-native-access=ALL-UNNAMED -jar build/libs/identity-kyc-0.1.0-SNAPSHOT.jar
-# → http://localhost:8087
-```
-
-### 2. nft-ownership — Private token-gated access
-
-📄 [Full README](nft-ownership/README.md) · 📐 [Design notes](nft-ownership/DESIGN.md)
-
-Prove you **own an NFT from a collection without revealing your wallet address or which NFT**. The app mints NFTs on the devnet, builds a Merkle snapshot of holders, and you prove membership. Access is **one-time**: a nullifier is inserted into an on-chain **sorted linked list** so the same proof can't be used twice.
-
-```bash
-cd nft-ownership
-./gradlew clean build -x test
-java --enable-native-access=ALL-UNNAMED -jar build/libs/nft-ownership-0.1.0-SNAPSHOT.jar
-# → http://localhost:8085
-```
-
-### 3. private-voting — Anonymous DAO governance
-
-📄 [Full README](private-voting/README.md)
-
-Cast a YES/NO vote in a DAO election **without revealing who you are or how you voted**. Eligibility is proven against a voter Merkle tree; a nullifier (`Poseidon(secret, electionId)`) prevents double-voting; vote commitments on-chain are decoded at tally time. Auto-creates 5 funded test voters at startup.
-
-```bash
-cd private-voting
-./gradlew clean build -x test
-java --enable-native-access=ALL-UNNAMED -jar build/libs/private-voting-0.1.0-SNAPSHOT.jar
-# → http://localhost:8086
-```
-
-### 4. proof-of-reserves — ZK solvency
-
-📄 [Full README](proof-of-reserves/README.md)
-
-Prove an exchange holds **reserves ≥ total customer liabilities** without revealing any individual balance. Customer balances form a **Merkle Sum Tree** (each leaf `Poseidon(accountId, balance)`, each node carries a running sum); the circuit proves all balances are non-negative, the root matches, the sum equals declared liabilities, and reserves cover them. An attestation UTXO records the result on-chain.
-
-```bash
-cd proof-of-reserves
-./gradlew clean build -x test
-java --enable-native-access=ALL-UNNAMED -jar build/libs/proof-of-reserves-0.1.0-SNAPSHOT.jar
-# → http://localhost:8089
-```
-
-Gated Yaci E2E:
-
-```bash
-ZEROJ_YACI_E2E=true ./gradlew test --tests '*ProofOfReservesYaciE2ETest'
-```
-
-### 5. digital-product-passport — EU DPP compliance
-
-📄 [Full README](digital-product-passport/README.md)
-
-Prove a product complies with EU ESPR rules (**carbon footprint, recycled content, manufacturing origin, inspections passed**) without revealing sensitive supply-chain data. Products are stored in a **Poseidon Merkle Patricia Forestry (MPF)** trie (persistent RocksDB storage, ZK-verifiable root). Two scenarios — EV Battery (per-product) and Textile (per-batch) — including non-compliant negative cases.
-
-```bash
-cd digital-product-passport
-./gradlew clean build -x test
-java --enable-native-access=ALL-UNNAMED -jar build/libs/digital-product-passport-0.1.0-SNAPSHOT.jar
-# → http://localhost:8088
-```
-
-### 6. personhood-airdrop — Sybil-resistant faucet
-
-📄 [Full tutorial](personhood-airdrop/SYBIL_AIRDROP_TUTORIAL.md)
-
-A **one-claim-per-human** faucet. You prove possession of an issuer-signed **personhood credential** (EdDSA over Jubjub, verified in-circuit) and publish a deterministic nullifier `Poseidon(personhoodId, epoch)`. The faucet mints one NFT per claim whose asset name is the nullifier — a second claim in the same epoch reproduces the same nullifier and the mint fails. This is the building block behind Semaphore / Worldcoin / Tornado-style sybil resistance.
-
-```bash
-cd personhood-airdrop
-./gradlew bootRun
-# → http://localhost:8086
-```
-
-> First boot runs Powers of Tau (~3 min) + Phase-2 setup (~4 min) for the ~20k-constraint circuit, then caches to `./data/` for sub-second subsequent boots.
-
-### 7. selective-disclosure — One credential, many proofs
-
-📄 [Full tutorial](selective-disclosure/SELECTIVE_DISCLOSURE_TUTORIAL.md)
-
-One issuer-signed rich credential (`dobYear, country, roleId, salaryBracket, nameHash`) proves **different predicates to different DApps** with no linkability between them. Example: prove *"adult resident"* to a Library gate and *"senior doctor"* to a Healthcare gate, from the same signature. Each predicate is an independent Groth16 proof against its own Plutus V3 validator. This is the shape of W3C Verifiable Credential selective disclosure.
-
-```bash
-cd selective-disclosure
-./gradlew bootRun
-# → http://localhost:8085
-```
-
-### 8. annotated-private-voting
-
-📄 [README](annotated-private-voting/README.md)
-
-The voting circuit written purely with **ZeroJ symbolic annotations**. The voter proves `voteChoice` is boolean (`ZkBool`), the voter secret is in a BLS12-381 Poseidon registry Merkle root, and the public vote commitment / nullifier were correctly derived. The generated `PrivateVoteProofCircuit` exposes `build`, `schema`, `inputs`, `publicInputs`, `calculateWitness`.
-
-```bash
-cd annotated-private-voting
-./gradlew test    # run the circuit tests
-./gradlew run     # run the demo
-```
-
-### 9. annotated-compliance-credential
-
-📄 [README](annotated-compliance-credential/README.md)
-
-A selective-disclosure credential gate via annotations. Proves age ≥ public minimum, country equals required code, sanctions flag is true, and a Poseidon commitment binds the attributes + salt. Shows how `ZkUInt` range constraints and `ZkBool` boolean constraints are injected by the symbolic type factories while the source still reads like plain domain code.
-
-```bash
-cd annotated-compliance-credential
-./gradlew test && ./gradlew run
-```
-
-### 10. annotated-proof-of-reserves
-
-📄 [README](annotated-proof-of-reserves/README.md)
-
-A proof-of-reserves slice using `@CircuitParam` and `@FixedSize(param = "depth")`, so the **same Java source builds Merkle circuits of different depths**. Proves a private liability leaf is in the public liabilities root, assets ≥ claimed liabilities, and the account balance is covered. Uses explicit BLS12-381 Poseidon parameters aligned with the Cardano Groth16 path.
-
-```bash
-cd annotated-proof-of-reserves
-./gradlew test && ./gradlew run
-```
-
-### 11. annotated-batch-threshold-matrix
-
-📄 [README](annotated-batch-threshold-matrix/README.md)
-
-A grouped compliance check over a **nested symbolic array** — a private `ZkArray<ZkArray<ZkUInt>>` matrix of measurements proven to be ≤ a public per-column maximum. Demonstrates how nested arrays flatten row-major into witness names (`measurement_0_0`, `measurement_0_1`, …).
-
-```bash
-cd annotated-batch-threshold-matrix
-./gradlew test && ./gradlew run
-```
-
-### 12. annotated-proof-of-reserves-plonk
-
-📄 [README](annotated-proof-of-reserves-plonk/README.md)
-
-An end-to-end BLS12-381 PlonK proof-of-reserves example. The circuit is written
-with `@ZKCircuit`, the prover emits the bounded Cardano PlonK MPI profile, and
-the Yaci flow spends through the on-chain `PlonkBLS12381MultiInputVerifier`.
-
-```bash
-cd annotated-proof-of-reserves-plonk
-./gradlew test
-./gradlew run --args='--yaci'
-```
-
-### 13. annotated-compliance-credential-plonk
-
-📄 [README](annotated-compliance-credential-plonk/README.md)
-
-An end-to-end BLS12-381 PlonK selective-disclosure credential gate. The holder
-proves age, jurisdiction, and sanctions-screen predicates over private
-attributes; the bounded Cardano PlonK MPI proof is verified off-chain and by the
-on-chain `PlonkBLS12381MultiInputVerifier` in Yaci.
-
-```bash
-cd annotated-compliance-credential-plonk
-./gradlew test
-./gradlew run --args='--yaci'
-```
-
-### 14. zk-mpf-private-registry
-
-📄 [README](zk-mpf-private-registry/README.md)
-
-A private-membership circuit over a **Cardano Client Lib MPF registry** using a Poseidon hash profile (so the root is ZK-verifiable, unlike the default Blake2b MPF). It's a **witness-level demo**: it builds the registry, derives MPF witness arrays, and evaluates the BLS12-381 circuit. The public verifier sees only `registryRoot` and `keyPathNullifier`. A full Groth16/Yaci flow is deferred until MPF circuit cost is reduced.
-
-```bash
-cd zk-mpf-private-registry
-./gradlew test && ./gradlew run
-```
-
----
-
-## Building everything at once
-
-From the repository root, a Gradle aggregator wires up every example:
-
-```bash
-# Build all examples (with tests)
-./gradlew buildAllUsecases
-
-# Build all, skipping tests (faster)
-./gradlew buildAllUsecasesNoTests
-
-# Test all / clean all
-./gradlew testAllUsecases
-./gradlew cleanAllUsecases
-```
-
-There's also a convenience script that builds a subset sequentially:
-
-```bash
-./build-all.sh                 # default: build
-./build-all.sh build -x test   # pass any gradle args through
-```
-
-### Using a local ZeroJ build
-
-The examples depend on ZeroJ `0.1.0-pre4` from Maven. To test against a ZeroJ build from source, publish it to your local Maven repository and pass the version through:
-
-```bash
-# In the zeroj checkout
 cd ../zeroj
 ./gradlew publishToMavenLocal
 
-# Then build a usecase with that version
 cd ../zeroj-usecases
-./gradlew buildAllUsecasesNoTests -PzerojVersion=0.1.0-pre4
+gradle buildAllUsecasesNoTests -PzerojVersion=0.1.0-pre4
 ```
 
-Each module reads `zerojVersion` (a Gradle property / env var with a sensible default), so `-PzerojVersion=…` is forwarded to every example.
+For Docker builds, use `PUBLISH_LOCAL_ZEROJ=true` and point
+`ZEROJ_SOURCE_CONTEXT` at the local checkout as shown in the Docker section.
 
----
+## Demo Cache
 
-## Glossary (plain English)
+`demo-cache/` contains development setup artifacts used to make Docker demos
+start quickly during presentations. They are generated with insecure
+single-party development setup and are not production ceremony artifacts.
 
-| Term | What it means here |
-|------|--------------------|
-| **Zero-knowledge proof (ZKP)** | A proof that a statement is true that reveals nothing else. |
-| **Groth16** | A specific, compact, fast-to-verify ZKP scheme. Proofs are tiny and verification is constant-time (3 pairings). |
-| **BLS12-381** | The elliptic curve the proofs use. Cardano (Plutus V3) has built-in operations for it, so proofs can be checked on-chain. |
-| **Circuit** | The statement to prove, expressed as arithmetic constraints. In ZeroJ you write it in Java. |
-| **Constraint count** | Roughly the "size" of a circuit; bigger = slower proving. These demos range from ~1,000 to ~20,000 constraints. |
-| **Trusted setup / Powers of Tau** | A one-time ceremony producing parameters for proving/verifying. These demos use a **dev-only single-party** setup — production needs a multi-party ceremony. |
-| **Poseidon** | A hash function designed to be cheap inside ZK circuits (unlike SHA/Blake2b). Used for commitments, Merkle trees, and nullifiers. |
-| **Nullifier** | A deterministic, one-way tag (e.g. `Poseidon(secret, context)`) published with a proof. It reveals nothing about the secret but lets the chain reject reuse ("already voted / already claimed"). |
-| **Merkle tree / root** | A tree of hashes whose single root commits to a whole set. A proof can show "X is in the set" against just the root. |
-| **Merkle Sum Tree** | A Merkle tree where each node also carries a sum — used to prove a total (e.g. total liabilities). |
-| **MPF (Merkle Patricia Forestry)** | A persistent key/value trie with a verifiable root. The DPP and registry demos use a **Poseidon** MPF so the root works inside a circuit. |
-| **Plutus V3** | Cardano's current smart-contract language version; includes the BLS12-381 builtins that verify these proofs on-chain. |
-| **Julc** | The ZeroJ tool that compiles on-chain verifier logic written in Java to Plutus V3. |
-| **Yaci DevKit** | A one-command local Cardano devnet for development and testing. |
-| **EdDSA over Jubjub** | A signature scheme that can be verified efficiently *inside* a BLS12-381 circuit — used to check issuer-signed credentials in zero knowledge. |
-
----
+Use `--clean-cache` when you want to demonstrate or test first-run setup
+generation.
 
 ## Troubleshooting
 
 | Symptom | Fix |
-|---------|-----|
-| `UnsatisfiedLinkError` / BLST native errors | Run the JAR with `--enable-native-access=ALL-UNNAMED` and make sure you're on **Java 25 GraalVM** (`sdk use java 25.0.2-graal`). |
-| Transaction / topup fails, "address has no funds" | Make sure `yaci-cli devkit start` is running and you ran the [admin top-up](#one-time-setup) curl. |
-| Port already in use (8085/8086 collisions) | Run only one demo at a time, or change `server.port` in that demo's `src/main/resources/application.yml`. |
-| Startup takes a long time | Expected — circuit compilation + dev trusted setup runs on first boot (30s–8min depending on circuit size). Circuit-specific setups are cached to `./data/` for later boots and checked against the current circuit shape before reuse. |
-| `Could not resolve com.bloxbean.cardano:zeroj-*` | Publish ZeroJ locally (`./gradlew publishToMavenLocal` in the zeroj repo) and/or pass `-PzerojVersion=…`. See [Using a local ZeroJ build](#using-a-local-zeroj-build). |
+|---|---|
+| Yaci health check fails | Start Yaci DevKit with `yaci-cli devkit start`; verify `http://localhost:8080/api/v1/epochs/latest`. |
+| Top-up fails | Verify Yaci admin API is reachable at `http://localhost:10000`. |
+| Container cannot reach host Yaci | Docker uses `host.docker.internal`; Compose also maps it through `host-gateway` for Linux. |
+| BLST native access warning or failure | Use Java 25 and run JVM apps with `--enable-native-access=ALL-UNNAMED`. |
+| First boot is slow | Expected for large circuits. Use committed demo cache for presentation runs or `--clean-cache` for fresh setup generation. |
+| ZeroJ dependency resolution fails | Verify `ZEROJ_VERSION` is a published artifact. For unreleased local builds, set `PUBLISH_LOCAL_ZEROJ=true` and `ZEROJ_SOURCE_CONTEXT=/path/to/zeroj`. |
 
----
+## Learn More
 
-## Learn more
-
-- **ZeroJ** — the pure-Java ZK toolkit powering these demos: https://github.com/bloxbean/zeroj
-- **Yaci DevKit** — local Cardano devnet: https://github.com/bloxbean/yaci-devkit
-- **cardano-client-lib** — the Java Cardano client used to build transactions: https://github.com/bloxbean/cardano-client-lib
-- **Background docs in this repo:**
-  - [docs/JUBJUB_ON_CARDANO.md](docs/JUBJUB_ON_CARDANO.md) — verifying Jubjub/EdDSA signatures inside a BLS12-381 circuit
-  - [docs/PRESENTATION.md](docs/PRESENTATION.md) — overview presentation
-
----
-
-*Project conventions and the shared tech-stack/NFR matrix live in [CLAUDE.md](CLAUDE.md).*
+- [ZeroJ](https://github.com/bloxbean/zeroj)
+- [Yaci DevKit](https://github.com/bloxbean/yaci-devkit)
+- [cardano-client-lib](https://github.com/bloxbean/cardano-client-lib)

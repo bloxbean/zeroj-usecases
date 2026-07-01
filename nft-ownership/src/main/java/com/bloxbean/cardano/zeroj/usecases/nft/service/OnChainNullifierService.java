@@ -208,9 +208,6 @@ public class OnChainNullifierService implements NullifierTracker {
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("No separate wallet UTXO for fees"));
 
-        // Compute input indices (inputs are sorted by TxOutRef)
-        int anchorIdx = computeInputIndex(List.of(anchor.utxo, walletUtxo), anchor.utxo);
-
         // Compress proof for on-chain
         var compressedProof = ProofCompressor.compressProof(proof);
 
@@ -227,11 +224,11 @@ public class OnChainNullifierService implements NullifierTracker {
                         new BytesPlutusData(nullFull)))
                 .build();
 
-        // List insertion redeemer: InsertNode(anchorIdx, contAnchorOutIdx=0, newElemOutIdx=1)
+        // List insertion redeemer: InsertNode(anchorTokenName, contAnchorOutIdx=0, newElemOutIdx=1)
         var listRedeemer = ConstrPlutusData.builder()
                 .alternative(1) // InsertNode is second variant (after InitList)
                 .data(ListPlutusData.of(
-                        BigIntPlutusData.of(anchorIdx),
+                        new BytesPlutusData(anchor.tokenName),
                         BigIntPlutusData.of(0),
                         BigIntPlutusData.of(1)))
                 .build();
@@ -242,6 +239,7 @@ public class OnChainNullifierService implements NullifierTracker {
         // Assets
         var listAsset = new Asset("0x" + nodeTokenHex, BigInteger.ONE);
         var zkAsset = new Asset("0x" + nullFullHex, BigInteger.ONE);
+        var contAnchorAmounts = continuingAnchorAmounts(anchor.utxo);
 
         // Datums
         var contAnchorDatum = listElementDatum(nullKey);        // anchor.next = nullKey
@@ -256,9 +254,7 @@ public class OnChainNullifierService implements NullifierTracker {
                 .collectFrom(walletUtxo)
                 .mintAsset(listScript, List.of(listAsset), listRedeemer)
                 .mintAsset(zkScript, List.of(zkAsset), zkRedeemer)
-                .payToContract(registryAddr,
-                        List.of(Amount.ada(2), new Amount(listPolicyHex + anchorTokenHex, BigInteger.ONE)),
-                        contAnchorDatum)
+                .payToContract(registryAddr, contAnchorAmounts, contAnchorDatum)
                 .payToContract(registryAddr,
                         List.of(Amount.ada(2),
                                 new Amount(listPolicyHex + nodeTokenHex, BigInteger.ONE),
@@ -357,6 +353,20 @@ public class OnChainNullifierService implements NullifierTracker {
             return Collections.emptyList();
         }
         return result.getValue();
+    }
+
+    private List<Amount> continuingAnchorAmounts(Utxo anchorUtxo) {
+        List<Amount> amounts = new ArrayList<>();
+        amounts.add(Amount.ada(2));
+        if (anchorUtxo.getAmount() != null) {
+            for (var amount : anchorUtxo.getAmount()) {
+                String unit = amount.getUnit();
+                if (unit != null && !"lovelace".equals(unit)) {
+                    amounts.add(new Amount(unit, amount.getQuantity()));
+                }
+            }
+        }
+        return amounts;
     }
 
     record AnchorInfo(Utxo utxo, byte[] tokenName, byte[] oldNextKey) {}

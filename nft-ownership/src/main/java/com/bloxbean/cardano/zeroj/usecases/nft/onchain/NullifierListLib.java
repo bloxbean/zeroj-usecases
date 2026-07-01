@@ -101,6 +101,10 @@ public class NullifierListLib {
         // Anchor NFT preserved in continuing output
         BigInteger contQty = ValuesLib.assetOf(contAnchorOutput.value(), policyId, anchorTokenName);
         boolean anchorPreserved = contQty.compareTo(BigInteger.ONE) == 0;
+        boolean anchorZkPreserved = anchorIsRoot ||
+                ValuesLib.assetOf(contAnchorOutput.value(), zkPolicyId,
+                        ValuesLib.findTokenName(anchorInputResolved.value(), zkPolicyId, BigInteger.ONE))
+                        .compareTo(BigInteger.ONE) == 0;
 
         // Continuing anchor and new element must be at script address
         boolean contAtScript = Builtins.equalsData(contAnchorOutput.address(), scriptAddr);
@@ -134,7 +138,7 @@ public class NullifierListLib {
         // ZK proof minting policy also minted in this tx
         boolean zkProofVerified = ValuesLib.containsPolicy(mint, zkPolicyId);
 
-        return nameCorrect && anchorPreserved && contAtScript && newAtScript
+        return nameCorrect && anchorPreserved && anchorZkPreserved && contAtScript && newAtScript
                 && dataUnchanged && contNextOk && newNextOk && orderOk
                 && exactlyOne && zkProofVerified;
     }

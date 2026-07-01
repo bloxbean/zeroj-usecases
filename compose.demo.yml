@@ -23,11 +23,11 @@ x-host-provider: &host-provider
 x-spring-build: &spring-build
   context: .
   additional_contexts:
-    zeroj-src: ${ZEROJ_SOURCE_CONTEXT:-../zeroj}
+    zeroj-src: ${ZEROJ_SOURCE_CONTEXT:-docker/empty-zeroj-context}
   dockerfile: docker/spring-usecase.Dockerfile
   args:
     ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
-    PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+    PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
 
 services:
   proof-of-reserves:
@@ -38,7 +38,7 @@ services:
       args:
         USECASE_DIR: proof-of-reserves
         ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
-        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *spring-env
       SERVER_PORT: 8080
@@ -46,6 +46,40 @@ services:
       - "${PROOF_OF_RESERVES_PORT:-8089}:8080"
     volumes:
       - proof-of-reserves-data:/app/data
+
+  identity-kyc:
+    profiles: ["identity-kyc", "spring"]
+    <<: *host-provider
+    build:
+      <<: *spring-build
+      args:
+        USECASE_DIR: identity-kyc
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
+    environment:
+      <<: *spring-env
+      SERVER_PORT: 8080
+    ports:
+      - "${IDENTITY_KYC_PORT:-8087}:8080"
+    volumes:
+      - identity-kyc-data:/app/data
+
+  nft-ownership:
+    profiles: ["nft-ownership", "spring"]
+    <<: *host-provider
+    build:
+      <<: *spring-build
+      args:
+        USECASE_DIR: nft-ownership
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
+    environment:
+      <<: *spring-env
+      SERVER_PORT: 8080
+    ports:
+      - "${NFT_OWNERSHIP_PORT:-8085}:8080"
+    volumes:
+      - nft-ownership-data:/app/data
 
   voting:
     profiles: ["voting", "spring"]
@@ -55,7 +89,7 @@ services:
       args:
         USECASE_DIR: private-voting
         ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
-        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *spring-env
       SERVER_PORT: 8080
@@ -72,7 +106,7 @@ services:
       args:
         USECASE_DIR: personhood-airdrop
         ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
-        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *spring-env
       SERVER_PORT: 8080
@@ -89,7 +123,7 @@ services:
       args:
         USECASE_DIR: digital-product-passport
         ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
-        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *spring-env
       SERVER_PORT: 8080
@@ -99,8 +133,28 @@ services:
     volumes:
       - dpp-data:/app/data
 
+  selective-disclosure:
+    profiles: ["selective-disclosure", "spring"]
+    <<: *host-provider
+    build:
+      <<: *spring-build
+      args:
+        USECASE_DIR: selective-disclosure
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
+    environment:
+      <<: *spring-env
+      SERVER_PORT: 8080
+    ports:
+      - "${SELECTIVE_DISCLOSURE_PORT:-8091}:8080"
+    volumes:
+      - selective-disclosure-data:/app/data
+
 volumes:
   proof-of-reserves-data:
+  identity-kyc-data:
+  nft-ownership-data:
   voting-data:
   airdrop-data:
   dpp-data:
+  selective-disclosure-data:

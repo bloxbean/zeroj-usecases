@@ -9,9 +9,10 @@ projects=(
   private-voting
   proof-of-reserves
   selective-disclosure
-  annotated-private-voting
-  annotated-proof-of-reserves
-  annotated-compliance-credential
+  examples/minimal-circuits/batch-threshold-matrix
+  examples/minimal-circuits/zk-mpf-private-registry
+  examples/minimal-circuits/plonk/proof-of-reserves
+  examples/minimal-circuits/plonk/compliance-credential
 )
 
 if [ "$#" -eq 0 ]; then

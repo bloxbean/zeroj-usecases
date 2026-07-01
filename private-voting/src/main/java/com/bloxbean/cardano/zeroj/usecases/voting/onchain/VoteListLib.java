@@ -75,6 +75,10 @@ public class VoteListLib {
 
         BigInteger contQty = ValuesLib.assetOf(contAnchorOutput.value(), policyId, anchorTokenName);
         boolean anchorPreserved = contQty.compareTo(BigInteger.ONE) == 0;
+        boolean anchorZkPreserved = anchorIsRoot ||
+                ValuesLib.assetOf(contAnchorOutput.value(), zkPolicyId,
+                        ValuesLib.findTokenName(anchorInputResolved.value(), zkPolicyId, BigInteger.ONE))
+                        .compareTo(BigInteger.ONE) == 0;
 
         boolean contAtScript = Builtins.equalsData(contAnchorOutput.address(), scriptAddr);
         boolean newAtScript = Builtins.equalsData(newElementOutput.address(), scriptAddr);
@@ -100,7 +104,7 @@ public class VoteListLib {
 
         boolean zkProofVerified = ValuesLib.containsPolicy(mint, zkPolicyId);
 
-        return nameCorrect && anchorPreserved && contAtScript && newAtScript
+        return nameCorrect && anchorPreserved && anchorZkPreserved && contAtScript && newAtScript
                 && dataUnchanged && contNextOk && newNextOk && orderOk
                 && exactlyOne && zkProofVerified;
     }

@@ -2,7 +2,7 @@
 
 **Zero-Knowledge Proofs on Cardano: From Circuit to On-Chain Verification**
 
-*5 end-to-end demo applications demonstrating real-world ZK use cases*
+*7 end-to-end demo applications demonstrating real-world ZK use cases*
 
 ---
 
@@ -10,7 +10,7 @@
 
 ZeroJ is a **pure Java ZK toolkit** for Cardano that enables:
 
-- **Circuit definition** in Java (CircuitSpec DSL)
+- **Circuit definition** in Java (symbolic annotations or CircuitSpec DSL)
 - **Proof generation** using Groth16 on BLS12-381 (pure Java, zero native dependencies)
 - **On-chain verification** via Cardano Plutus V3 BLS12-381 builtins
 - **Smart contracts** written in Java using Julc (Java → Plutus V3 compiler)
@@ -45,6 +45,11 @@ Java Circuit DSL → R1CS → Groth16 Prove (pure Java) → 192-byte proof → P
 | 3 | **Identity/KYC** | 8087 | "I meet KYC requirements (age, country)" | Stateless spending validator |
 | 4 | **Digital Product Passport** | 8088 | "Product meets EU compliance thresholds" | Minting policy (mint-if-compliant) |
 | 5 | **Proof of Reserves** | 8089 | "Reserves >= liabilities, all balances >= 0" | Spending validator (attestation) |
+| 6 | **Personhood Airdrop** | 8083 | "I'm a unique person and have not claimed this epoch" | Nullifier NFT |
+| 7 | **Selective Disclosure** | 8091 | "One signed credential satisfies multiple private predicates" | Predicate-gated validators |
+
+Top-level directories are full Spring Boot E2E demos. Lightweight developer
+examples live under `examples/minimal-circuits/`.
 
 ---
 

@@ -21,13 +21,13 @@ services:
     build:
       context: .
       additional_contexts:
-        zeroj-src: ${ZEROJ_SOURCE_CONTEXT:-../zeroj}
+        zeroj-src: ${ZEROJ_SOURCE_CONTEXT:-docker/empty-zeroj-context}
       dockerfile: docker/cli-usecase.Dockerfile
       args:
-        USECASE_DIR: annotated-proof-of-reserves-plonk
-        APP_NAME: annotated-proof-of-reserves-plonk
+        USECASE_DIR: examples/minimal-circuits/plonk/proof-of-reserves
+        APP_NAME: proof-of-reserves-plonk
         ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
-        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *yaci-env
     volumes:
@@ -39,13 +39,13 @@ services:
     build:
       context: .
       additional_contexts:
-        zeroj-src: ${ZEROJ_SOURCE_CONTEXT:-../zeroj}
+        zeroj-src: ${ZEROJ_SOURCE_CONTEXT:-docker/empty-zeroj-context}
       dockerfile: docker/cli-usecase.Dockerfile
       args:
-        USECASE_DIR: annotated-compliance-credential-plonk
-        APP_NAME: annotated-compliance-credential-plonk
+        USECASE_DIR: examples/minimal-circuits/plonk/compliance-credential
+        APP_NAME: compliance-credential-plonk
         ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
-        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *yaci-env
     volumes:

@@ -10,9 +10,12 @@ Usage: ./demo.sh <usecase> [--run] [--clean-cache] [--stop] [--no-open] [--logs]
 
 Usecases:
   proof-of-reserves
+  identity-kyc
+  nft-ownership
   voting
   airdrop
   dpp
+  selective-disclosure
 
 Options:
   --run          Run the happy-path curl flow after the UI is healthy.
@@ -26,6 +29,7 @@ Examples:
   yaci-cli devkit start
   ./demo.sh voting
   ./demo.sh airdrop --run
+  ./demo.sh identity-kyc --run
   ./demo.sh proof-of-reserves --stop
 
   # Public Blockfrost-compatible endpoint. Fund DEMO_WALLET_MNEMONIC manually.
@@ -33,7 +37,7 @@ Examples:
   BLOCKFROST_BASE_URL=https://cardano-preprod.blockfrost.io/api/v0 \
   BLOCKFROST_PROJECT_ID=preprod... \
   CARDANO_NETWORK=preprod \
-  PUBLISH_LOCAL_ZEROJ=false ./demo.sh dpp --run
+  ./demo.sh dpp --run
 EOF
 }
 
@@ -75,6 +79,20 @@ case "${USECASE}" in
     PORT="${PROOF_OF_RESERVES_PORT:-8089}"
     HEALTH="/api/reserves/status"
     ;;
+  identity|identity-kyc)
+    PROFILE="identity-kyc"
+    SERVICE="identity-kyc"
+    VOLUME="identity-kyc-data"
+    PORT="${IDENTITY_KYC_PORT:-8087}"
+    HEALTH="/api/credential/status"
+    ;;
+  nft|nft-ownership)
+    PROFILE="nft-ownership"
+    SERVICE="nft-ownership"
+    VOLUME="nft-ownership-data"
+    PORT="${NFT_OWNERSHIP_PORT:-8085}"
+    HEALTH="/api/status"
+    ;;
   voting|private-voting)
     PROFILE="voting"
     SERVICE="voting"
@@ -95,6 +113,13 @@ case "${USECASE}" in
     VOLUME="dpp-data"
     PORT="${DPP_PORT:-8088}"
     HEALTH="/api/dpp/status"
+    ;;
+  selective|selective-disclosure)
+    PROFILE="selective-disclosure"
+    SERVICE="selective-disclosure"
+    VOLUME="selective-disclosure-data"
+    PORT="${SELECTIVE_DISCLOSURE_PORT:-8091}"
+    HEALTH="/api/predicate/status"
     ;;
   *)
     echo "Unknown usecase: ${USECASE}" >&2
@@ -202,8 +227,26 @@ run_flow() {
       post_json "/api/reserves/build-tree" "{}"
       post_json "/api/reserves/prove" '{"reservesAda":10000}'
       ;;
+    identity-kyc)
+      post_json "/api/credential/lock" '{"adaAmount":5}'
+      post_json "/api/credential/verify" '{"name":"Alice"}'
+      post_json "/api/credential/unlock" '{"name":"Alice"}'
+      ;;
+    nft-ownership)
+      post_json "/api/snapshot/register" '{"secretKey":"12345","tokenName":"101"}'
+      post_json "/api/snapshot/build" "{}"
+      proof_json="$(post_json "/api/prove" '{"secretKey":"12345","tokenName":"101","contextId":"nft-demo-v1"}')"
+      printf '%s' "${proof_json}"
+      nullifier="$(printf '%s' "${proof_json}" | sed -n 's/.*"nullifier":"\([^"]*\)".*/\1/p')"
+      if [ -z "${nullifier}" ]; then
+        echo "Could not extract nullifier from /api/prove response." >&2
+        return 1
+      fi
+      post_json "/api/access" "{\"nullifier\":\"${nullifier}\"}"
+      ;;
     voting)
       post_json "/api/vote" '{"voterLabel":"voter1","vote":1}'
+      post_json "/api/vote" '{"voterLabel":"voter2","vote":0}'
       curl -fsS "${BASE_URL}/api/results"
       printf '\n'
       ;;
@@ -217,6 +260,14 @@ run_flow() {
       post_json "/api/dpp/mint" '{"id":"BAT-SN001"}'
       curl -fsS "${BASE_URL}/api/dpp/status"
       printf '\n'
+      ;;
+    selective-disclosure)
+      post_json "/api/predicate/lock" '{"gate":"adult","adaAmount":5}'
+      post_json "/api/predicate/prove-adult" '{"name":"Bob"}'
+      post_json "/api/predicate/unlock-adult" '{"name":"Bob"}'
+      post_json "/api/predicate/lock" '{"gate":"doctor","adaAmount":5}'
+      post_json "/api/predicate/prove-doctor" '{"name":"Bob"}'
+      post_json "/api/predicate/unlock-doctor" '{"name":"Bob"}'
       ;;
   esac
 }
