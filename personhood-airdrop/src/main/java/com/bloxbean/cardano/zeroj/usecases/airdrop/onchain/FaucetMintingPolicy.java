@@ -24,7 +24,7 @@ import java.math.BigInteger;
  * faucet's off-chain UTxO selection would refuse a transaction whose mint
  * collides with an already-minted NFT.
  *
- * <p>Public inputs (6) are read from the first output's inline datum:
+ * <p>Public inputs (6) are read from the claim output's inline datum:
  * {@code [pkU, pkV, epoch, nullifier, recipient, eligible]}. The validator:
  * <ol>
  *   <li>Mints exactly one token under this policy.</li>
@@ -62,25 +62,35 @@ public class FaucetMintingPolicy {
         BigInteger mintCount = ValuesLib.countTokensWithQty(txInfo.mint(), policyBytes, BigInteger.ONE);
         boolean exactlyOne = mintCount.compareTo(BigInteger.ONE) == 0;
 
-        // 2. Read public inputs from the first output's inline datum.
+        byte[] mintedName = ValuesLib.findTokenName(txInfo.mint(), policyBytes, BigInteger.ONE);
+
+        // 2. Read public inputs from the output carrying the freshly minted claim NFT.
         //    Datum = ListData [pkU, pkV, epoch, nullifier, recipient, eligible].
-        TxOut firstOutput = txInfo.outputs().get(0);
-        PlutusData datumData = OutputLib.getInlineDatum(firstOutput);
+        TxOut claimOutput = OutputLib.findOutputWithToken(txInfo.outputs(), policyBytes, policyBytes, mintedName);
+        PlutusData datumData = OutputLib.getInlineDatum(claimOutput);
         PlutusData inputs = Builtins.unListData(datumData);
         PlutusData r1 = Builtins.tailList(inputs);
         PlutusData r2 = Builtins.tailList(r1);
         PlutusData r3 = Builtins.tailList(r2);
         PlutusData r4 = Builtins.tailList(r3);
         PlutusData r5 = Builtins.tailList(r4);
+        BigInteger pub0 = Builtins.asInteger(Builtins.headList(inputs));      // pkU
+        BigInteger pub1 = Builtins.asInteger(Builtins.headList(r1));          // pkV
+        BigInteger pub2 = Builtins.asInteger(Builtins.headList(r2));          // epoch
+        BigInteger pub3 = Builtins.asInteger(Builtins.headList(r3));          // nullifier
+        BigInteger pub4 = Builtins.asInteger(Builtins.headList(r4));          // recipient
         BigInteger pub5 = Builtins.asInteger(Builtins.headList(r5));          // eligible
 
-        // 3. eligible must be 1.
+        // 3. eligible must be 1 and token name must bind to the public nullifier.
         boolean isEligible = pub5.compareTo(BigInteger.ONE) == 0;
+        boolean nameCorrect = Builtins.equalsByteString(mintedName, Builtins.integerToByteString(true, 32, pub3));
 
         // 4. Groth16 BLS12-381 pairing check with 6 public inputs.
-        boolean proofValid = Groth16BLS12381Lib.verify(datumData, proof.piA(), proof.piB(), proof.piC(),
+        PlutusData publicInputs = Groth16BLS12381Lib.publicInputs(pub0, pub1, pub2, pub3, pub4, pub5);
+        boolean proofValid = Groth16BLS12381Lib.verify(publicInputs,
+                proof.piA(), proof.piB(), proof.piC(),
                 vkAlpha, vkBeta, vkGamma, vkDelta, vkIc);
 
-        return exactlyOne && isEligible && proofValid;
+        return exactlyOne && nameCorrect && isEligible && proofValid;
     }
 }

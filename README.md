@@ -60,6 +60,8 @@ These run against a local Cardano devnet (Yaci DevKit), build and submit real tr
 
 > Ports 8085/8086 are reused across demos — run **one demo at a time**, or change the port in that demo's `src/main/resources/application.yml`.
 
+Full-stack demos 1-4, 6, and 7 use ZeroJ symbolic annotations for their zk circuits. `digital-product-passport` is kept as the full-stack `CircuitSpec` example for the lower-level builder style.
+
 ### Annotation-style circuit demos (command-line, no devnet needed)
 
 These are smaller, focused examples of ZeroJ's **annotation-based circuit DSL** — you describe the circuit with Java annotations (`@ZkBool`, `@ZkUInt`, `@FixedSize`, …) and a companion circuit class is generated. They run with `./gradlew run` and print results to the console; great for understanding circuits in isolation.
@@ -121,6 +123,88 @@ curl -X POST http://localhost:10000/local-cluster/api/addresses/topup \
 ---
 
 ## Docker Quick Start
+
+For the full-stack Spring Boot demos, start Yaci DevKit on the host and use the
+demo compose launcher:
+
+```bash
+yaci-cli devkit start
+./demo.sh proof-of-reserves --run
+./demo.sh voting --run
+./demo.sh airdrop --run
+./demo.sh dpp --run
+```
+
+This uses `compose.demo.yml`, which starts only the selected demo app container.
+`demo.sh` waits for the external Blockfrost-compatible provider, tops up the
+shared demo wallet through the Yaci admin API by default, opens the UI, and
+optionally runs a happy-path curl flow with `--run`.
+
+Normal demo starts seed precomputed development setup artifacts from
+`demo-cache/<module-dir>` into the container's `/app/data` volume. This avoids
+the slow first-run trusted setup during presentations. The app still validates
+the cached setup before using it, so loading can take tens of seconds for larger
+circuits.
+
+To force a fresh local setup generation for a usecase:
+
+```bash
+./demo.sh proof-of-reserves --clean-cache --run
+```
+
+`--clean-cache` removes only the selected usecase's Docker volume and disables
+demo-cache seeding for that run. These committed cache files are development
+artifacts generated with an insecure single-party setup; do not reuse them for
+production circuits.
+
+To stop a running demo without stopping the external Yaci DevKit:
+
+```bash
+./demo.sh proof-of-reserves --stop
+./demo.sh voting --stop
+```
+
+You can also use Compose directly:
+
+```bash
+docker compose -f compose.demo.yml --profile voting up -d --build
+docker compose -f compose.demo.yml --profile dpp up -d --build
+```
+
+The Spring demo profiles currently available are `proof-of-reserves`, `voting`,
+`airdrop`, and `dpp`.
+
+By default the containers use local Yaci DevKit on the host:
+
+```text
+BLOCKFROST_BASE_URL=http://host.docker.internal:8080/api/v1/
+PROVIDER_HEALTH_URL=<derived from BLOCKFROST_BASE_URL>/epochs/latest
+YACI_ADMIN_URL=http://host.docker.internal:10000
+```
+
+`demo.sh` itself runs on the host, so it checks local Yaci at
+`http://localhost:8080/api/v1/` and the published app port at
+`http://localhost:<demo-port>`. Inside Docker, `localhost` would mean the app
+container, so the compose defaults use `host.docker.internal` to reach the Yaci
+DevKit running on the host. This works on Docker Desktop for macOS/Windows; on
+Linux, `compose.demo.yml` also maps it through Docker's `host-gateway`.
+
+To target another Blockfrost-compatible testnet endpoint, provide the endpoint
+and project id, disable Yaci top-up, and fund the configured demo mnemonic
+manually on that network:
+
+```bash
+DEMO_TOPUP_ENABLED=false \
+BLOCKFROST_BASE_URL=https://cardano-preprod.blockfrost.io/api/v0 \
+BLOCKFROST_PROJECT_ID=<your-project-id> \
+CARDANO_NETWORK=preprod \
+./demo.sh dpp --run
+```
+
+If the provider's health endpoint does not follow the usual
+`<BLOCKFROST_BASE_URL>/epochs/latest` shape, set `PROVIDER_HEALTH_URL`
+explicitly. Set `WAIT_FOR_PROVIDER=false` only when you want the app container
+to start without waiting for the backend API.
 
 For non-Java users, the PlonK on-chain examples can run through Docker Compose.
 Yaci DevKit is still started manually on the host:

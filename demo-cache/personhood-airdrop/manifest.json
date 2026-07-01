@@ -1,0 +1,14 @@
+{
+  "usecase": "personhood-airdrop",
+  "zerojVersion": "0.1.0-pre4",
+  "generatedDate": "2026-06-30",
+  "devOnly": true,
+  "trustedSetup": "single-party development setup",
+  "artifacts": [
+    {
+      "path": "setup-airdrop.bin",
+      "sha256": "cc3a56d711c8aa526bddbabcbd05aac8925696be9c9ec3fb81c8fec18dc4c6e2",
+      "size": "24M"
+    }
+  ]
+}

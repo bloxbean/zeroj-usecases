@@ -8,8 +8,9 @@ import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
+import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupCache;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
-import com.bloxbean.cardano.zeroj.usecases.voting.circuit.PrivateVoteCircuit;
+import com.bloxbean.cardano.zeroj.usecases.voting.circuit.PrivateVoteProofCircuit;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,6 +18,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +30,7 @@ public class VoteCircuitService {
 
     private static final Logger log = LoggerFactory.getLogger(VoteCircuitService.class);
     private static final BigInteger PRIME = FieldConfig.BLS12_381.prime();
+    private static final String CACHE_DIR = "./data";
 
     @Value("${zk.tree-depth}")
     private int treeDepth;
@@ -43,7 +47,7 @@ public class VoteCircuitService {
     public void init() {
         log.info("Compiling private vote circuit (treeDepth={})...", treeDepth);
 
-        circuit = PrivateVoteCircuit.build(treeDepth);
+        circuit = PrivateVoteProofCircuit.build(treeDepth);
         r1cs = circuit.compileR1CS(CurveId.BLS12_381);
 
         log.info("Circuit compiled: {} constraints, {} wires, {} public inputs",
@@ -51,12 +55,46 @@ public class VoteCircuitService {
 
         constraints = r1cs.constraints();
 
-        log.info("Running dev trusted setup (power={})...", potPower);
-        var srs = PowersOfTauBLS381.generate(potPower);
-        setupResult = Groth16SetupBLS381.setup(constraints, r1cs.numWires(),
-                r1cs.numPublicInputs(), srs.tauScalar());
+        setupResult = loadOrRunSetup();
 
         log.info("Trusted setup complete. Ready to generate vote proofs.");
+    }
+
+    private Groth16SetupBLS381.SetupResult loadOrRunSetup() {
+        Path cacheDir = Path.of(CACHE_DIR);
+        Path setupCache = cacheDir.resolve("setup-voting.bin");
+        try {
+            Files.createDirectories(cacheDir);
+            if (Files.exists(setupCache)) {
+                long start = System.currentTimeMillis();
+                var cached = Groth16SetupCache.loadBls12381Setup(setupCache);
+                if (matchesCurrentCircuit(cached)) {
+                    log.info("Setup loaded from cache in {}ms", System.currentTimeMillis() - start);
+                    return cached;
+                }
+                log.warn("Setup cache shape does not match current circuit; regenerating");
+            }
+        } catch (Exception e) {
+            log.warn("Setup cache load failed: {}", e.getMessage());
+        }
+
+        log.info("Running dev trusted setup (power={})...", potPower);
+        var srs = PowersOfTauBLS381.generate(potPower);
+        var setup = Groth16SetupBLS381.setup(constraints, r1cs.numWires(),
+                r1cs.numPublicInputs(), srs.tauScalar());
+        try {
+            Groth16SetupCache.saveBls12381Setup(setup, setupCache);
+            log.info("Setup cached to {}", setupCache);
+        } catch (Exception e) {
+            log.warn("Setup cache save failed: {}", e.getMessage());
+        }
+        return setup;
+    }
+
+    private boolean matchesCurrentCircuit(Groth16SetupBLS381.SetupResult setup) {
+        var pk = setup.provingKey();
+        return pk.numPublic() == r1cs.numPublicInputs()
+                && pk.pointsA().length == r1cs.numWires();
     }
 
     /**

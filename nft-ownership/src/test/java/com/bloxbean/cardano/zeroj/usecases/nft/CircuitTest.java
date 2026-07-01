@@ -10,7 +10,7 @@ import com.bloxbean.cardano.zeroj.circuit.FieldConfig;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
-import com.bloxbean.cardano.zeroj.usecases.nft.circuit.NFTOwnershipCircuit;
+import com.bloxbean.cardano.zeroj.usecases.nft.circuit.NFTOwnershipProofCircuit;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigInteger;
@@ -32,7 +32,7 @@ class CircuitTest {
 
     @Test
     void circuit_compiles() {
-        var circuit = NFTOwnershipCircuit.build(3);
+        var circuit = NFTOwnershipProofCircuit.build(3);
         var r1cs = circuit.compileR1CS(CurveId.BLS12_381);
 
         assertTrue(r1cs.numConstraints() > 0, "Should have constraints");
@@ -43,7 +43,7 @@ class CircuitTest {
     @Test
     void circuit_proveAndVerify_depth3() {
         int depth = 3;
-        var circuit = NFTOwnershipCircuit.build(depth);
+        var circuit = NFTOwnershipProofCircuit.build(depth);
         var r1cs = circuit.compileR1CS(CurveId.BLS12_381);
 
         var constraints = r1cs.constraints();

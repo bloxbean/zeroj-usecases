@@ -38,7 +38,7 @@ document, many predicate proofs.
                         ┌────────────────┴────────────────┐
                         ▼                                 ▼
             ┌───────────────────────┐         ┌───────────────────────┐
-            │ AdultResidentCircuit  │         │ SeniorDoctorCircuit   │
+            │ AdultResidentProof    │         │ SeniorDoctorProof     │
             │ age ≥ 21 + EU Merkle  │         │ role == Doctor        │
             │                       │         │ + age ≥ 30            │
             └───────────┬───────────┘         └───────────┬───────────┘
@@ -55,8 +55,8 @@ document, many predicate proofs.
 | Piece | Role |
 |---|---|
 | `RichCredentialIssuerService` | Jubjub keypair; signs `(dobYear, country, roleId, salaryBracket, nameHash)` once per user |
-| `AdultResidentCircuit` | EdDSA verify + `dobYear ≤ currentYear-21` + country Merkle membership (depth 4) |
-| `SeniorDoctorCircuit`  | EdDSA verify + `roleId == DOCTOR` + `dobYear ≤ currentYear-30` |
+| `AdultResidentProof` | EdDSA verify + `dobYear ≤ currentYear-21` + country Merkle membership (depth 4) |
+| `SeniorDoctorProof`  | EdDSA verify + `roleId == DOCTOR` + `dobYear ≤ currentYear-30` |
 | `PredicateProofService`| Compiles both circuits, shares PoT SRS, runs per-circuit Phase-2 setup |
 | `AdultResidentValidator` | Plutus V3 spending validator parameterized by the adult-resident vk; 5 public inputs |
 | `SeniorDoctorValidator`  | Plutus V3 spending validator parameterized by the senior-doctor vk; 4 public inputs |

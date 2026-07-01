@@ -79,7 +79,7 @@ Holder → Generate ZK proof (secretKey, tokenName, Merkle path)
 ### Key Components
 | Component | Details |
 |-----------|---------|
-| Circuit | `NFTOwnershipCircuit` — ~10,800 constraints, Poseidon Merkle proof (depth 10) |
+| Circuit | `NFTOwnershipProof` — symbolic annotation circuit, Poseidon Merkle proof (depth 10) |
 | On-chain | `NullifierListValidator` (sorted linked list) + `ZkProofMintingPolicy` (Groth16 BLS12-381) |
 | Pattern | Two minting policies coupled — list validates insertion, ZK policy validates proof |
 | Nullifier | `Poseidon(tokenName, contextId)` — same NFT + same event = same nullifier |
@@ -119,7 +119,7 @@ Voter → Prove: "I'm in voter Merkle tree + vote ∈ {0,1}"
 ### Key Components
 | Component | Details |
 |-----------|---------|
-| Circuit | `PrivateVoteCircuit` — ~10,800 constraints, voter Merkle proof + vote boolean |
+| Circuit | `PrivateVoteProof` — symbolic annotation circuit, voter Merkle proof + vote boolean |
 | On-chain | `VoteListValidator` (linked list) + `VoteZkMintingPolicy` (Groth16) |
 | Tally | Off-chain: for each nullifier, compute Poseidon(0, null) and Poseidon(1, null), match against stored commitment |
 | Test accounts | 5 voter accounts auto-created at startup with Yaci DevKit funding |
@@ -151,10 +151,10 @@ User   → Generate ZK proof: credential valid + age check + country Merkle
 ### Key Components
 | Component | Details |
 |-----------|---------|
-| Circuit | `CredentialCircuit` — ~5,000 constraints, credential hash + 8-bit age comparison + country Merkle |
+| Circuit | `CredentialProof` — symbolic annotation circuit, EdDSA-Jubjub verify + 8-bit age comparison + country Merkle |
 | On-chain | `CredentialGatedValidator` (spending validator, datum-based Groth16) |
 | Pattern | **Stateless** — no nullifiers, proofs can be reused (ongoing DeFi access) |
-| Credential | Poseidon-signed (shared secret). ADR-0014 documents upgrade path to EdDSA/BBS+ for W3C VC compatibility |
+| Credential | EdDSA-Jubjub-signed credential over Poseidon claims |
 
 ### Test Users
 | User | Age | Country | Expected |
@@ -248,7 +248,7 @@ Sum Tree:         Node = Poseidon(left_hash, right_hash)       [proves inclusion
 ### Circuit
 | Component | Details |
 |-----------|---------|
-| `SolvencyCircuit` | Merkle Sum Tree in-circuit + 64-bit range checks + solvency comparison |
+| `SolvencyProof` | Symbolic annotation circuit with Merkle tree reconstruction + 64-bit range checks + solvency comparison |
 | Range checks | All balances `assertInRange(64)` — prevents negative balance cheating |
 | Sum verification | Computed sum must match published total liabilities |
 | Solvency | `reserves >= totalLiabilities` (64-bit comparison) |

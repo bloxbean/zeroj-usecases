@@ -24,16 +24,27 @@ public class CardanoConfig {
     @Value("${cardano.yaci.mnemonic}")
     private String yaciMnemonic;
 
+    @Value("${cardano.blockfrost.base-url:}")
+    private String overrideBlockfrostBaseUrl;
+
+    @Value("${cardano.blockfrost.project-id:}")
+    private String overrideBlockfrostProjectId;
+
     @Bean
     public BackendService backendService() {
-        log.info("Using Yaci DevKit backend at {}", yaciBaseUrl);
-        return new BFBackendService(yaciBaseUrl, "");
+        String baseUrl = firstNonBlank(overrideBlockfrostBaseUrl, yaciBaseUrl);
+        log.info("Using Blockfrost-compatible backend at {} (network={})", baseUrl, network);
+        return new BFBackendService(baseUrl, firstNonBlank(overrideBlockfrostProjectId, ""));
     }
 
     @Bean
     public Account adminAccount() {
         var account = new Account(Networks.testnet(), yaciMnemonic);
-        log.info("Faucet admin address (Yaci): {}", account.baseAddress());
+        log.info("Demo admin address ({}): {}", network, account.baseAddress());
         return account;
+    }
+
+    private static String firstNonBlank(String preferred, String fallback) {
+        return preferred != null && !preferred.isBlank() ? preferred : fallback;
     }
 }

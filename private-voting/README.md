@@ -121,7 +121,7 @@ private-voting/
 ├── build.gradle
 ├── src/main/java/.../voting/
 │   ├── PrivateVotingApplication.java
-│   ├── circuit/PrivateVoteCircuit.java      # ZK circuit (CircuitSpec)
+│   ├── circuit/PrivateVoteProof.java        # Symbolic annotation ZK circuit
 │   ├── config/CardanoConfig.java            # Network config
 │   ├── controller/
 │   │   ├── ElectionController.java          # Election management API

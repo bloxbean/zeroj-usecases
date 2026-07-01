@@ -41,7 +41,7 @@ circuit.
   the approved-countries Merkle tree.
 - **CredentialService** (this app): compiles the circuit, runs trusted
   setup, generates per-holder Groth16 proofs.
-- **CredentialCircuit** (`zeroj-usecases/identity-kyc/.../circuit/`):
+- **CredentialProof** (`zeroj-usecases/identity-kyc/.../circuit/`):
   in-circuit checks — EdDSA-Jubjub verify, age range, country Merkle-
   membership.
 - **CredentialGatedValidator** (Plutus V3, compiled from Julc): on-chain

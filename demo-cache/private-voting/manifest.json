@@ -1,0 +1,14 @@
+{
+  "usecase": "private-voting",
+  "zerojVersion": "0.1.0-pre4",
+  "generatedDate": "2026-06-30",
+  "devOnly": true,
+  "trustedSetup": "single-party development setup",
+  "artifacts": [
+    {
+      "path": "setup-voting.bin",
+      "sha256": "e542c5980a2c80c588f431952ada1f11ea1d0b087244773d161fe1998e7ec4f5",
+      "size": "11M"
+    }
+  ]
+}

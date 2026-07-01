@@ -83,6 +83,9 @@ compileTestJava {
     options.fork = true
     options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED']
 }
+bootRun {
+    jvmArgs '--enable-native-access=ALL-UNNAMED', '-Dzeroj.allowInsecureTrustedSetup=true'
+}
 
 test {
     useJUnitPlatform()

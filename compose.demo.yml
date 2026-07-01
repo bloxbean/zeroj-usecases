@@ -1,0 +1,106 @@
+name: zeroj-demo
+
+x-spring-env: &spring-env
+  WAIT_FOR_PROVIDER: ${WAIT_FOR_PROVIDER:-true}
+  BLOCKFROST_BASE_URL: ${BLOCKFROST_BASE_URL:-http://host.docker.internal:8080/api/v1/}
+  BLOCKFROST_PROJECT_ID: ${BLOCKFROST_PROJECT_ID:-}
+  # Empty means docker/run-spring-usecase.sh derives it from BLOCKFROST_BASE_URL.
+  PROVIDER_HEALTH_URL: ${PROVIDER_HEALTH_URL:-${YACI_HEALTH_URL:-${BF_HEALTH_URL:-}}}
+  CARDANO_NETWORK: ${CARDANO_NETWORK:-yaci}
+  CARDANO_BLOCKFROST_BASE_URL: ${BLOCKFROST_BASE_URL:-http://host.docker.internal:8080/api/v1/}
+  CARDANO_BLOCKFROST_PROJECT_ID: ${BLOCKFROST_PROJECT_ID:-}
+  CARDANO_YACI_BASE_URL: ${BLOCKFROST_BASE_URL:-http://host.docker.internal:8080/api/v1/}
+  CARDANO_YACI_ADMIN_URL: ${YACI_ADMIN_URL:-http://host.docker.internal:10000}
+  CARDANO_YACI_MNEMONIC: ${DEMO_WALLET_MNEMONIC:-test test test test test test test test test test test test test test test test test test test test test test test sauce}
+  DEMO_TOPUP_ENABLED: ${DEMO_TOPUP_ENABLED:-true}
+  DEMO_CACHE_SEED_ENABLED: ${DEMO_CACHE_SEED_ENABLED:-true}
+  ZEROJ_ALLOW_INSECURE_TRUSTED_SETUP: "true"
+
+x-host-provider: &host-provider
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+x-spring-build: &spring-build
+  context: .
+  additional_contexts:
+    zeroj-src: ${ZEROJ_SOURCE_CONTEXT:-../zeroj}
+  dockerfile: docker/spring-usecase.Dockerfile
+  args:
+    ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+    PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+
+services:
+  proof-of-reserves:
+    profiles: ["proof-of-reserves", "spring"]
+    <<: *host-provider
+    build:
+      <<: *spring-build
+      args:
+        USECASE_DIR: proof-of-reserves
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+    environment:
+      <<: *spring-env
+      SERVER_PORT: 8080
+    ports:
+      - "${PROOF_OF_RESERVES_PORT:-8089}:8080"
+    volumes:
+      - proof-of-reserves-data:/app/data
+
+  voting:
+    profiles: ["voting", "spring"]
+    <<: *host-provider
+    build:
+      <<: *spring-build
+      args:
+        USECASE_DIR: private-voting
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+    environment:
+      <<: *spring-env
+      SERVER_PORT: 8080
+    ports:
+      - "${VOTING_PORT:-8086}:8080"
+    volumes:
+      - voting-data:/app/data
+
+  airdrop:
+    profiles: ["airdrop", "spring"]
+    <<: *host-provider
+    build:
+      <<: *spring-build
+      args:
+        USECASE_DIR: personhood-airdrop
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+    environment:
+      <<: *spring-env
+      SERVER_PORT: 8080
+    ports:
+      - "${AIRDROP_PORT:-8083}:8080"
+    volumes:
+      - airdrop-data:/app/data
+
+  dpp:
+    profiles: ["dpp", "spring"]
+    <<: *host-provider
+    build:
+      <<: *spring-build
+      args:
+        USECASE_DIR: digital-product-passport
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-true}
+    environment:
+      <<: *spring-env
+      SERVER_PORT: 8080
+      DPP_ROCKSDB_PATH: /app/data/dpp-trie
+    ports:
+      - "${DPP_PORT:-8088}:8080"
+    volumes:
+      - dpp-data:/app/data
+
+volumes:
+  proof-of-reserves-data:
+  voting-data:
+  airdrop-data:
+  dpp-data:

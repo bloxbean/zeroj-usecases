@@ -1,6 +1,7 @@
 package com.bloxbean.cardano.zeroj.usecases.nft.onchain;
 
 import com.bloxbean.cardano.julc.core.PlutusData;
+import com.bloxbean.cardano.julc.core.types.JulcList;
 import com.bloxbean.cardano.julc.ledger.Address;
 import com.bloxbean.cardano.julc.ledger.TxOut;
 import com.bloxbean.cardano.julc.ledger.Value;
@@ -75,8 +76,8 @@ public class NullifierListLib {
      * Checks: sorted order, anchor updated, new node correct, outputs at script address,
      * exactly 1 new NFT minted, and ZK proof minting policy also minted in the tx.
      */
-    public static boolean validateInsert(TxOut anchorInputResolved, TxOut contAnchorOutput,
-                                         TxOut newElementOutput, Value mint, byte[] policyId,
+    public static boolean validateInsert(TxOut anchorInputResolved, JulcList<TxOut> outputs,
+                                         Value mint, byte[] policyId,
                                          byte[] rootKey, byte[] prefix, int prefixLen,
                                          Address scriptAddr, byte[] zkPolicyId) {
         // Discover anchor's NFT token name
@@ -91,6 +92,11 @@ public class NullifierListLib {
         // Token name must be prefix + key
         byte[] expectedName = buildTokenName(prefix, newKey);
         boolean nameCorrect = Builtins.equalsByteString(newTokenName, expectedName);
+
+        TxOut contAnchorOutput = OutputLib.findOutputWithToken(
+                outputs, policyId, policyId, anchorTokenName);
+        TxOut newElementOutput = OutputLib.findOutputWithToken(
+                outputs, policyId, policyId, newTokenName);
 
         // Anchor NFT preserved in continuing output
         BigInteger contQty = ValuesLib.assetOf(contAnchorOutput.value(), policyId, anchorTokenName);

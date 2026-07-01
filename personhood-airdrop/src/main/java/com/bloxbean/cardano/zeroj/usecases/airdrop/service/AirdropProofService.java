@@ -17,7 +17,7 @@ import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupCache;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import com.bloxbean.cardano.zeroj.usecases.airdrop.circuit.PersonhoodAirdropCircuit;
+import com.bloxbean.cardano.zeroj.usecases.airdrop.circuit.PersonhoodAirdropProofCircuit;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,7 +49,7 @@ public class AirdropProofService {
     @PostConstruct
     public void init() {
         log.info("Compiling airdrop circuit...");
-        circuit = PersonhoodAirdropCircuit.build();
+        circuit = PersonhoodAirdropProofCircuit.build();
         r1cs = circuit.compileR1CS(CurveId.BLS12_381);
         log.info("Circuit compiled: {} constraints, {} wires, {} public inputs",
                 r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs());

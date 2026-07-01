@@ -1,0 +1,35 @@
+{
+  "usecase": "digital-product-passport",
+  "zerojVersion": "0.1.0-pre4",
+  "generatedDate": "2026-06-30",
+  "devOnly": true,
+  "trustedSetup": "single-party development setup",
+  "poseidonVersion": "70a6d10bd5dda2b4",
+  "artifacts": [
+    {
+      "path": "setup-threshold-gte.bin",
+      "sha256": "27614a20048590b1bcde45313aa582daab77a1357274b8a2d5c0d93fa36b745a",
+      "size": "1.7M"
+    },
+    {
+      "path": "setup-threshold-lte.bin",
+      "sha256": "b1b43479cb1009315a0e1518f368cbe2ac4d371f68fca2195f9f85c1305d082c",
+      "size": "1.7M"
+    },
+    {
+      "path": "setup-inspection-chain.bin",
+      "sha256": "f3b39d8681c82124a136ea756744d35e0699733f6bce4a125894420a72ae047f",
+      "size": "9.6M"
+    },
+    {
+      "path": "setup-country-membership.bin",
+      "sha256": "85f11cfad0b82dbfbae6c418fb745f1053d75e4ed17334df8693420e20e809ae",
+      "size": "3.1M"
+    },
+    {
+      "path": ".zeroj-poseidon-version",
+      "sha256": "74836a1add2d508a8a17b4b2aedacafee034c5e8ede32769dea2c10fe837df2f",
+      "size": "16B"
+    }
+  ]
+}

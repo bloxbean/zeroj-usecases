@@ -14,9 +14,11 @@ import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupCache;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import com.bloxbean.cardano.zeroj.usecases.selective.circuit.AdultResidentCircuit;
+import com.bloxbean.cardano.zeroj.usecases.selective.circuit.AdultResidentProof;
+import com.bloxbean.cardano.zeroj.usecases.selective.circuit.AdultResidentProofCircuit;
 import com.bloxbean.cardano.zeroj.usecases.selective.circuit.CredentialSchema;
-import com.bloxbean.cardano.zeroj.usecases.selective.circuit.SeniorDoctorCircuit;
+import com.bloxbean.cardano.zeroj.usecases.selective.circuit.SeniorDoctorProof;
+import com.bloxbean.cardano.zeroj.usecases.selective.circuit.SeniorDoctorProofCircuit;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,9 +59,9 @@ public class PredicateProofService {
                 new com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS[1];
 
         adultResident = compile("adult-resident",
-                AdultResidentCircuit.build(RichCredentialIssuerService.COUNTRY_TREE_DEPTH),
+                AdultResidentProofCircuit.build(RichCredentialIssuerService.COUNTRY_TREE_DEPTH),
                 srsHolder, cacheDir.resolve("setup-adult.bin"));
-        seniorDoctor = compile("senior-doctor", SeniorDoctorCircuit.build(),
+        seniorDoctor = compile("senior-doctor", SeniorDoctorProofCircuit.build(),
                 srsHolder, cacheDir.resolve("setup-doctor.bin"));
 
         log.info("All predicate circuits compiled. Ready for proofs.");
@@ -121,7 +123,7 @@ public class PredicateProofService {
         BigInteger msg = CredentialSchema.claimsMessage(dob, ctry, cred.roleId(), sal, cred.nameHash());
         var kRed = InCircuitEdDSAJubjub.witnessComputeKReduction(sig.r(), pk, msg);
 
-        BigInteger eligible = (currentYear - cred.dobYear()) >= AdultResidentCircuit.MIN_AGE
+        BigInteger eligible = (currentYear - cred.dobYear()) >= AdultResidentProof.MIN_AGE
                 ? BigInteger.ONE : BigInteger.ZERO;
 
         Map<String, List<BigInteger>> inputs = new HashMap<>();
@@ -160,7 +162,7 @@ public class PredicateProofService {
         var kRed = InCircuitEdDSAJubjub.witnessComputeKReduction(sig.r(), pk, msg);
 
         BigInteger eligible = (cred.roleId().equals(CredentialSchema.Roles.DOCTOR)
-                && (currentYear - cred.dobYear()) >= SeniorDoctorCircuit.MIN_AGE)
+                && (currentYear - cred.dobYear()) >= SeniorDoctorProof.MIN_AGE)
                 ? BigInteger.ONE : BigInteger.ZERO;
 
         Map<String, List<BigInteger>> inputs = new HashMap<>();

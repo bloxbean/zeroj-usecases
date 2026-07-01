@@ -115,9 +115,9 @@ public class OnChainAirdropService {
                 BigIntPlutusData.of(recipient),
                 BigIntPlutusData.of(BigInteger.ONE)); // eligible
 
-        // The minted NFT's asset name = nullifier bytes (truncated to 32 if needed).
-        // The first output carries the NFT + the public-inputs datum.
-        byte[] nullifierBytes = padOrTrunc(nullifier.toByteArray(), 28);
+        // The minted NFT's asset name = nullifier bytes.
+        // The claim output carries the NFT + the public-inputs datum.
+        byte[] nullifierBytes = padOrTrunc(nullifier.toByteArray(), 32);
         String tokenNameHex = HexUtil.encodeHexString(nullifierBytes);
         var nftAsset = new Asset("0x" + tokenNameHex, BigInteger.ONE);
 

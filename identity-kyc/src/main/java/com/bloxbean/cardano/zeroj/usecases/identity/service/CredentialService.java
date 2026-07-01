@@ -12,7 +12,7 @@ import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
-import com.bloxbean.cardano.zeroj.usecases.identity.circuit.CredentialCircuit;
+import com.bloxbean.cardano.zeroj.usecases.identity.circuit.CredentialProofCircuit;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,7 +66,7 @@ public class CredentialService {
         log.info("Compiling credential circuit (EdDSA-Jubjub, countryTreeDepth={})...",
                 countryTreeDepth);
 
-        circuit = CredentialCircuit.build(countryTreeDepth);
+        circuit = CredentialProofCircuit.build(countryTreeDepth);
         r1cs = circuit.compileR1CS(CurveId.BLS12_381);
 
         log.info("Circuit compiled: {} constraints, {} wires, {} public inputs",

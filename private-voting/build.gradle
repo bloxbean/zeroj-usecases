@@ -42,6 +42,8 @@ dependencies {
     // ZeroJ — circuit DSL, prover, verifier, on-chain
     implementation "com.bloxbean.cardano:zeroj-circuit-dsl:${zerojVersion}"
     implementation "com.bloxbean.cardano:zeroj-circuit-lib:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-circuit-annotation-api:${zerojVersion}"
+    annotationProcessor "com.bloxbean.cardano:zeroj-circuit-annotation-processor:${zerojVersion}"
     implementation "com.bloxbean.cardano:zeroj-crypto:${zerojVersion}"
     implementation "com.bloxbean.cardano:zeroj-verifier-groth16:${zerojVersion}"
     implementation "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
@@ -77,6 +79,9 @@ compileTestJava {
     options.compilerArgs.add('-proc:full')
     options.fork = true
     options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED']
+}
+bootRun {
+    jvmArgs '--enable-native-access=ALL-UNNAMED', '-Dzeroj.allowInsecureTrustedSetup=true'
 }
 
 test {

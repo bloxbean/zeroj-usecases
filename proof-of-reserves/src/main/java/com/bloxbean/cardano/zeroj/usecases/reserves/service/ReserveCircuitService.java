@@ -10,7 +10,7 @@ import com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupCache;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
-import com.bloxbean.cardano.zeroj.usecases.reserves.circuit.SolvencyCircuit;
+import com.bloxbean.cardano.zeroj.usecases.reserves.circuit.SolvencyProofCircuit;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,7 +45,7 @@ public class ReserveCircuitService {
     public void init() {
         log.info("Compiling solvency circuit (treeDepth={}, {} accounts)...", treeDepth, 1 << treeDepth);
 
-        circuit = SolvencyCircuit.build(treeDepth);
+        circuit = SolvencyProofCircuit.build(treeDepth, 1 << treeDepth);
         r1cs = circuit.compileR1CS(CurveId.BLS12_381);
         log.info("Circuit compiled: {} constraints, {} wires, {} public",
                 r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs());

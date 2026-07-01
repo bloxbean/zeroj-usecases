@@ -1,0 +1,19 @@
+{
+  "usecase": "selective-disclosure",
+  "zerojVersion": "0.1.0-pre4",
+  "generatedDate": "2026-06-30",
+  "devOnly": true,
+  "trustedSetup": "single-party development setup",
+  "artifacts": [
+    {
+      "path": "setup-adult.bin",
+      "sha256": "534543048525ebf987e18f1967305628f894c4c4cb4c1c723ae6b1f5cd062333",
+      "size": "29M"
+    },
+    {
+      "path": "setup-doctor.bin",
+      "sha256": "250fd3d7d64017ab5b6a822a3070f2d0aa12e3b48b62d7238cf092e14a1809ae",
+      "size": "26M"
+    }
+  ]
+}

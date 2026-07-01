@@ -59,10 +59,8 @@ public class NullifierListValidator {
                         new Credential.ScriptCredential(PlutusData.cast(policyBytes, ScriptHash.class)),
                         Optional.empty());
                 TxInInfo anchorInput = txInfo.inputs().get(insert.anchorInputIndex().intValue());
-                TxOut contAnchorOutput = txInfo.outputs().get(insert.contAnchorOutputIndex().intValue());
-                TxOut newElementOutput = txInfo.outputs().get(insert.newElementOutputIndex().intValue());
                 yield NullifierListLib.validateInsert(
-                        anchorInput.resolved(), contAnchorOutput, newElementOutput,
+                        anchorInput.resolved(), txInfo.outputs(),
                         txInfo.mint(), policyBytes, rootKey, prefix, prefixLen.intValue(),
                         scriptAddr, zkPolicyId);
             }

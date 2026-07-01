@@ -13,7 +13,7 @@ import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
-import com.bloxbean.cardano.zeroj.usecases.nft.circuit.NFTOwnershipCircuit;
+import com.bloxbean.cardano.zeroj.usecases.nft.circuit.NFTOwnershipProofCircuit;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,7 +51,7 @@ public class ProverService {
     public void init() {
         log.info("Compiling NFT ownership circuit (treeDepth={})...", treeDepth);
 
-        circuit = NFTOwnershipCircuit.build(treeDepth);
+        circuit = NFTOwnershipProofCircuit.build(treeDepth);
         r1cs = circuit.compileR1CS(CurveId.BLS12_381);
 
         log.info("Circuit compiled: {} constraints, {} wires, {} public inputs",

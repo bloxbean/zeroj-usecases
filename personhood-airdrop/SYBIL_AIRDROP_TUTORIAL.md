@@ -45,7 +45,7 @@ sybil resistance.
 | Piece | Role |
 |---|---|
 | `PersonhoodIssuerService` | Holds the issuer's Jubjub keypair; signs one credential per enrolled person |
-| `PersonhoodAirdropCircuit` | In-SNARK: EdDSA verify + `nullifier == Poseidon(personhoodId, epoch)` + binds recipient |
+| `PersonhoodAirdropProof` | In-SNARK: EdDSA verify + `nullifier == Poseidon(personhoodId, epoch)` + binds recipient |
 | `AirdropProofService` | Compiles circuit, runs Powers-of-Tau + Phase-2 setup, generates claim proofs |
 | `FaucetMintingPolicy` (Plutus V3) | Parameterized by Groth16 vk; gates 1 NFT mint per claim, asset name = nullifier |
 | `OnChainAirdropService` | Submits the proof as a `mintAsset` tx; maintains off-chain used-nullifier cache |

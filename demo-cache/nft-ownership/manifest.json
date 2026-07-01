@@ -1,0 +1,8 @@
+{
+  "usecase": "nft-ownership",
+  "zerojVersion": "0.1.0-pre4",
+  "generatedDate": "2026-06-30",
+  "devOnly": true,
+  "trustedSetup": "single-party development setup",
+  "artifacts": []
+}

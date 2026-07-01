@@ -1,6 +1,7 @@
 package com.bloxbean.cardano.zeroj.usecases.voting.onchain;
 
 import com.bloxbean.cardano.julc.core.PlutusData;
+import com.bloxbean.cardano.julc.core.types.JulcList;
 import com.bloxbean.cardano.julc.ledger.Address;
 import com.bloxbean.cardano.julc.ledger.TxOut;
 import com.bloxbean.cardano.julc.ledger.Value;
@@ -53,8 +54,8 @@ public class VoteListLib {
         return atScript && emptyNext && rootMinted && onlyOne;
     }
 
-    public static boolean validateInsert(TxOut anchorInputResolved, TxOut contAnchorOutput,
-                                         TxOut newElementOutput, Value mint, byte[] policyId,
+    public static boolean validateInsert(TxOut anchorInputResolved, JulcList<TxOut> outputs,
+                                         Value mint, byte[] policyId,
                                          byte[] rootKey, byte[] prefix, int prefixLen,
                                          Address scriptAddr, byte[] zkPolicyId) {
         byte[] anchorTokenName = ValuesLib.findTokenName(
@@ -66,6 +67,11 @@ public class VoteListLib {
 
         byte[] expectedName = buildTokenName(prefix, newKey);
         boolean nameCorrect = Builtins.equalsByteString(newTokenName, expectedName);
+
+        TxOut contAnchorOutput = OutputLib.findOutputWithToken(
+                outputs, policyId, policyId, anchorTokenName);
+        TxOut newElementOutput = OutputLib.findOutputWithToken(
+                outputs, policyId, policyId, newTokenName);
 
         BigInteger contQty = ValuesLib.assetOf(contAnchorOutput.value(), policyId, anchorTokenName);
         boolean anchorPreserved = contQty.compareTo(BigInteger.ONE) == 0;

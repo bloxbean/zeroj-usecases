@@ -25,6 +25,7 @@ import com.bloxbean.cardano.julc.clientlib.eval.JulcTransactionEvaluator;
 import com.bloxbean.cardano.julc.clientlib.eval.SlotConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
@@ -58,6 +59,9 @@ public class OnChainNullifierService implements NullifierTracker {
     private final BackendService backendService;
     private final Account adminAccount;
     private final ProverService proverService;
+
+    @Value("${cardano.yaci.admin-url:}")
+    private String yaciAdminUrl;
 
     private PlutusScript listScript;
     private PlutusScript zkScript;
@@ -533,10 +537,17 @@ public class OnChainNullifierService implements NullifierTracker {
     }
 
     private SlotConfig deriveSlotConfig() {
+        if (yaciAdminUrl == null || yaciAdminUrl.isBlank()) {
+            log.warn("Could not derive SlotConfig: no Yaci admin URL configured");
+            return new SlotConfig(0, System.currentTimeMillis(), 1000);
+        }
         try {
+            String adminBaseUrl = yaciAdminUrl.endsWith("/")
+                    ? yaciAdminUrl.substring(0, yaciAdminUrl.length() - 1)
+                    : yaciAdminUrl;
             var client = java.net.http.HttpClient.newHttpClient();
             var request = java.net.http.HttpRequest.newBuilder()
-                    .uri(java.net.URI.create("http://localhost:10000/local-cluster/api/admin/devnet"))
+                    .uri(java.net.URI.create(adminBaseUrl + "/local-cluster/api/admin/devnet"))
                     .GET().build();
             var response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {

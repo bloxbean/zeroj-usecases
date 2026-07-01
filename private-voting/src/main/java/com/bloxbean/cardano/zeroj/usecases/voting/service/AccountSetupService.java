@@ -30,8 +30,11 @@ public class AccountSetupService {
     @Value("${election.default-name}")
     private String defaultElectionName;
 
-    @Value("${cardano.yaci.admin-url}")
+    @Value("${cardano.yaci.admin-url:}")
     private String yaciAdminUrl;
+
+    @Value("${demo.topup.enabled:true}")
+    private boolean topUpEnabled;
 
     private final ElectionService electionService;
     private final VoteCircuitService circuitService;
@@ -61,7 +64,9 @@ public class AccountSetupService {
             BigInteger publicKey = circuitService.computePublicKey(secretKey);
 
             var account = new Account(Networks.testnet());
-            topUp(account.baseAddress(), 100);
+            if (topUpEnabled) {
+                topUp(account.baseAddress(), 100);
+            }
 
             electionService.registerVoter(label, secretKey);
             voters.add(new VoterInfo(label, secretKey, publicKey, account.baseAddress()));
@@ -83,6 +88,10 @@ public class AccountSetupService {
     }
 
     private void topUp(String address, int adaAmount) {
+        if (yaciAdminUrl == null || yaciAdminUrl.isBlank()) {
+            log.info("Skipping top-up for {}; no Yaci admin URL configured", address.substring(0, 20));
+            return;
+        }
         try {
             var client = HttpClient.newHttpClient();
             var body = String.format("{\"address\":\"%s\",\"adaAmount\":%d}", address, adaAmount);

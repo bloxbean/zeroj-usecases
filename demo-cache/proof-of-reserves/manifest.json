@@ -1,0 +1,14 @@
+{
+  "usecase": "proof-of-reserves",
+  "zerojVersion": "0.1.0-pre4",
+  "generatedDate": "2026-06-30",
+  "devOnly": true,
+  "trustedSetup": "single-party development setup",
+  "artifacts": [
+    {
+      "path": "setup-solvency.bin",
+      "sha256": "111effa552cc35ddad22264c69c9776b03af228719f772429538e22bf6f0b7ce",
+      "size": "26M"
+    }
+  ]
+}

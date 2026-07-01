@@ -68,7 +68,7 @@ Node:   hash = Poseidon(left_hash, right_hash), sum = left_sum + right_sum
 Root:   hash = rootHash, sum = total_liabilities
 ```
 
-### ZK Circuit (SolvencyCircuit)
+### ZK Circuit (SolvencyProof)
 Proves in zero knowledge:
 1. All account balances are non-negative (64-bit range check)
 2. Their Poseidon Merkle tree root matches the published root

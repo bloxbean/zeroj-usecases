@@ -181,7 +181,7 @@ nft-ownership/
 ├── src/main/java/.../nft/
 │   ├── NftOwnershipApplication.java      # Spring Boot entry point
 │   ├── circuit/
-│   │   └── NFTOwnershipCircuit.java      # ZK circuit (CircuitSpec)
+│   │   └── NFTOwnershipProof.java        # Symbolic annotation ZK circuit
 │   ├── config/
 │   │   └── CardanoConfig.java            # Network config (Yaci/Preprod)
 │   ├── controller/

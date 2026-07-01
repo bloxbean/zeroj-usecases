@@ -139,7 +139,7 @@ This demo is **stateless** — no nullifiers, no linked list. The proof can be r
 identity-kyc/
 ├── src/main/java/.../identity/
 │   ├── IdentityKycApplication.java
-│   ├── circuit/CredentialCircuit.java         # ZK circuit
+│   ├── circuit/CredentialProof.java           # Symbolic annotation ZK circuit
 │   ├── config/CardanoConfig.java
 │   ├── controller/CredentialController.java   # REST API
 │   ├── service/

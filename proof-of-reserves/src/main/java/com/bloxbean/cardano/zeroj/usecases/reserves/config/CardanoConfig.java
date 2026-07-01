@@ -30,24 +30,30 @@ public class CardanoConfig {
     @Value("${cardano.preprod.blockfrost-project-id:}")
     private String blockfrostProjectId;
 
+    @Value("${cardano.blockfrost.base-url:}")
+    private String overrideBlockfrostBaseUrl;
+
+    @Value("${cardano.blockfrost.project-id:}")
+    private String overrideBlockfrostProjectId;
+
     @Bean
     public BackendService backendService() {
-        if ("yaci".equals(network)) {
-            log.info("Using Yaci DevKit backend at {}", yaciBaseUrl);
-            return new BFBackendService(yaciBaseUrl, "");
-        } else {
-            return new BFBackendService(blockfrostUrl, blockfrostProjectId);
-        }
+        String baseUrl = firstNonBlank(overrideBlockfrostBaseUrl,
+                "yaci".equals(network) ? yaciBaseUrl : blockfrostUrl);
+        String projectId = firstNonBlank(overrideBlockfrostProjectId,
+                "yaci".equals(network) ? "" : blockfrostProjectId);
+        log.info("Using Blockfrost-compatible backend at {} (network={})", baseUrl, network);
+        return new BFBackendService(baseUrl, projectId);
     }
 
     @Bean
     public Account adminAccount() {
-        if ("yaci".equals(network)) {
-            var account = new Account(Networks.testnet(), yaciMnemonic);
-            log.info("Admin address (Yaci): {}", account.baseAddress());
-            return account;
-        } else {
-            throw new IllegalStateException("Preprod mode requires wallet connect");
-        }
+        var account = new Account(Networks.testnet(), yaciMnemonic);
+        log.info("Demo admin address ({}): {}", network, account.baseAddress());
+        return account;
+    }
+
+    private static String firstNonBlank(String preferred, String fallback) {
+        return preferred != null && !preferred.isBlank() ? preferred : fallback;
     }
 }
