@@ -4,8 +4,7 @@ import com.bloxbean.cardano.zeroj.api.CurveId;
 import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
 import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
 import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
-import com.bloxbean.cardano.zeroj.circuit.lib.Poseidon;
-import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
+import com.bloxbean.cardano.zeroj.usecases.recovery.circuit.RecoveryCommitmentProofCircuit;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
@@ -31,17 +30,9 @@ public class RecoveryCircuitService {
     private List<R1CSConstraint> constraints;
     private Groth16SetupBLS381.SetupResult setupResult;
 
-    /** Build the circuit and run a (dev-only) Groth16 setup. */
+    /** Build the circuit (from the {@code @ZKCircuit} annotation class) and run a (dev-only) Groth16 setup. */
     public void init() {
-        circuit = CircuitBuilder.create("account-recovery-commitment")
-                .publicVar("commitment")
-                .publicVar("addr")
-                .secretVar("secret")
-                .define(api -> {
-                    var h = Poseidon.hash(api, PoseidonParamsBLS12_381T3.INSTANCE,
-                            api.var("secret"), api.var("addr"));
-                    api.assertEqual(h, api.var("commitment"));
-                });
+        circuit = RecoveryCommitmentProofCircuit.build();
 
         r1cs = circuit.compileR1CS(CurveId.BLS12_381);
         constraints = r1cs.constraints();

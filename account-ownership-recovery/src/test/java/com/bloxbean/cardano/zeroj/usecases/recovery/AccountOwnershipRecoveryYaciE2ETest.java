@@ -7,9 +7,7 @@ import com.bloxbean.cardano.client.crypto.Blake2bUtil;
 import com.bloxbean.cardano.client.crypto.bip32.HdKeyGenerator;
 import com.bloxbean.cardano.client.crypto.bip32.HdKeyPair;
 import com.bloxbean.cardano.zeroj.api.CurveId;
-import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
-import com.bloxbean.cardano.zeroj.circuit.Variable;
-import com.bloxbean.cardano.zeroj.circuit.lib.ed25519.Cip1852Derivation;
+import com.bloxbean.cardano.zeroj.usecases.recovery.circuit.OwnershipProofCircuit;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.usecases.recovery.service.OnChainRecoveryService;
 import com.bloxbean.cardano.zeroj.usecases.recovery.service.PoseidonCompute;
@@ -67,24 +65,21 @@ class AccountOwnershipRecoveryYaciE2ETest {
         byte[] kR = Arrays.copyOfRange(root.getPrivateKey().getKeyData(), 32, 64);
         byte[] cc = root.getPrivateKey().getChainCode();
 
-        int[][] idHolder = new int[1][];
-        var builder = CircuitBuilder.create("ownership-proof");
-        for (int i = 0; i < 32; i++) builder.secretVar("kL" + i).secretVar("kR" + i).secretVar("cc" + i);
-        builder.define(api -> {
-            Variable[] pkh = Cip1852Derivation.paymentKeyHash(api,
-                    vars(api, "kL"), vars(api, "kR"), vars(api, "cc"), 0, 0, 0);
-            int[] ids = new int[28];
-            for (int i = 0; i < 28; i++) ids[i] = pkh[i].id();
-            idHolder[0] = ids;
-        });
+        // Concise annotation-DSL circuit (OwnershipProof @ZKCircuit via ZkCip1852): it derives the
+        // pkh from the root key and asserts it equals the public pkh internally.
+        var builder = OwnershipProofCircuit.build();
         Map<String, List<BigInteger>> in = new HashMap<>();
-        putBytes(in, "kL", kL); putBytes(in, "kR", kR); putBytes(in, "cc", cc);
-        BigInteger[] w = builder.calculateWitness(in, CurveId.BN254);
+        putBytesU(in, "rootKL", kL);
+        putBytesU(in, "rootKR", kR);
+        putBytesU(in, "rootChainCode", cc);
+        putBytesU(in, "pkh", expectedPkh);
+        assertDoesNotThrow(() -> builder.calculateWitness(in, CurveId.BN254),
+                "annotation-DSL ownership proof must reproduce the address pkh from the root key");
+    }
 
-        byte[] provenPkh = new byte[28];
-        for (int i = 0; i < 28; i++) provenPkh[i] = (byte) (w[idHolder[0][i]].intValue() & 0xff);
-        assertArrayEquals(expectedPkh, provenPkh,
-                "in-circuit derivation must reproduce the address payment key hash from the root key");
+    /** ZkBytes input keys are {@code base_i}. */
+    private static void putBytesU(Map<String, List<BigInteger>> in, String base, byte[] bytes) {
+        for (int i = 0; i < bytes.length; i++) in.put(base + "_" + i, List.of(BigInteger.valueOf(bytes[i] & 0xff)));
     }
 
     // ------------------------------------------------------------------
@@ -162,12 +157,4 @@ class AccountOwnershipRecoveryYaciE2ETest {
             throw new IllegalStateException("Yaci top-up failed: HTTP " + response.statusCode() + " " + response.body());
     }
 
-    private static Variable[] vars(com.bloxbean.cardano.zeroj.circuit.CircuitAPI api, String name) {
-        Variable[] v = new Variable[32];
-        for (int i = 0; i < 32; i++) v[i] = api.var(name + i);
-        return v;
-    }
-    private static void putBytes(Map<String, List<BigInteger>> in, String name, byte[] bytes) {
-        for (int i = 0; i < bytes.length; i++) in.put(name + i, List.of(BigInteger.valueOf(bytes[i] & 0xff)));
-    }
 }
