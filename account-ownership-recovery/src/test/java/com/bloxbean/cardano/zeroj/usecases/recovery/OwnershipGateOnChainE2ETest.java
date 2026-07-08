@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * prove the REAL ownership statement (root key derives via the full CIP-1852 path to the address's
  * payment key hash — the 19,075,097-constraint {@code OwnershipProof} circuit) and verify that
  * Groth16 proof <em>on-chain</em> with the {@code OwnershipProofValidator}. No registered
- * Poseidon-commitment secret — a passing proof is proof of seed ownership.
+ * auxiliary secret — a passing proof is proof of seed ownership.
  *
  * <p>Heavy + gated. Needs: {@code ZEROJ_YACI_E2E=true} with a running Yaci DevKit, a large heap
  * (~70 GB warm), and ideally a warm PK cache ({@code -Dzeroj.pkcache}, else the one-time ~47 min

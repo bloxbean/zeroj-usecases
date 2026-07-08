@@ -1,6 +1,12 @@
 # Design & Feasibility: ZK Proof of Cardano Account Ownership via Seed-Derivation Knowledge
 
-**Status:** Feasibility + design (no implementation yet)
+> **Status update (2026-07-08):** implemented. The full-derivation ownership proof (the primary
+> design) is practical — 19,075,097 constraints, ~47 min one-time setup, ~2 min per proof
+> (ADR-0029), **verified on-chain** (Yaci DevKit, fee ≈ 0.95 ADA). The §14 proactive-commitment
+> (Poseidon) stand-in was implemented first, then **removed** once the real derivation gate landed;
+> §14 remains below as design history. See the [README](./README.md) for the working end-to-end.
+
+**Status:** Implemented (see status update above)
 **Motivation:** SecondFi (EMURGO) wallet exploit, June 2026
 **Author:** ZeroJ team
 **Date:** 2026-07-06

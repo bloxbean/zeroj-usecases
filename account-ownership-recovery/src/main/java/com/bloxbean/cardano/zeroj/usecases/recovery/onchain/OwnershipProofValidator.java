@@ -11,16 +11,15 @@ import com.bloxbean.cardano.zeroj.onchain.julc.groth16.lib.Groth16BLS12381Lib;
  * the spender's wallet <em>root key</em> derives, via the full CIP-1852 path
  * {@code m/1852'/1815'/0'/0/0}, to the address's payment key hash.
  *
- * <p>Unlike {@link RecoveryProofValidator} (which gates on knowledge of a registered
- * Poseidon-commitment secret), this validator is parameterized with the verification key of the
- * ~19M-constraint {@code OwnershipProof} derivation circuit — so a passing proof <em>is</em> proof
- * of seed ownership; there is no auxiliary secret to register. On-chain cost is independent of the
- * circuit's size (Groth16 verification is O(#public inputs)).</p>
+ * <p>The validator is parameterized with the verification key of the 19,075,097-constraint
+ * {@code OwnershipProof} derivation circuit — so a passing proof <em>is</em> proof of seed
+ * ownership; there is no auxiliary secret to register. On-chain cost is independent of the
+ * circuit's size (Groth16 verification is O(#public inputs)): ~0.95 ADA measured.</p>
  *
  * <p>Datum = the circuit's public inputs in order: the 28 bytes of the address payment key hash,
- * each as a field element. Redeemer = {@code Groth16Proof(piA, piB, piC)}. (Demo parity with
- * {@code RecoveryProofValidator}: production validators must additionally bind
- * {@code ScriptContext} — see {@code Groth16BLS12381TxOutRefBindingVerifier}.)</p>
+ * each as a field element. Redeemer = {@code Groth16Proof(piA, piB, piC)}. (Demo scope: production
+ * validators must additionally bind {@code ScriptContext} — see
+ * {@code Groth16BLS12381TxOutRefBindingVerifier}.)</p>
  */
 @SpendingValidator
 public class OwnershipProofValidator {
