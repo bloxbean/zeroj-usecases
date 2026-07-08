@@ -61,6 +61,17 @@ On smaller machines `prove`/`setup --tau local` will run out of memory. Verifica
 
 ---
 
+## Two distributions
+
+| distribution | build | best for |
+|---|---|---|
+| **fat-jar zip** (`./gradlew distZip`) | any JDK 25 | everything — especially `prove`/`setup` (fast blst prover, standard heap handling) |
+| **native binary zip** (`./gradlew nativeDistZip`, GraalVM) | GraalVM JDK 25 | `verify` + `info` — single file, no JVM, instant startup (verify ~0.1 s) |
+
+The native binary runs every command, but proving on it uses the pure-Java backend (blst reaches
+`libblst` via FFM, which isn't wired into the image) and is slower than the fat jar — so for heavy
+proving, use the fat jar. Off-chain verification on the native binary is ~0.1 s.
+
 ## Install / requirements
 
 - **Java 25** (GraalVM or any JDK 25). The bundled launcher auto-sizes the heap to ~80 % of RAM;

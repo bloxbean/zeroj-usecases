@@ -3,6 +3,7 @@ package com.bloxbean.cardano.zeroj.usecases.recovery.cli;
 import com.bloxbean.cardano.client.common.model.Networks;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16PkStore;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
+import com.bloxbean.cardano.zeroj.crypto.groth16.ProverBackend;
 import com.bloxbean.cardano.zeroj.cryptoblst.BlstProverBackend;
 import com.bloxbean.cardano.zeroj.usecases.recovery.service.OwnershipCircuitService;
 import picocli.CommandLine.Command;
@@ -29,8 +30,15 @@ import java.util.concurrent.Callable;
         description = "Generate an ownership proof from your mnemonic.")
 public final class ProveCommand implements Callable<Integer> {
 
+    enum Backend { blst, java }
+
     @Option(names = "--keys", defaultValue = "keys", description = "Key-bundle directory. Default: ${DEFAULT-VALUE}.")
     Path keysDir;
+
+    @Option(names = "--backend", defaultValue = "blst",
+            description = "Prover backend: blst (fast native, ~2-3 min) or java (pure-Java multi-core, "
+                    + "~9 min, no native lib). Default: ${DEFAULT-VALUE}.")
+    Backend backend;
 
     @Option(names = "--out", defaultValue = "proofs", description = "Output directory for the proof. Default: ${DEFAULT-VALUE}.")
     Path outDir;
@@ -96,9 +104,10 @@ public final class ProveCommand implements Callable<Integer> {
             BigInteger[] witness = svc.witness(wallet.rootKL(), wallet.rootKR(), wallet.rootChainCode(), wallet.pkh());
             System.out.printf("  witness: %.1fs%n", secs(tw));
 
-            System.out.println("Generating proof (blst, multi-core) ...");
+            ProverBackend prover = selectBackend();
+            System.out.println("Generating proof (" + backend + ", multi-core) ...");
             long tp = System.nanoTime();
-            Groth16ProofBLS381 proof = svc.prove(loaded, witness, BlstProverBackend.create(), bundle.isSnarkjsKey());
+            Groth16ProofBLS381 proof = svc.prove(loaded, witness, prover, bundle.isSnarkjsKey());
             System.out.printf("  proof generated: %.1fs%n", secs(tp));
             if (!(proof.a().isOnCurve() && proof.b().isOnCurve() && proof.c().isOnCurve())) {
                 System.err.println("Internal error: generated proof is not on-curve.");
@@ -125,6 +134,25 @@ public final class ProveCommand implements Callable<Integer> {
         System.out.printf("Total: %.1f min%n", secs(t0) / 60);
         System.out.println("Next: `verify` (off-chain) or `verify --onchain` (against a node).");
         return 0;
+    }
+
+    /** blst by default; pure-Java fallback if the native lib can't load or we're in a GraalVM image. */
+    private ProverBackend selectBackend() {
+        if (backend == Backend.java) return ProverBackend.PURE_JAVA;
+        // blst reaches libblst via FFM downcalls, which aren't registered in this native image.
+        // Route to the pure-Java backend so proving works; use the fat jar for the fast blst path.
+        if (System.getProperty("org.graalvm.nativeimage.imagecode") != null) {
+            System.err.println("Note: blst is unavailable in the native binary — using the pure-Java "
+                    + "backend (slower). For the fast blst prover, use the fat-jar distribution.");
+            return ProverBackend.PURE_JAVA;
+        }
+        try {
+            return BlstProverBackend.create();
+        } catch (Throwable t) {
+            System.err.println("blst native backend unavailable (" + t.getMessage()
+                    + ") — falling back to the pure-Java backend (slower). Use --backend java to silence this.");
+            return ProverBackend.PURE_JAVA;
+        }
     }
 
     /** Hidden interactive prompt; falls back to stdin only when there is no terminal (e.g. testing). */

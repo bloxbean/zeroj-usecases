@@ -42,8 +42,13 @@ Shows setup mode, circuit fingerprint, size, and whether `vk.json` is present.
 
 ```bash
 bin/account-ownership-recovery-cli prove \
-    [--keys keys] [--out proofs] [--account 0] [--index 0] [--mainnet] [--no-self-verify]
+    [--keys keys] [--out proofs] [--account 0] [--index 0] [--mainnet] \
+    [--backend blst|java] [--no-self-verify]
 ```
+
+`--backend blst` (default) uses the fast native prover (~2–3 min); `--backend java` uses the
+pure-Java multi-core prover (~9 min, no native library needed). If the blst native library can't
+load, blst mode automatically falls back to pure-Java with a warning.
 
 1. compiles the circuit and checks its fingerprint against the bundle,
 2. prompts for your mnemonic (**hidden**),
