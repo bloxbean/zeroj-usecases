@@ -20,6 +20,7 @@
 ## Table of Contents
 
 - [1. Executive Summary & Verdict](#1-executive-summary--verdict)
+- [1a. Measured Outcomes vs. Design Estimates (2026-07-08)](#1a-measured-outcomes-vs-design-estimates-2026-07-08)
 - [2. The Incident and Its Root Cause](#2-the-incident-and-its-root-cause)
 - [3. The Core Insight: Owner vs. Attacker Knowledge](#3-the-core-insight-owner-vs-attacker-knowledge)
 - [4. Problem Statement & Threat Model](#4-problem-statement--threat-model)
@@ -65,6 +66,24 @@ the derivation tree** (which the attacker provably lacks) can.
 verifies on-chain unchanged. The heavy primitives (SHA-512/HMAC/Blake2b/Ed25519) are built
 as **native ZeroJ symbolic gadgets** under ADR-0027 — a reusable core-library investment,
 not a throwaway.
+
+## 1a. Measured Outcomes vs. Design Estimates (2026-07-08)
+
+What was actually built, and how the measurements compare to the estimates in the rest of this
+document (which are kept unedited as design history):
+
+| Design-time estimate / plan | Measured / actual outcome |
+|---|---|
+| Anchor level: role-anchor Mode A first (~1.8M), full path later | **Root-key anchor, full `m/1852'/1815'/0'/0/0` path to pkh (Mode B)** built directly — the strongest statement |
+| Circuit size ~1.8M–6.9M (anchor-dependent); full path "~90M naive" | **19,075,097 constraints** measured (ADR-0028 windowing + lazy reduction; hints off) |
+| "Needs `snarkjs` proving (minutes, tens of GB RAM)" | **ZeroJ's own prover** — no snarkjs: setup **~47 min one-time** (proving key persisted, 23 GB, `Groth16PkStore`), then **~2 min per proof** (blst FFM backend, multi-core; ADR-0029), peak ~70 GB heap on a 12-core/128 GB box |
+| Risk: "ZeroJ prover doesn't scale past ~4k-proven circuits" (top risk, High) | **Resolved** — ADR-0029 (flat/mmap/parallel + blst): the 19M circuit proves end-to-end on one JVM |
+| On-chain verification "feasible, ~20–29% CPU" | **Done on Yaci DevKit**: `OwnershipProofValidator` (Julc Plutus V3, 1 KB script) verified the real derivation proof — **fee ≈ 0.95 ADA**, tx `73495f35b390caaa62e407a9b97865ca7d04a40ebf12ac3a2ad2f3d74a259703`; cost independent of circuit size (28 pkh-byte public inputs) |
+| §14 proactive-commitment (Poseidon) as the practical on-chain gate | **Superseded and removed** — the real derivation gate is practical; §14 remains as design history |
+| Curve / authoring path | As designed: **BLS12-381 only**, **ZeroJ symbolic gadgets** (ADR-0027), Groth16 |
+
+Remaining production gates (unchanged from design): MPC trusted-setup ceremony for the 19M circuit,
+`ScriptContext` binding in the validator (anti-replay), and the recovery *policy* layer.
 
 ---
 
