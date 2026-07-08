@@ -1,0 +1,123 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.bloxbean.cardano'
+version = '0.1.0-pre1'
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven { url = uri("https://central.sonatype.com/repository/maven-snapshots"); content { snapshotsOnly() } }
+    maven { url = uri("https://repo.spring.io/milestone") }
+}
+
+def zerojVersion = project.findProperty('zerojVersion') ?: '0.1.0-pre5'
+def julcVersion  = project.findProperty('julcVersion')  ?: '0.1.0-pre14'
+def cclVersion   = project.findProperty('cclVersion')   ?: '0.8.0-pre4'
+
+dependencies {
+    // ZeroJ ZK: circuit DSL + gadgets, prover, on-chain julc verifier, blst prover backend.
+    implementation "com.bloxbean.cardano:zeroj-circuit-dsl:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-circuit-lib:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-circuit-annotation-api:${zerojVersion}"
+    annotationProcessor "com.bloxbean.cardano:zeroj-circuit-annotation-processor:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-crypto:${zerojVersion}"              // Groth16 setup/prover, PkStore, R1csExporter, ZkeyPkStoreImporter
+    implementation "com.bloxbean.cardano:zeroj-crypto-blst:${zerojVersion}"         // BlstProverBackend (fast multi-core prove)
+    implementation "com.bloxbean.cardano:zeroj-verifier-groth16:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
+    annotationProcessor "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-bls12381:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-blst:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-api:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-codec:${zerojVersion}"
+
+    // Julc: on-chain validator stdlib + processor + client-lib evaluator.
+    implementation "com.bloxbean.cardano:julc-stdlib:${julcVersion}"
+    annotationProcessor "com.bloxbean.cardano:julc-annotation-processor:${julcVersion}"
+    implementation "com.bloxbean.cardano:julc-cardano-client-lib:${julcVersion}"
+    runtimeOnly "com.bloxbean.cardano:julc-vm-java:${julcVersion}"
+
+    // Cardano client + Blockfrost backend for on-chain verification.
+    implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
+    implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
+
+    implementation 'info.picocli:picocli:4.7.6'
+    annotationProcessor 'info.picocli:picocli-codegen:4.7.6'
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+def cliJvmArgs = [
+        '--enable-native-access=ALL-UNNAMED',        // blst FFM
+        '-Dzeroj.allowInsecureTrustedSetup=true'      // needed only by `setup --tau local`
+]
+
+// Convenience: `./gradlew run --args="info --keys ..."` for local dev.
+tasks.register('run', JavaExec) {
+    group = 'application'
+    mainClass = 'com.bloxbean.cardano.zeroj.usecases.recovery.cli.AccountOwnershipCli'
+    classpath = sourceSets.main.runtimeClasspath
+    jvmArgs = cliJvmArgs
+    standardInput = System.in
+}
+
+compileJava {
+    options.fork = true
+    options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED']
+    options.compilerArgs += ['-Aproject=com.bloxbean.cardano/account-ownership-recovery-cli']
+}
+
+test {
+    useJUnitPlatform()
+    jvmArgs cliJvmArgs
+    maxHeapSize = project.findProperty('benchHeap') ?: '8g'
+    systemProperty 'zeroj.allowInsecureTrustedSetup', 'true'
+}
+
+// ---- Distribution: self-contained fat jar + run scripts + docs, zipped for GitHub releases ----
+
+jar {
+    manifest {
+        attributes 'Implementation-Version': project.version,
+                   'Implementation-Title': 'account-ownership-recovery-cli'
+    }
+}
+
+tasks.register('fatJar', Jar) {
+    archiveClassifier = 'all'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes 'Main-Class': 'com.bloxbean.cardano.zeroj.usecases.recovery.cli.AccountOwnershipCli',
+                   'Implementation-Version': project.version,
+                   'Multi-Release': 'true',
+                   // lets `java -jar` reach blst via FFM without the CLI flag on Java 22+
+                   'Enable-Native-Access': 'ALL-UNNAMED'
+    }
+    from sourceSets.main.output
+    from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
+    // drop other jars' signatures (invalid over a merged jar) but keep SPI service files
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/versions/*/OSGI-INF/**'
+    zip64 = true
+}
+
+// Zip layout:  account-ownership-recovery-cli/{bin/<scripts>, lib/<fatjar>, README.md, USAGE.md}
+tasks.register('distZip', Zip) {
+    dependsOn tasks.named('fatJar')
+    archiveFileName = "account-ownership-recovery-cli-${project.version}.zip"
+    destinationDirectory = layout.buildDirectory.dir('dist')
+    def root = 'account-ownership-recovery-cli'
+    from(tasks.fatJar.archiveFile) { into "${root}/lib" }
+    from('scripts') {
+        into "${root}/bin"
+        filePermissions { unix('755') }
+    }
+    from('README.md') { into root }
+    from('USAGE.md') { into root }
+}

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Account-Ownership Proof CLI launcher.
+# Heap: `prove` and `setup --tau local` need a large heap (~70-90 GB on the 19M circuit). By default
+# we size -Xmx to ~80% of system RAM; override with AOR_JAVA_OPTS (e.g. AOR_JAVA_OPTS="-Xmx110g").
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+JAR="$(ls "$DIR"/lib/account-ownership-recovery-cli-*-all.jar 2>/dev/null | head -1)"
+if [[ -z "${JAR:-}" ]]; then echo "fat jar not found under $DIR/lib" >&2; exit 1; fi
+
+if [[ -z "${AOR_JAVA_OPTS:-}" ]]; then
+  # auto-size heap to ~80% of RAM
+  if [[ "$(uname)" == "Darwin" ]]; then
+    MEM_BYTES=$(sysctl -n hw.memsize)
+  else
+    MEM_BYTES=$(( $(awk '/MemTotal/{print $2}' /proc/meminfo) * 1024 ))
+  fi
+  XMX_MB=$(( MEM_BYTES / 1024 / 1024 * 80 / 100 ))
+  [[ $XMX_MB -lt 2048 ]] && XMX_MB=2048
+  AOR_JAVA_OPTS="-Xmx${XMX_MB}m"
+fi
+
+exec java $AOR_JAVA_OPTS --enable-native-access=ALL-UNNAMED -jar "$JAR" "$@"
