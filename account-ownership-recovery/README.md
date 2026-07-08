@@ -12,15 +12,15 @@ and ZeroJ **ADR-0027** for the in-circuit crypto gadgets this builds on.
 
 | Layer | What | Circuit | Where verified |
 |-------|------|---------|----------------|
-| **Ownership proof** (off-chain) | The claimant's **root key** derives, via the full `m/1852'/1815'/0'/0/0` path, to the address's payment key hash | `Cip1852Derivation` (~90M constraints: 3 hardened + 2 soft steps, each an in-circuit Ed25519 scalar mult, + blake2b-224) | in-circuit witness, cross-checked vs cardano-client-lib |
-| **Recovery gate** (on-chain) | Knowledge of the recovery secret behind the address's registered commitment | `Poseidon(secret, addrKeyHash) == commitment` (829 constraints, provable) | **on-chain** via the `RecoveryProofValidator` Julc validator (Groth16 BLS12-381) on Yaci DevKit |
+| **Ownership gate** (the practical gate) | The claimant's **root key** derives, via the full `m/1852'/1815'/0'/0/0` path, to the address's payment key hash | `OwnershipProof` — **19,075,097 constraints** (3 hardened + 2 soft in-circuit Ed25519 derivation steps + blake2b-224; ~90M naive, reduced by ADR-0028 windowing/lazy-reduction) | **on-chain** via the `OwnershipProofValidator` Julc validator (Groth16 BLS12-381) on Yaci DevKit — fee ≈ 0.95 ADA |
+| **Recovery gate** (lightweight alternative) | Knowledge of the recovery secret behind the address's registered commitment | `Poseidon(secret, addrKeyHash) == commitment` (829 constraints) | **on-chain** via the `RecoveryProofValidator` Julc validator on Yaci DevKit |
 
-The ownership proof establishes *who the real owner is* (only they know the seed); the on-chain
-recovery gate is the provable, trustless authorization a recovery contract can act on. Because
-proving the full ~90M-constraint derivation circuit at scale is not yet practical (see ADR-0027
-§6.1 — gated on the blst prover + field/windowing optimizations), the **on-chain** gate uses the
-lightweight proactive-commitment circuit (DESIGN §14), while the derivation proof is established at
-the witness level today.
+The ownership gate verifies the *real* ownership statement on-chain: a passing proof **is** proof of
+seed ownership — no registered secret. Proving the 19M-constraint derivation is practical with
+ZeroJ's ADR-0029 prover: **one-time trusted setup ~47 min** (proving key persisted, ~23 GB), then
+**~2 min per proof** (blst backend, multi-core, warm key; ~70 GB peak heap on a 12-core/128 GB box).
+On-chain verification cost is independent of circuit size (O(#public inputs): the 28 pkh bytes).
+The Poseidon-commitment gate remains as the lightweight variant for constrained provers.
 
 ## Run it
 
@@ -34,16 +34,38 @@ Requires a running **Yaci DevKit** (admin `http://localhost:10000`, Blockfrost
 # On-chain recovery gate end-to-end on Yaci DevKit (submits real txs)
 ZEROJ_YACI_E2E=true ./gradlew test --tests '*AccountOwnershipRecoveryYaciE2ETest.recoveryGate_verifiesOnChain'
 
-# Off-chain ownership proof: root key -> address payment key hash (heavy, ~90M constraints, 48G heap)
+# Off-chain ownership witness check (fast sanity: derivation reproduces the pkh)
 ./gradlew test --tests '*AccountOwnershipRecoveryYaciE2ETest.ownershipProof_rootKeyDerivesToAddress' -PzerojHeavy=true
+```
+
+**The real ownership gate** (heavy: 19M-constraint prove + on-chain verify) runs **standalone** —
+gradle's daemon does not survive long heavy-heap runs:
+
+```bash
+./gradlew compileTestJava printTestCp
+# one-time setup (~47 min, ~90G heap) happens automatically if the key cache is empty;
+# warm runs: load key ~2 min + prove ~2 min + on-chain verify seconds.
+java -Xmx90g --enable-native-access=ALL-UNNAMED \
+  -Dzeroj.allowInsecureTrustedSetup=true -Dzeroj.pkcache=/tmp/zeroj-pk-derivation \
+  -cp "$(cat build/test-classpath.txt)" \
+  com.bloxbean.cardano.zeroj.usecases.recovery.OwnershipGateOnChainE2ETest
+
+# per-stage timing/memory benchmark of the same pipeline (no on-chain step)
+java -Xmx90g --enable-native-access=ALL-UNNAMED \
+  -Dzeroj.derivbench=true -Dzeroj.allowInsecureTrustedSetup=true -Dzeroj.pkcache=/tmp/zeroj-pk-derivation \
+  -cp "$(cat build/test-classpath.txt)" \
+  com.bloxbean.cardano.zeroj.usecases.recovery.DerivationProofBenchmark
 ```
 
 ## Key components
 
-- `service/RecoveryCircuitService` — builds/sets-up/proves the recovery-commitment Groth16-BLS12381 circuit.
-- `onchain/RecoveryProofValidator` — Plutus V3 Julc validator; verifies the Groth16 proof on-chain.
-- `service/OnChainRecoveryService` — deploys the validator, locks the attestation, and verifies by unlocking with the proof.
-- `AccountOwnershipRecoveryYaciE2ETest` — the three-part E2E above.
+- `circuit/OwnershipProof` — the 19M-constraint CIP-1852 derivation circuit (annotation DSL, `ZkCip1852`).
+- `service/OwnershipCircuitService` — compiles the circuit, persists/loads the proving key (`Groth16PkStore`), proves (pluggable backend; blst for speed).
+- `onchain/OwnershipProofValidator` — Plutus V3 Julc validator; verifies the derivation proof on-chain (datum = the 28 pkh bytes).
+- `service/OnChainOwnershipService` — deploys the ownership gate, locks it, and verifies by unlocking with the proof.
+- `OwnershipGateOnChainE2ETest` — the practical-gate E2E (standalone `main`).
+- `service/RecoveryCircuitService` + `onchain/RecoveryProofValidator` + `service/OnChainRecoveryService` — the lightweight Poseidon-commitment gate.
+- `AccountOwnershipRecoveryYaciE2ETest` — commitment-gate E2E; `DerivationProofBenchmark` — ADR-0029 per-stage benchmark.
 
 The in-circuit CIP-1852 / BIP32-Ed25519 derivation gadgets (SHA-512, HMAC-SHA512, Blake2b, the
 `GF(2^255-19)` field, Ed25519, and the composed derivation) live in ZeroJ's `zeroj-circuit-lib`

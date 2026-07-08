@@ -45,6 +45,7 @@ dependencies {
     annotationProcessor "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
     implementation "com.bloxbean.cardano:zeroj-bls12381:${zerojVersion}"
     implementation "com.bloxbean.cardano:zeroj-blst:${zerojVersion}"
+    testImplementation "com.bloxbean.cardano:zeroj-crypto-blst:${zerojVersion}" // ADR-0029 blst prover backend (E2E benchmark)
     implementation "com.bloxbean.cardano:zeroj-api:${zerojVersion}"
     implementation "com.bloxbean.cardano:zeroj-codec:${zerojVersion}"
 
@@ -68,10 +69,19 @@ bootRun {
 test {
     useJUnitPlatform()
     jvmArgs '--enable-native-access=ALL-UNNAMED'
-    maxHeapSize = '48g' // the off-chain full-derivation ownership proof is a ~90M-constraint circuit
+    maxHeapSize = project.findProperty('benchHeap') ?: '48g' // full-derivation proof needs ~70-113G at 12-19M constraints
     systemProperty "zeroj.allowInsecureTrustedSetup", "true"
     systemProperty "zeroj.yaci.e2e", System.getenv("ZEROJ_YACI_E2E") ?: ""
     systemProperty "zeroj.heavy", (System.getProperty("zeroj.heavy") ?: project.findProperty("zerojHeavy") ?: "")
+    systemProperty "zeroj.derivbench", (System.getProperty("zeroj.derivbench") ?: "")
+    systemProperty "zeroj.pkcache", (System.getProperty("zeroj.pkcache") ?: "")
+    if (System.getProperty("zeroj.derivbench") == "true") { testLogging { showStandardStreams = true } }
     environment "ZEROJ_YACI_E2E", System.getenv("ZEROJ_YACI_E2E") ?: ""
 }
 
+
+// ADR-0029 M5: print the test runtime classpath so the heavy derivation benchmark can run as a
+// standalone `java` process (no gradle daemon).
+tasks.register('printTestCp') {
+    doLast { new File("${buildDir}/test-classpath.txt").text = sourceSets.test.runtimeClasspath.asPath }
+}

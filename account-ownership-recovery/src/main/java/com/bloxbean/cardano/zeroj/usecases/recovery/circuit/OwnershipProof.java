@@ -14,8 +14,10 @@ import com.bloxbean.cardano.zeroj.circuit.lib.zk.ZkCip1852;
  * via the full CIP-1852 path {@code m/1852'/1815'/0'/0/0}, to the public address payment key hash —
  * i.e. they know the seed (which the SecondFi-style attacker, holding only the leaf key, does not).
  *
- * <p>Concise thanks to {@link ZkCip1852}; the underlying circuit is ~90M constraints (see ADR-0028
- * on the proving envelope). Establishes the ownership statement at the witness level.</p>
+ * <p>Concise thanks to {@link ZkCip1852}; the underlying circuit is 19,075,097 constraints with the
+ * ADR-0028 optimizations (windowing + lazy reduction; ~90M naive). Provable end-to-end: ~47 min
+ * one-time setup, then ~2 min per proof (blst, multi-core, warm key — ADR-0029), and verified
+ * on-chain by {@code OwnershipProofValidator} for ~0.95 ADA.</p>
  */
 @ZKCircuit(name = "account-ownership-proof", version = 1)
 public class OwnershipProof {
