@@ -14,9 +14,9 @@ cost-independent of circuit size). This is a general primitive: address-ownershi
 account recovery authorization, credential binding, and similar flows where a signature from the
 leaf key is unavailable or insufficient.
 
-Today the full flow works end to end, but only for developers: the circuit, services, and on-chain
-validator live in `account-ownership-recovery` and are driven by `main`-class harnesses and gradle
-test tasks inside this repository. There is no artifact an end user can download and run.
+The full flow — the circuit, services, and on-chain validator — works end to end, but the missing
+piece was an artifact an end user can download and run (rather than developer `main`-class harnesses
+and gradle test tasks).
 
 **Goal:** a self-contained CLI app — `account-ownership-recovery-cli` — distributed as a zip on the
 zeroj-usecases GitHub release page. A user extracts it and drives everything from the command line:
@@ -186,4 +186,4 @@ simplified out in favor of the external-ceremony `export-r1cs`/`import` seam abo
 
 - ZeroJ ADR-0029 (prover performance: mmap'd key store, multi-core blst prover — the numbers above)
 - ZeroJ ADR-0031 (MPC trusted-setup ceremony: r1cs export, streaming zkey import, native contributor, phase-1 source analysis)
-- `account-ownership-recovery/README.md` + `DESIGN.md` (the underlying usecase and its security analysis)
+- ZeroJ `docs/account-ownership-why-zk.md` (why root-key knowledge, proven in zero knowledge, is the only sound ownership attestation)

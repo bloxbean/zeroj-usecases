@@ -12,7 +12,7 @@ import com.bloxbean.cardano.zeroj.circuit.lib.zk.ZkCip1852;
 /**
  * Off-chain ownership proof (annotation DSL): proves the claimant's wallet <b>root key</b> derives,
  * via the full CIP-1852 path {@code m/1852'/1815'/0'/0/0}, to the public address payment key hash —
- * i.e. they know the seed (which the SecondFi-style attacker, holding only the leaf key, does not).
+ * i.e. they know the seed (which an attacker holding only a leaf address key does not).
  *
  * <p>Concise thanks to {@link ZkCip1852}; the underlying circuit is 19,075,097 constraints with the
  * ADR-0028 optimizations (windowing + lazy reduction; ~90M naive). Provable end-to-end: ~47 min
