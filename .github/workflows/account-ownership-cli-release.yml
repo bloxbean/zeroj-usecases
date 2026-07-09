@@ -1,0 +1,50 @@
+name: account-ownership-recovery-cli release
+
+# Builds the Account-Ownership Proof CLI fat-jar + native zips and attaches them to a GitHub release.
+#
+#   preview : Actions ▸ Run workflow  → builds + uploads the zips as a workflow artifact (no release)
+#   release : push a tag  account-ownership-recovery-cli-v*  → uploads the zips to that release
+#
+# ZeroJ / Julc / cardano-client-lib all resolve from Maven Central (the versions pinned in
+# account-ownership-recovery-cli/gradle.properties must be published there).
+
+on:
+  push:
+    tags: ['account-ownership-recovery-cli-v*']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25 (GraalVM, for the native image)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'graalvm'
+          java-version: '25'
+
+      - name: Build fat-jar distZip (dependencies from Maven Central)
+        run: cd account-ownership-recovery-cli && ./gradlew distZip --no-daemon
+
+      - name: Build native binary zip (this runner's platform)
+        run: cd account-ownership-recovery-cli && ./gradlew nativeDistZip --no-daemon
+        # For all-platform native binaries, run this job on a linux/macos/windows × x64/arm64 matrix
+        # (mirror zeroj's release.yml ceremony-cli matrix); this single job builds linux-x86_64.
+
+      - name: Upload workflow artifact (preview + release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: account-ownership-recovery-cli-zip
+          path: account-ownership-recovery-cli/build/dist/*.zip
+
+      - name: Attach to GitHub release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: account-ownership-recovery-cli/build/dist/*.zip
+          fail_on_unmatched_files: true

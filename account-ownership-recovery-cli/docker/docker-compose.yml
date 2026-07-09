@@ -1,0 +1,41 @@
+# Run any command in a container, reusing a key bundle from the host.
+#
+#   # build the fat jar once, then the image:
+#   (cd .. && ./gradlew fatJar)
+#   KEYS_DIR=/abs/path/to/keys docker compose -f docker/docker-compose.yml build
+#
+#   # light commands work out of the box (verify only needs the tiny vk.json):
+#   KEYS_DIR=/abs/path/to/keys docker compose -f docker/docker-compose.yml run --rm aor info
+#   KEYS_DIR=/abs/path/to/keys docker compose -f docker/docker-compose.yml run --rm aor verify
+#   KEYS_DIR=/abs/path/to/keys docker compose -f docker/docker-compose.yml run --rm aor prove
+#
+# HEAVY COMMANDS (prove / setup) need ~80 GB and memory-map the 23 GB store:
+#   - only practical on a big LINUX host — set mem_limit below and JAVA_OPTS="-Xmx80g";
+#   - on Docker Desktop (mac/win) the VM RAM cap + slow mmap over bind-mounts make them impractical
+#     (use the fat-jar or native distribution directly for proving).
+services:
+  aor:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: account-ownership-recovery-cli:local
+    working_dir: /work
+    volumes:
+      # point KEYS_DIR/PROOFS_DIR at your host folders (absolute paths recommended).
+      # defaults are relative to this compose file (i.e. the module root's keys/ proofs/).
+      - ${KEYS_DIR:-../keys}:/work/keys
+      - ${PROOFS_DIR:-../proofs}:/work/proofs
+    environment:
+      JAVA_OPTS: "${JAVA_OPTS:-}"                        # e.g. -Xmx80g for prove/setup
+      # on-chain verify config (passed through from your shell):
+      BLOCKFROST_PROJECT_ID: "${BLOCKFROST_PROJECT_ID:-}"   # for --network preview/preprod/mainnet
+      AOR_ADMIN_MNEMONIC: "${AOR_ADMIN_MNEMONIC:-}"         # admin/funding account (skips the prompt)
+    extra_hosts:
+      # so a LOCAL Yaci DevKit on the host is reachable as host.docker.internal from the container
+      # (inside the container `localhost` is the container, not the host):
+      #   verify --onchain --bf-url http://host.docker.internal:8080/api/v1/
+      - "host.docker.internal:host-gateway"
+    stdin_open: true                   # hidden mnemonic prompt on prove / verify
+    tty: true
+    # For prove/setup on a big Linux host, uncomment and size to the machine:
+    # mem_limit: 90g
