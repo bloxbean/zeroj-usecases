@@ -98,6 +98,29 @@ public final class Bundle {
         try { c.close(); } catch (Throwable ignored) {}
     }
 
+    /** Write bundle metadata + integrity manifest and print a ready-summary. Shared by setup + import. */
+    public void finalizeAndReport(String mode, int numConstraints, int numWires, int numPublic) throws IOException {
+        System.out.println("Writing bundle metadata + integrity manifest ...");
+        writeMetadata(mode, numConstraints, numWires, numPublic, zerojVersion(), java.time.Instant.now().toString());
+        writeIntegrityManifest();
+        System.out.printf("%nKey bundle ready at %s (%.1f GB)%n", dir.toAbsolutePath(), dirSize(dir) / 1e9);
+        System.out.println("  mode: " + mode + "   fingerprint: " + fingerprint(numConstraints, numWires, numPublic));
+        System.out.println("Next: `info` to inspect, `prove` to generate a proof, or publish this directory.");
+    }
+
+    public static String zerojVersion() {
+        String v = Groth16PkStore.class.getPackage().getImplementationVersion();
+        return v != null ? v : "unknown";
+    }
+
+    static long dirSize(Path d) throws IOException {
+        try (var s = Files.walk(d)) {
+            return s.filter(Files::isRegularFile).mapToLong(p -> {
+                try { return Files.size(p); } catch (IOException e) { return 0; }
+            }).sum();
+        }
+    }
+
     // ---- integrity ----
 
     /** Compute + write {@code SHA256SUMS} over every regular file in {@code dir} (except SHA256SUMS itself). */

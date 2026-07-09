@@ -11,16 +11,19 @@ import picocli.CommandLine.Command;
  * key hash), and verify that proof off-chain or on-chain. The seed never leaves the process.</p>
  *
  * <pre>
- *   setup    one-time: produce the proving/verification key bundle (coordinator)
- *   prove    generate a proof from your mnemonic
- *   verify   check a proof off-chain (default) or on-chain
- *   info     inspect a key bundle
+ *   export-r1cs  export the circuit r1cs for an EXTERNAL snarkjs ceremony
+ *   setup        generate a LOCAL (dev-only) key bundle for testing
+ *   import       import a finalized ceremony .zkey into a key bundle
+ *   prove        generate a proof from your mnemonic
+ *   verify       check a proof off-chain (default) or on-chain
+ *   info         inspect a key bundle
  * </pre>
  */
 @Command(name = "account-ownership-recovery-cli", mixinStandardHelpOptions = true,
         versionProvider = AccountOwnershipCli.Version.class,
         description = "Zero-knowledge proof of Cardano account ownership by root-key knowledge.",
-        subcommands = {SetupCommand.class, ProveCommand.class, VerifyCommand.class, InfoCommand.class})
+        subcommands = {ExportR1csCommand.class, SetupCommand.class, ImportCommand.class,
+                ProveCommand.class, VerifyCommand.class, InfoCommand.class})
 public final class AccountOwnershipCli {
 
     public static void main(String[] args) {

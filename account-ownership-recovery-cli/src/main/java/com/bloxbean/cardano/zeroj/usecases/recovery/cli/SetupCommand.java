@@ -1,7 +1,6 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.cli;
 
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16PkStore;
-import com.bloxbean.cardano.zeroj.crypto.groth16.ZkeyPkStoreImporter;
 import com.bloxbean.cardano.zeroj.usecases.recovery.service.OwnershipCircuitService;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -11,54 +10,24 @@ import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
 /**
- * One-time trusted setup: compile the circuit, run the trusted setup, and export the proving-key
- * bundle (proving key + verification key + metadata + integrity manifest) into a keys directory.
- * Normally run once by a coordinator; the bundle is then published for users to prove against.
+ * Produce a <b>local, single-party</b> key bundle for development/testing (runs entirely offline —
+ * no snarkjs, no ceremony). This machine generates the setup randomness and could forge proofs, so
+ * the bundle is dev-only. For a trustworthy bundle, run a phase-2 ceremony externally (see
+ * {@code export-r1cs}) and bring the result in with {@code import}.
+ *
+ * <p>The output {@code .bin} bundle can be kept and reused: run this once, then anyone can
+ * {@code prove}/{@code verify} against it for a quick demo (~5 min) without repeating setup.</p>
  */
 @Command(name = "setup", mixinStandardHelpOptions = true,
-        description = "One-time: produce the proving/verification key bundle (coordinator).")
+        description = "Generate a LOCAL (single-party, dev-only) key bundle for testing.")
 public final class SetupCommand implements Callable<Integer> {
-
-    enum TauMode { local, ptau }
-
-    @Option(names = "--tau", defaultValue = "local",
-            description = "Setup mode: local (single-party, dev/testing) or ptau (real phase-2 from a "
-                    + "prepared BLS12-381 .ptau, needs snarkjs). Default: ${DEFAULT-VALUE}.")
-    TauMode tau;
-
-    @Option(names = "--ptau", description = "Prepared BLS12-381 .ptau file (2^25+) for --tau ptau.")
-    Path ptau;
-
-    @Option(names = "--ptau-url",
-            description = "Download the prepared .ptau from this URL (resumable) for --tau ptau, "
-                    + "instead of --ptau. Must be BLS12-381 (e.g. a Filecoin/Zcash phase-1).")
-    String ptauUrl;
-
-    @Option(names = "--verify-ptau",
-            description = "Run `snarkjs powersoftau verify` on the .ptau before use (slow; recommended for downloads).")
-    boolean verifyPtau;
-
-    @Option(names = "--zkey", description = "Import an already-finalized .zkey (a real ceremony's output) instead of running snarkjs setup.")
-    Path zkey;
-
-    @Option(names = "--contributions", defaultValue = "1",
-            description = "Coordinator contributions before the finalization beacon (--tau ptau). Default: ${DEFAULT-VALUE}.")
-    int contributions;
-
-    @Option(names = "--work-dir", description = "Scratch dir for r1cs/zkey/ptau (default: <keys>/../aor-ceremony-work).")
-    Path workDir;
-
-    @Option(names = "--timeout-hours", defaultValue = "48",
-            description = "Per-step snarkjs timeout in hours. Default: ${DEFAULT-VALUE}.")
-    int timeoutHours;
 
     @Option(names = "--keys", defaultValue = "keys",
             description = "Output key-bundle directory. Default: ${DEFAULT-VALUE}.")
     Path keysDir;
 
     @Option(names = "--i-understand-insecure",
-            description = "Acknowledge that --tau local produces a DEV-ONLY key (this machine could "
-                    + "forge proofs). Required for --tau local.")
+            description = "Acknowledge that this produces a DEV-ONLY key (this machine could forge proofs).")
     boolean ackInsecure;
 
     @Option(names = "--force", description = "Overwrite an existing key bundle in the keys directory.")
@@ -72,136 +41,31 @@ public final class SetupCommand implements Callable<Integer> {
                     + ". Use --force to overwrite.");
             return 2;
         }
+        if (!ackInsecure) {
+            System.err.println("""
+                    `setup` runs a SINGLE-PARTY trusted setup: this machine learns the setup randomness
+                    and could forge proofs — fine for testing, never for production. For a trustworthy
+                    bundle, run a ceremony externally (see `export-r1cs`) and `import` the result.
+                    Re-run with --i-understand-insecure to proceed.""");
+            return 2;
+        }
         Files.createDirectories(keysDir);
 
         var svc = new OwnershipCircuitService();
         System.out.println("Compiling circuit (BLS12-381) ...");
-        long t0 = System.nanoTime();
         svc.compile();
         int nc = svc.numConstraints(), nw = svc.numWires(), np = svc.numPublicInputs();
-        System.out.printf("  %,d constraints | %,d wires | %d public | %.1fs%n",
-                nc, nw, np, secs(t0));
+        System.out.printf("  %,d constraints | %,d wires | %d public%n", nc, nw, np);
 
-        switch (tau) {
-            case local -> {
-                if (!ackInsecure) {
-                    System.err.println("""
-                            --tau local runs a SINGLE-PARTY trusted setup: this machine learns the setup
-                            randomness and could forge proofs. Fine for testing; for anything trusted use
-                            --tau ptau (a real phase-2 ceremony). Re-run with --i-understand-insecure to proceed.""");
-                    return 2;
-                }
-                System.out.println("Running single-party trusted setup (dev/testing) — this takes a while ...");
-                long t1 = System.nanoTime();
-                var setup = svc.localSetup();
-                System.out.printf("  setup complete: %.1f min%n", secs(t1) / 60);
-                System.out.println("Saving proving-key store + verification key ...");
-                Groth16PkStore.save(setup, keysDir);
-                VkIO.write(keysDir, setup);
-            }
-            case ptau -> {
-                int rc = ptauSetup(svc, resolveWorkDir());
-                if (rc != 0) return rc;
-            }
-        }
+        System.out.println("Running single-party trusted setup (dev/testing) — this takes a while (~47 min) ...");
+        long t = System.nanoTime();
+        var setup = svc.localSetup();
+        System.out.printf("  setup complete: %.1f min%n", (System.nanoTime() - t) / 6e10);
+        System.out.println("Saving proving-key store + verification key ...");
+        Groth16PkStore.save(setup, keysDir);
+        VkIO.write(keysDir, setup);
 
-        System.out.println("Writing bundle metadata + integrity manifest ...");
-        bundle.writeMetadata(tau.name(), nc, nw, np, zerojVersion(), java.time.Instant.now().toString());
-        bundle.writeIntegrityManifest();
-
-        long bytes = dirSize(keysDir);
-        System.out.printf("%nKey bundle ready at %s (%.1f GB)%n", keysDir.toAbsolutePath(), bytes / 1e9);
-        System.out.println("  fingerprint: " + Bundle.fingerprint(nc, nw, np));
-        System.out.println("Next: `prove` to generate a proof, or publish this directory for users.");
+        bundle.finalizeAndReport("local", nc, nw, np);
         return 0;
-    }
-
-    /**
-     * Real phase-2 setup from a prepared BLS12-381 {@code .ptau} (provided via {@code --ptau} or
-     * downloaded via {@code --ptau-url}): export R1CS → snarkjs {@code groth16 setup} (+ coordinator
-     * contributions + beacon), or import a supplied finalized {@code .zkey} → import into the
-     * proving-key store → export {@code vk.json}.
-     */
-    private int ptauSetup(OwnershipCircuitService svc, Path work) throws Exception {
-        // resolve the ptau: a local --ptau file, or download it from --ptau-url
-        Path ptauFile = ptau;
-        if (ptauFile == null && ptauUrl != null)
-            ptauFile = PtauFile.download(ptauUrl, work.resolve("downloaded.ptau"), force);
-
-        if (ptauFile == null && zkey == null) {
-            System.err.println("--tau ptau needs --ptau <file>, --ptau-url <url>, or --zkey <finalized.zkey>.");
-            return 2;
-        }
-
-        // fail fast on the wrong curve/size before any expensive work
-        if (ptauFile != null) {
-            int minPower = domainPower(svc.numConstraints(), svc.numPublicInputs());
-            try {
-                PtauFile.requireBls381(ptauFile, minPower);
-            } catch (IllegalArgumentException e) {
-                System.err.println(e.getMessage());
-                return 2;
-            }
-        }
-
-        var snark = new SnarkjsSetup(work, timeoutHours * 3600L);
-        if (zkey == null && !snark.available()) {
-            System.err.println("snarkjs not found. Install it (npm i -g snarkjs) or pass --zkey <finalized.zkey>.");
-            return 2;
-        }
-        if (verifyPtau && ptauFile != null && snark.available()) {
-            System.out.println("Verifying the .ptau (snarkjs powersoftau verify) ...");
-            snark.run(true, null, "powersoftau", "verify", ptauFile.toString());
-        }
-        System.out.println("Phase-2 setup via snarkjs (work dir: " + work + ") ...");
-        Path r1cs = snark.exportR1cs(svc.constraints(), svc.numWires(), svc.numPublicInputs(), force);
-
-        Path finalZkey;
-        if (zkey != null) {
-            System.out.println("Using supplied finalized zkey: " + zkey);
-            if (ptauFile != null && snark.available()) snark.verify(r1cs, ptauFile, zkey);
-            finalZkey = zkey;
-        } else {
-            finalZkey = snark.runCeremony(r1cs, ptauFile, contributions, force);
-        }
-
-        var imported = snark.importToStore(finalZkey, keysDir);
-        System.out.printf("  imported: %,d wires | %d public | domain %d%n",
-                imported.numWires(), imported.numPublic(), imported.domainSize());
-        System.out.println("Exporting verification key (vk.json) ...");
-        try (var loaded = Groth16PkStore.load(keysDir)) {
-            VkIO.write(keysDir, Bundle.vkSetup(loaded));
-        }
-        return 0;
-    }
-
-    /** Smallest power of two whose domain (2^p) covers the circuit — the minimum ptau power. */
-    private static int domainPower(int numConstraints, int numPublic) {
-        long need = (long) numConstraints + numPublic + 1;
-        int p = 1;
-        while ((1L << p) < need) p++;
-        return p;
-    }
-
-    private Path resolveWorkDir() throws java.io.IOException {
-        Path w = workDir != null ? workDir
-                : keysDir.toAbsolutePath().getParent().resolve("aor-ceremony-work");
-        Files.createDirectories(w);
-        return w;
-    }
-
-    private static double secs(long startNanos) { return (System.nanoTime() - startNanos) / 1e9; }
-
-    static String zerojVersion() {
-        String v = Groth16PkStore.class.getPackage().getImplementationVersion();
-        return v != null ? v : "unknown";
-    }
-
-    private static long dirSize(Path dir) throws java.io.IOException {
-        try (var s = Files.walk(dir)) {
-            return s.filter(Files::isRegularFile).mapToLong(p -> {
-                try { return Files.size(p); } catch (java.io.IOException e) { return 0; }
-            }).sum();
-        }
     }
 }

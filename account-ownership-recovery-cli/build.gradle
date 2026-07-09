@@ -56,7 +56,7 @@ dependencies {
 
 def cliJvmArgs = [
         '--enable-native-access=ALL-UNNAMED',        // blst FFM
-        '-Dzeroj.allowInsecureTrustedSetup=true'      // needed only by `setup --tau local`
+        '-Dzeroj.allowInsecureTrustedSetup=true'      // gated at the CLI by --i-understand-insecure (setup)
 ]
 
 // Convenience: `./gradlew run --args="info --keys ..."` for local dev.
@@ -139,6 +139,7 @@ tasks.register('nativeImage', Exec) {
         ['-jar', jar.absolutePath,
          '--no-fallback',
          '--enable-native-access=ALL-UNNAMED',
+         '-Dzeroj.allowInsecureTrustedSetup=true',    // gated at the CLI by --i-understand-insecure (setup)
          // cardano-client / bouncycastle need these to build cleanly
          '--initialize-at-run-time=org.bouncycastle',
          // compressed refs cap the heap at 32 GB; proving the 19M circuit needs ~70 GB

@@ -59,7 +59,7 @@ A new independent gradle project at `zeroj-usecases/account-ownership-recovery-c
   builds identically if copied out of the repository.
 - Plain `java` application with **picocli** (no Spring Boot). JVM flags baked into the start
   script: `--enable-native-access=ALL-UNNAMED` (blst FFM), large default heap, and the
-  insecure-setup system property applied **only** for `setup --tau local`.
+  insecure-setup system property applied **only** for the local `setup`.
 - **Self-contained sources**: the six classes of the library usecase (circuit `OwnershipProof`,
   on-chain `OwnershipProofValidator`, services `OwnershipCircuitService`, `OnChainOwnershipService`,
   `ProofCompressor`, `LocalJulcEvaluator`) are **copied** into the app's package — no gradle
@@ -68,25 +68,33 @@ A new independent gradle project at `zeroj-usecases/account-ownership-recovery-c
 
 ### 2. Command surface
 
+The CLI is **snarkjs-free**: the multi-party phase-2 ceremony runs entirely *outside* the tool.
+`export-r1cs` feeds it; `import` brings the finalized key back. Every command is pure Java.
+
 ```
 account-ownership-recovery-cli
-├── setup    --tau local|ptau [--ptau <file> | --ptau-url <url>] [--keys <dir>]  (coordinator, one-time)
-├── prove    [--keys <dir>] [--out <dir>] [--account N] [--index N]       (user, ~3–5 min)
-├── verify   [--offchain] [--proof <file>]                                 (user, seconds)
-│            --onchain [--bf-url <url>] [--bf-key <key>]
-└── info     [--keys <dir>]                                                (bundle status / fingerprint)
+├── export-r1cs  --out <file>                                    (coordinator: r1cs for external ceremony)
+├── import       --zkey <finalized.zkey> [--keys <dir>]          (coordinator: ceremony key → bundle)
+├── setup        --i-understand-insecure [--keys <dir>]          (LOCAL dev/testing bundle only)
+├── prove        [--keys <dir>] [--out <dir>] [--account N] [--index N] [--backend blst|java]  (user, ~3–5 min)
+├── verify       [--offchain] [--proof <dir>] | --onchain [--bf-url <url>] [--bf-key <key>]     (user)
+└── info         [--keys <dir>]                                  (bundle status / fingerprint)
 ```
 
-**`setup`** — produces and exports everything proving/verification needs into `keys/`:
-the proving-key store (~23 GB, mmap-loadable), the verification key, the circuit fingerprint
-(constraint count + hash of the exported R1CS), and a `manifest.sha256` for integrity checking.
+Both `setup` (local) and `import` (ceremony) produce the same `keys/` bundle: the proving-key store
+(~23 GB, mmap-loadable), `vk.json`, the circuit fingerprint, and `SHA256SUMS` for integrity.
 
-| mode | what happens | trust level | cost |
+| bundle source | what happens | trust level | cost |
 |---|---|---|---|
-| `local` (default) | single-party setup from a generated tau scalar; no downloads | **dev/testing only** — the machine that ran it could forge proofs; the CLI prints an explicit warning and requires a `--i-understand-insecure` acknowledgement | ~47 min on a ~90 GB-heap machine |
-| `ptau` | real phase 2 from a **prepared BLS12-381** `.ptau` (≥ 2²⁵), supplied via `--ptau <file>` or fetched with `--ptau-url <url>` (resumable). A fast header pre-check rejects the wrong curve (e.g. a BN254 PSE ptau) or too-small a power before any expensive work; optional `--verify-ptau` runs `snarkjs powersoftau verify`. CLI then exports the circuit R1CS, orchestrates `snarkjs groth16 setup` + coordinator contributions + a finalization beacon + `snarkjs zkey verify`, and finalizes via the streaming zkey importer. `--zkey <finalized.zkey>` imports a real multi-party ceremony's output instead (pure-Java import, no snarkjs). | as strong as the ptau + phase-2 ceremony used | minutes past the ptau; requires `snarkjs` on PATH (except the `--zkey` import) |
+| `setup` (local) | single-party setup from a generated tau scalar; no snarkjs, no downloads | **dev/testing only** — the machine that ran it could forge proofs; requires `--i-understand-insecure`. Run once + cache the bundle for demos. | ~47 min on a ~90 GB-heap machine |
+| `export-r1cs` → external ceremony → `import` | `export-r1cs` writes the iden3 `.r1cs`; the operator runs the phase-2 ceremony externally (`snarkjs groth16 setup` + `zkey contribute` per contributor + `zkey beacon` + `zkey verify`) against a **prepared BLS12-381** ptau (≥ 2²⁵); `import` streams the finalized `.zkey` into the store (pure Java, checks it is for this circuit) | as strong as the ptau + phase-2 ceremony used | minutes for the CLI steps; the ceremony's time is external |
 
-> **Design update:** an earlier draft had a dedicated `filecoin` mode that auto-downloaded + converted + `prepare phase2`'d the raw Filecoin phase-1. That conversion step was best-effort and unproven against the real files, and the ptau **must** be BLS12-381 regardless of source. It was therefore generalized to `--ptau-url` (download *any* prepared BLS12-381 ptau) + the header pre-check. Obtaining/converting a raw phase-1 (Filecoin, Zcash, …) into a prepared `.ptau` is now an out-of-band step the operator does once; the CLI consumes the ready `.ptau`.
+> **Design evolution:** earlier drafts had the CLI orchestrate snarkjs internally (`--tau ptau`,
+> `--ptau`/`--ptau-url`, a `filecoin` auto-download/convert mode). That coupled the tool to snarkjs,
+> to ptau formats, and to an unproven Filecoin conversion. It was simplified to push the ceremony
+> fully external: **`export-r1cs` + `import`** are the only seams, and the CLI itself needs no
+> snarkjs. Obtaining/preparing a BLS12-381 phase-1 (Filecoin, Zcash) into a `.ptau` is an out-of-band
+> operator step; the ceremony consumes it, and the CLI only imports the finalized key.
 
 **`prove`** — prompts for the mnemonic with hidden input (**never** accepted as a CLI argument,
 environment variable, or file); derives the root key in-process; computes the witness; loads the
@@ -152,10 +160,10 @@ Two zips, both uploaded to the zeroj-usecases GitHub release:
 - **Proving hardware:** ~64 GB+ RAM required today (measured ~66–70 GB peak). Mitigations tracked
   upstream: hint-based circuit reduction (~19M → ~11–12M) once the gadget audit clears; witness
   streaming; optionally a remote-proving deployment of this same app on a server.
-- **Obtaining a BLS12-381 phase-1** is on the operator: a raw ceremony phase-1 (Filecoin, Zcash) must
-  be converted + `prepare phase2`'d into a `.ptau` out of band (tens of GB, one-time multi-hour job),
-  then passed via `--ptau`/`--ptau-url`. The CLI only consumes a ready prepared ptau (and pre-checks
-  its curve/size).
+- **The phase-2 ceremony is on the operator:** obtaining a BLS12-381 phase-1 (Filecoin, Zcash),
+  preparing it, and running `snarkjs groth16 setup`/`contribute`/`beacon`/`verify` all happen out of
+  band. The CLI only produces the `.r1cs` (`export-r1cs`) and imports the finalized `.zkey`
+  (`import`); it needs no snarkjs.
 - The app pins one derivation path shape (`account'/0/index`, configurable indices); other roles
   or multi-address batching are follow-ups.
 
@@ -163,14 +171,16 @@ Two zips, both uploaded to the zeroj-usecases GitHub release:
 
 | # | milestone | exit criteria |
 |---|---|---|
-| M1 | scaffold (standalone gradle + picocli) + `setup --tau local` + keys export/manifest | fresh checkout builds independently; setup produces a loadable bundle; `info` validates it |
+| M1 | scaffold (standalone gradle + picocli) + `setup` (local) + keys export/manifest | fresh checkout builds independently; setup produces a loadable bundle; `info` validates it |
 | M2 | `prove` | proof generated from a real mnemonic against M1 keys in ≤ 5 min warm; secrets never persisted |
 | M3 | `verify` off-chain + on-chain | off-chain pairing check green; on-chain verify green against Yaci DevKit with default endpoint |
-| M4 | `setup --tau ptau` | snarkjs-orchestrated phase 2 from a small prepared ptau on a rehearsal circuit + the real circuit path wired |
-| M5 | `--ptau-url` + ptau pre-check | resumable download of any prepared BLS12-381 ptau; header pre-check rejects wrong curve (BN254/PSE) or too-small power before expensive work; optional `--verify-ptau` |
-| M6 | `distZip` + README/USAGE + release upload wiring | zip installs + runs on a clean machine; docs cover both roles end to end |
+| M4 | `export-r1cs` + `import` | export the iden3 r1cs; import a finalized ceremony `.zkey` (pure Java) into a bundle that proves + verifies, with a circuit-match check |
+| M5 | snarkjs-free simplification | remove internal snarkjs/ptau orchestration; ceremony is external; CLI surface = export-r1cs / setup / import / prove / verify / info |
+| M6 | `distZip` + `nativeDistZip` + README/USAGE + release upload wiring | zips install + run on a clean machine; docs cover both roles end to end |
 
-Each milestone: implement → test → iterate before moving on.
+Each milestone: implement → test → iterate before moving on. (M4/M5 originally scoped an
+internal snarkjs `--tau ptau`/`filecoin`/`--ptau-url` orchestration; it was delivered and then
+simplified out in favor of the external-ceremony `export-r1cs`/`import` seam above.)
 
 ## References
 

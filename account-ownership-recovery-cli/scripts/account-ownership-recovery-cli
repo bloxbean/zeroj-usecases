@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Account-Ownership Proof CLI launcher.
-# Heap: `prove` and `setup --tau local` need a large heap (~70-90 GB on the 19M circuit). By default
-# we size -Xmx to ~80% of system RAM; override with AOR_JAVA_OPTS (e.g. AOR_JAVA_OPTS="-Xmx110g").
+# Heap: `prove` and `setup` need a large heap (~70-90 GB on the 19M circuit). By default we size -Xmx
+# to ~80% of system RAM; override with AOR_JAVA_OPTS (e.g. AOR_JAVA_OPTS="-Xmx110g").
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -20,4 +20,7 @@ if [[ -z "${AOR_JAVA_OPTS:-}" ]]; then
   AOR_JAVA_OPTS="-Xmx${XMX_MB}m"
 fi
 
-exec java $AOR_JAVA_OPTS --enable-native-access=ALL-UNNAMED -jar "$JAR" "$@"
+# zeroj gates single-party setup behind this property; the CLI's own --i-understand-insecure flag
+# is the user-facing gate (only `setup` uses it; harmless for every other command).
+exec java $AOR_JAVA_OPTS --enable-native-access=ALL-UNNAMED \
+    -Dzeroj.allowInsecureTrustedSetup=true -jar "$JAR" "$@"
