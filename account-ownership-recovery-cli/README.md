@@ -98,12 +98,13 @@ smaller machines `prove`/`setup` run out of memory. Verification is light.
 
 ---
 
-## Two distributions
+## Distributions
 
 | distribution | build | best for |
 |---|---|---|
 | **fat-jar zip** (`./gradlew distZip`) | any JDK 25 | everything — especially `prove`/`setup` (fast blst prover, auto-sized heap) |
 | **native binary zip** (`./gradlew nativeDistZip`, GraalVM) | GraalVM JDK 25 | `verify` + `info` — single file, no JVM, instant startup (verify ~0.1 s) |
+| **Docker** (`docker/` — Dockerfile + compose) | Docker only, **no Java** | non-Java devs trying it out; bind-mount host `keys/` to reuse a bundle. Light commands anywhere; heavy `prove`/`setup` only on a big Linux host (see USAGE) |
 
 The native zip ships a launcher (`account-ownership-recovery-cli`) that **auto-sizes the heap** for
 the heavy commands (`prove`/`setup`) and runs the light ones (`verify`/`info`) with the default heap

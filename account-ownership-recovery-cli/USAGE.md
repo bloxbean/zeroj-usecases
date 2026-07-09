@@ -125,6 +125,27 @@ setup-cli verify
 setup-cli verify --onchain
 ```
 
+## Docker (no Java install)
+
+For trying the tool without installing Java — great for the light commands (`verify` / `info` /
+`import` / `export-r1cs`). Bind-mount a host `keys/` folder to **reuse an existing bundle**.
+
+```bash
+# build the fat jar once, then the image
+./gradlew fatJar
+KEYS_DIR=$PWD/keys docker compose -f docker/docker-compose.yml build
+
+# run any command; KEYS_DIR/PROOFS_DIR point at your host folders (absolute paths)
+KEYS_DIR=$PWD/keys PROOFS_DIR=$PWD/proofs docker compose -f docker/docker-compose.yml run --rm aor info
+KEYS_DIR=$PWD/keys PROOFS_DIR=$PWD/proofs docker compose -f docker/docker-compose.yml run --rm aor verify
+```
+
+- **Light commands work anywhere** (verify only needs the tiny `vk.json`).
+- **`prove` / `setup` are the exception:** they need ~80 GB and memory-map the 23 GB store. That's only
+  practical on a big **Linux** host — set `mem_limit` in the compose file and `JAVA_OPTS="-Xmx80g"`.
+  On Docker Desktop (mac/win) the VM RAM cap + slow mmap over bind-mounts make heavy proving
+  impractical; use the fat-jar or native distribution directly for that.
+
 ## Exit codes
 `0` success · `1` verification failed / internal error · `2` bad usage / missing bundle / missing
 acknowledgement.

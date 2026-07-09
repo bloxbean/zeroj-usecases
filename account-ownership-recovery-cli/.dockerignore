@@ -1,0 +1,16 @@
+# The Docker build only needs build/libs/*-all.jar — keep the context small.
+.gradle/
+build/native/
+build/dist/
+build/classes/
+build/tmp/
+build/resources/
+build/generated/
+build/test-results/
+build/reports/
+src/
+gradle/
+docs/
+keys/
+proofs/
+*.md
