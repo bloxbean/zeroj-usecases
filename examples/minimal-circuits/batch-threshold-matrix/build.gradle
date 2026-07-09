@@ -4,8 +4,14 @@ plugins {
 }
 
 group = 'com.bloxbean.cardano.zeroj.usecases'
-version = '0.1.0-SNAPSHOT'
-
+// Release version: repo-wide version.properties (single source), overridable with -PreleaseVersion.
+version = project.findProperty('releaseVersion') ?: {
+    for (def dir = projectDir; dir != null; dir = dir.parentFile) {
+        def vf = new File(dir, 'version.properties')
+        if (vf.isFile()) { def p = new Properties(); vf.withInputStream { p.load(it) }; return p.getProperty('version') }
+    }
+    return '0.1.0-SNAPSHOT'
+}()
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
