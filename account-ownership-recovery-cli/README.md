@@ -105,10 +105,12 @@ smaller machines `prove`/`setup` run out of memory. Verification is light.
 | **fat-jar zip** (`./gradlew distZip`) | any JDK 25 | everything — especially `prove`/`setup` (fast blst prover, auto-sized heap) |
 | **native binary zip** (`./gradlew nativeDistZip`, GraalVM) | GraalVM JDK 25 | `verify` + `info` — single file, no JVM, instant startup (verify ~0.1 s) |
 
-The native binary runs every command, but proving on it uses the pure-Java backend (blst reaches
-`libblst` via FFM, not wired into the image) and is slower — use the fat jar for heavy proving.
-Store-loading commands on the native binary (`prove`, or `verify` without `vk.json`) need an explicit
-heap, e.g. `./account-ownership-recovery-cli -Xmx110g prove`.
+The native zip ships a launcher (`account-ownership-recovery-cli`) that **auto-sizes the heap** for
+the heavy commands (`prove`/`setup`) and runs the light ones (`verify`/`info`) with the default heap
+— so no manual `-Xmx`. The raw binary is `account-ownership-recovery-cli.bin` for advanced use.
+Proving on the native binary uses the pure-Java backend (blst reaches `libblst` via FFM, not wired
+into the image) and is slower — **use the fat jar for heavy proving**; the native binary is best for
+`verify`/`info`.
 
 ## Requirements
 

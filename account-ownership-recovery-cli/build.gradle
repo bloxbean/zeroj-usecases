@@ -158,8 +158,17 @@ tasks.register('nativeDistZip', Zip) {
     archiveFileName = "account-ownership-recovery-cli-${project.version}-${platform}.zip"
     destinationDirectory = layout.buildDirectory.dir('dist')
     into("account-ownership-recovery-cli-${project.version}-${platform}") {
+        // raw unix binary -> .bin (the launcher execs it); windows .exe kept as-is
         from(layout.buildDirectory.dir('native')) {
-            include 'account-ownership-recovery-cli', 'account-ownership-recovery-cli.exe'
+            include 'account-ownership-recovery-cli'
+            rename { 'account-ownership-recovery-cli.bin' }
+            filePermissions { unix('755') }
+        }
+        from(layout.buildDirectory.dir('native')) {
+            include 'account-ownership-recovery-cli.exe'
+        }
+        // auto-sizing launchers (users run these; -Xmx handled for prove/setup)
+        from('scripts-native') {
             filePermissions { unix('755') }
         }
         from('README.md')
