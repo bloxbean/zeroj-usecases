@@ -26,8 +26,16 @@ services:
       - ${KEYS_DIR:-../keys}:/work/keys
       - ${PROOFS_DIR:-../proofs}:/work/proofs
     environment:
-      JAVA_OPTS: "${JAVA_OPTS:-}"      # e.g. -Xmx80g for prove/setup
-    stdin_open: true                   # hidden mnemonic prompt on prove
+      JAVA_OPTS: "${JAVA_OPTS:-}"                        # e.g. -Xmx80g for prove/setup
+      # on-chain verify config (passed through from your shell):
+      BLOCKFROST_PROJECT_ID: "${BLOCKFROST_PROJECT_ID:-}"   # for --network preview/preprod/mainnet
+      AOR_ADMIN_MNEMONIC: "${AOR_ADMIN_MNEMONIC:-}"         # admin/funding account (skips the prompt)
+    extra_hosts:
+      # so a LOCAL Yaci DevKit on the host is reachable as host.docker.internal from the container
+      # (inside the container `localhost` is the container, not the host):
+      #   verify --onchain --bf-url http://host.docker.internal:8080/api/v1/
+      - "host.docker.internal:host-gateway"
+    stdin_open: true                   # hidden mnemonic prompt on prove / verify
     tty: true
     # For prove/setup on a big Linux host, uncomment and size to the machine:
     # mem_limit: 90g

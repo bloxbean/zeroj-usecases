@@ -161,6 +161,21 @@ KEYS_DIR=$PWD/keys PROOFS_DIR=$PWD/proofs docker compose -f docker/docker-compos
 KEYS_DIR=$PWD/keys PROOFS_DIR=$PWD/proofs docker compose -f docker/docker-compose.yml run --rm aor verify
 ```
 
+**On-chain verify from Docker** — the compose passes `BLOCKFROST_PROJECT_ID` and `AOR_ADMIN_MNEMONIC`
+through (no prompts):
+```bash
+# hosted Blockfrost (public URL — works directly)
+KEYS_DIR=$PWD/keys PROOFS_DIR=$PWD/proofs \
+BLOCKFROST_PROJECT_ID=preprod... AOR_ADMIN_MNEMONIC="word1 … word24" \
+  docker compose -f docker/docker-compose.yml run --rm aor verify --onchain --network preprod
+
+# a LOCAL Yaci DevKit on the host — reach it via host.docker.internal (inside the container
+# `localhost` is the container, not the host):
+KEYS_DIR=$PWD/keys PROOFS_DIR=$PWD/proofs AOR_ADMIN_MNEMONIC="…" \
+  docker compose -f docker/docker-compose.yml run --rm aor \
+  verify --onchain --bf-url http://host.docker.internal:8080/api/v1/
+```
+
 - **Light commands work anywhere** (verify only needs the tiny `vk.json`).
 - **`prove` / `setup` are the exception:** they need ~80 GB and memory-map the 23 GB store. That's only
   practical on a big **Linux** host — set `mem_limit` in the compose file and `JAVA_OPTS="-Xmx80g"`.
