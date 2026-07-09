@@ -86,6 +86,16 @@ public final class Bundle {
         return new Groth16SetupBLS381.SetupResult(loaded.pk(), loaded.gammaG2(), loaded.ic());
     }
 
+    /**
+     * Close a loaded store, ignoring failures. In a GraalVM native image the store's shared mmap
+     * Arena cannot be closed (shared-arena close is disabled by default), which would otherwise
+     * throw after a successful prove/verify — the OS reclaims the mapping on exit regardless.
+     */
+    public static void closeQuietly(AutoCloseable c) {
+        if (c == null) return;
+        try { c.close(); } catch (Throwable ignored) {}
+    }
+
     // ---- integrity ----
 
     /** Compute + write {@code SHA256SUMS} over every regular file in {@code dir} (except SHA256SUMS itself). */

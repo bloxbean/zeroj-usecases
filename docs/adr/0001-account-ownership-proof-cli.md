@@ -117,9 +117,19 @@ into the extracted app directory. `info` and every command validate the manifest
 
 ### 4. Distribution
 
-Gradle `distZip` produces `account-ownership-recovery-cli-<version>.zip` containing the fat jar,
-start scripts (unix + windows), README and USAGE guide — uploaded to the zeroj-usecases GitHub
-release. Follow-ups (out of scope for v1): GraalVM native-image distribution and a Docker image.
+Two zips, both uploaded to the zeroj-usecases GitHub release:
+
+- **Fat-jar** (`./gradlew distZip`) — `account-ownership-recovery-cli-<version>.zip`: the fat jar,
+  RAM-auto-sizing start scripts (unix + windows), README + USAGE. Runs on any JDK 25. This is the
+  vehicle for heavy proving (fast blst backend, standard heap handling).
+- **Native binary** (`./gradlew nativeDistZip`, GraalVM) —
+  `account-ownership-recovery-cli-<version>-<platform>.zip`: a single self-contained executable
+  (built `--no-fallback --enable-native-access` + `-H:-UseCompressedReferences` so >32 GB heaps
+  work). Best for `verify` + `info` — no JVM, instant startup (off-chain verify ~0.1 s). It also
+  proves, but on the pure-Java backend: blst reaches `libblst` via FFM downcalls that aren't
+  registered in the image, so proving is routed to pure-Java (slower than the fat jar). A follow-up
+  can register the FFM/foreign metadata (tracing agent) to enable blst in the image. Docker image is
+  a further follow-up.
 
 ## Security considerations
 

@@ -84,9 +84,12 @@ public final class VerifyCommand implements Callable<Integer> {
         if (VkIO.exists(keysDir)) {                      // fast path: tiny vk.json, no 23 GB load
             ok = OffchainVerifier.verify(VkIO.readVk(keysDir), pts, pub);
         } else {                                         // fallback: extract VK from the proving-key store
-            try (var key = Groth16PkStore.load(keysDir)) {
+            var key = Groth16PkStore.load(keysDir);
+            try {
                 ok = OffchainVerifier.verify(key, pts, pub);
                 VkIO.writeQuietly(keysDir, Bundle.vkSetup(key)); // cache for next time
+            } finally {
+                Bundle.closeQuietly(key);
             }
         }
         System.out.printf("  result: %s (%.2fs)%n", ok ? "VALID" : "INVALID", (System.nanoTime() - t) / 1e9);
@@ -118,9 +121,12 @@ public final class VerifyCommand implements Callable<Integer> {
         if (VkIO.exists(keysDir)) {
             vk = VkIO.readVkCompressed(keysDir);
         } else {
-            try (var key = Groth16PkStore.load(keysDir)) {
+            var key = Groth16PkStore.load(keysDir);
+            try {
                 vk = ProofCompressor.compressVk(Bundle.vkSetup(key));
                 VkIO.writeQuietly(keysDir, Bundle.vkSetup(key));
+            } finally {
+                Bundle.closeQuietly(key);
             }
         }
         var onChain = new OnChainOwnershipService(new BFBackendService(bfUrl, bfKey), payer, vk);

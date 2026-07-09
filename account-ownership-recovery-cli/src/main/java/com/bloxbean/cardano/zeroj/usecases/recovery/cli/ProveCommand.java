@@ -96,7 +96,8 @@ public final class ProveCommand implements Callable<Integer> {
 
         System.out.println("Loading proving key (mmap) ...");
         long tl = System.nanoTime();
-        try (var loaded = Groth16PkStore.load(keysDir)) {
+        var loaded = Groth16PkStore.load(keysDir);
+        try {
             System.out.printf("  key loaded: %.1fs%n", secs(tl));
 
             System.out.println("Computing witness ...");
@@ -105,7 +106,7 @@ public final class ProveCommand implements Callable<Integer> {
             System.out.printf("  witness: %.1fs%n", secs(tw));
 
             ProverBackend prover = selectBackend();
-            System.out.println("Generating proof (" + backend + ", multi-core) ...");
+            System.out.println("Generating proof (" + backendLabel + ", multi-core) ...");
             long tp = System.nanoTime();
             Groth16ProofBLS381 proof = svc.prove(loaded, witness, prover, bundle.isSnarkjsKey());
             System.out.printf("  proof generated: %.1fs%n", secs(tp));
@@ -127,6 +128,8 @@ public final class ProveCommand implements Callable<Integer> {
                 System.out.println(ok ? "PASS" : "FAIL");
                 if (!ok) { System.err.println("Self-check failed — proof did not verify."); return 1; }
             }
+        } finally {
+            Bundle.closeQuietly(loaded);   // shared mmap Arena close is unsupported in a native image
         }
 
         System.out.printf("%nProof written to %s (%s, %s)%n", outDir.toAbsolutePath(),
@@ -136,21 +139,27 @@ public final class ProveCommand implements Callable<Integer> {
         return 0;
     }
 
+    private String backendLabel = "blst";
+
     /** blst by default; pure-Java fallback if the native lib can't load or we're in a GraalVM image. */
     private ProverBackend selectBackend() {
-        if (backend == Backend.java) return ProverBackend.PURE_JAVA;
+        if (backend == Backend.java) { backendLabel = "java"; return ProverBackend.PURE_JAVA; }
         // blst reaches libblst via FFM downcalls, which aren't registered in this native image.
         // Route to the pure-Java backend so proving works; use the fat jar for the fast blst path.
         if (System.getProperty("org.graalvm.nativeimage.imagecode") != null) {
             System.err.println("Note: blst is unavailable in the native binary — using the pure-Java "
                     + "backend (slower). For the fast blst prover, use the fat-jar distribution.");
+            backendLabel = "java";
             return ProverBackend.PURE_JAVA;
         }
         try {
-            return BlstProverBackend.create();
+            ProverBackend b = BlstProverBackend.create();
+            backendLabel = "blst";
+            return b;
         } catch (Throwable t) {
             System.err.println("blst native backend unavailable (" + t.getMessage()
                     + ") — falling back to the pure-Java backend (slower). Use --backend java to silence this.");
+            backendLabel = "java";
             return ProverBackend.PURE_JAVA;
         }
     }
