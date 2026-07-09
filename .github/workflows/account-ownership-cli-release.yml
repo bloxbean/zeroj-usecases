@@ -1,68 +1,38 @@
 name: account-ownership-recovery-cli release
 
-# Builds the Account-Ownership Proof CLI fat-jar zip and attaches it to a GitHub release.
+# Builds the Account-Ownership Proof CLI fat-jar + native zips and attaches them to a GitHub release.
 #
-#   preview : Actions ▸ Run workflow  → builds + uploads the zip as a workflow artifact (no release)
-#   release : push a tag  account-ownership-recovery-cli-v*  → uploads the zip to that release
+#   preview : Actions ▸ Run workflow  → builds + uploads the zips as a workflow artifact (no release)
+#   release : push a tag  account-ownership-recovery-cli-v*  → uploads the zips to that release
 #
-# The CLI depends on ZeroJ and Julc, which are not yet on Maven Central, so this workflow builds them
-# to the runner's local Maven repo first. Once those artifacts are published to Central, drop the two
-# "build ... to mavenLocal" steps and let Gradle resolve them normally. The versions built here must
-# match account-ownership-recovery-cli/gradle.properties (zerojVersion / julcVersion / cclVersion).
+# ZeroJ / Julc / cardano-client-lib all resolve from Maven Central (the versions pinned in
+# account-ownership-recovery-cli/gradle.properties must be published there).
 
 on:
   push:
     tags: ['account-ownership-recovery-cli-v*']
-  workflow_dispatch:
-    inputs:
-      zeroj_ref:
-        description: 'bloxbean/zeroj git ref to build'
-        default: 'main'
-      julc_ref:
-        description: 'bloxbean/julc git ref to build'
-        default: 'main'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout zeroj-usecases
-        uses: actions/checkout@v4
-        with:
-          path: zeroj-usecases
+      - uses: actions/checkout@v4
 
-      - name: Set up JDK 25
+      - name: Set up JDK 25 (GraalVM, for the native image)
         uses: actions/setup-java@v4
         with:
           distribution: 'graalvm'
           java-version: '25'
 
-      # --- dependencies from source (remove once on Maven Central) ---
-      - name: Checkout julc
-        uses: actions/checkout@v4
-        with:
-          repository: bloxbean/julc
-          ref: ${{ github.event.inputs.julc_ref || 'main' }}
-          path: julc
-      - name: Build julc -> mavenLocal
-        run: cd julc && ./gradlew publishToMavenLocal -x test --no-daemon
-
-      - name: Checkout zeroj
-        uses: actions/checkout@v4
-        with:
-          repository: bloxbean/zeroj
-          ref: ${{ github.event.inputs.zeroj_ref || 'main' }}
-          path: zeroj
-      - name: Build zeroj -> mavenLocal
-        run: cd zeroj && ./gradlew publishToMavenLocal -x test -PskipSigning --no-daemon
-
-      # --- the CLI distributions ---
-      - name: Build fat-jar distZip
-        run: cd zeroj-usecases/account-ownership-recovery-cli && ./gradlew distZip --no-daemon
+      - name: Build fat-jar distZip (dependencies from Maven Central)
+        run: cd account-ownership-recovery-cli && ./gradlew distZip --no-daemon
 
       - name: Build native binary zip (this runner's platform)
-        run: cd zeroj-usecases/account-ownership-recovery-cli && ./gradlew nativeDistZip --no-daemon
-        # GraalVM native-image is provided by the 'graalvm' setup-java distribution above.
+        run: cd account-ownership-recovery-cli && ./gradlew nativeDistZip --no-daemon
         # For all-platform native binaries, run this job on a linux/macos/windows × x64/arm64 matrix
         # (mirror zeroj's release.yml ceremony-cli matrix); this single job builds linux-x86_64.
 
@@ -70,11 +40,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: account-ownership-recovery-cli-zip
-          path: zeroj-usecases/account-ownership-recovery-cli/build/dist/*.zip
+          path: account-ownership-recovery-cli/build/dist/*.zip
 
       - name: Attach to GitHub release (tag builds only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: zeroj-usecases/account-ownership-recovery-cli/build/dist/*.zip
+          files: account-ownership-recovery-cli/build/dist/*.zip
           fail_on_unmatched_files: true
