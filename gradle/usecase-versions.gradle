@@ -1,10 +1,20 @@
 // All versions live in <repo-root>/version.properties (the single source). This exposes the
 // dependency versions as ext properties for the coordinated usecase builds, with -P / env override.
-def versions = new Properties()
-file("${rootDir}/version.properties").withInputStream { versions.load(it) }
+//
+// Each usecase is an independent build, so when this script is applied from a usecase, rootDir is
+// that usecase's own dir — NOT the repo root. Walk up to find the repo-root version.properties
+// (works whether applied by the root coordinator or by a usecase running its own wrapper).
+def versions = {
+    def props = new Properties()
+    for (def dir = rootDir; dir != null; dir = dir.parentFile) {
+        def vf = new File(dir, 'version.properties')
+        if (vf.isFile()) { vf.withInputStream { props.load(it) }; break }
+    }
+    props
+}()
 
 ext {
-    zerojVersion = project.findProperty('zerojVersion') ?: System.getenv('ZEROJ_VERSION') ?: versions.getProperty('zerojVersion')
-    julcVersion = project.findProperty('julcVersion') ?: System.getenv('JULC_VERSION') ?: versions.getProperty('julcVersion')
-    cclVersion = project.findProperty('cclVersion') ?: System.getenv('CCL_VERSION') ?: versions.getProperty('cclVersion')
+    zerojVersion = project.findProperty('zerojVersion') ?: System.getenv('ZEROJ_VERSION') ?: versions.getProperty('zerojVersion') ?: '0.1.0-pre7'
+    julcVersion = project.findProperty('julcVersion') ?: System.getenv('JULC_VERSION') ?: versions.getProperty('julcVersion') ?: '0.1.0-pre14'
+    cclVersion = project.findProperty('cclVersion') ?: System.getenv('CCL_VERSION') ?: versions.getProperty('cclVersion') ?: '0.8.0-pre4'
 }
