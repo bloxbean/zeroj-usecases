@@ -29,11 +29,18 @@ repositories {
     }
 }
 
-ext {
-    zerojVersion = '0.1.0-pre4'
-    julcVersion = '0.1.0-pre14'
-    cclVersion = '0.8.0-pre4'
-}
+def usecaseVersionsScript = {
+    def dir = projectDir
+    while (dir != null) {
+        def candidate = new File(dir, 'gradle/usecase-versions.gradle')
+        if (candidate.isFile()) {
+            return candidate
+        }
+        dir = dir.parentFile
+    }
+    throw new GradleException('Could not find gradle/usecase-versions.gradle')
+}()
+apply from: usecaseVersionsScript
 
 dependencies {
     // Spring Boot

@@ -1,0 +1,5 @@
+ext {
+    zerojVersion = project.findProperty('zerojVersion') ?: System.getenv('ZEROJ_VERSION') ?: '0.1.0-pre7'
+    julcVersion = project.findProperty('julcVersion') ?: System.getenv('JULC_VERSION') ?: '0.1.0-pre14'
+    cclVersion = project.findProperty('cclVersion') ?: System.getenv('CCL_VERSION') ?: '0.8.0-pre4'
+}

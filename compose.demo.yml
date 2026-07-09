@@ -26,7 +26,7 @@ x-spring-build: &spring-build
     zeroj-src: ${ZEROJ_SOURCE_CONTEXT:-docker/empty-zeroj-context}
   dockerfile: docker/spring-usecase.Dockerfile
   args:
-    ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+    ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre7}
     PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
 
 services:
@@ -37,7 +37,7 @@ services:
       <<: *spring-build
       args:
         USECASE_DIR: proof-of-reserves
-        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre7}
         PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *spring-env
@@ -54,7 +54,7 @@ services:
       <<: *spring-build
       args:
         USECASE_DIR: identity-kyc
-        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre7}
         PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *spring-env
@@ -71,7 +71,7 @@ services:
       <<: *spring-build
       args:
         USECASE_DIR: nft-ownership
-        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre7}
         PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *spring-env
@@ -88,7 +88,7 @@ services:
       <<: *spring-build
       args:
         USECASE_DIR: private-voting
-        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre7}
         PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *spring-env
@@ -105,7 +105,7 @@ services:
       <<: *spring-build
       args:
         USECASE_DIR: personhood-airdrop
-        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre7}
         PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *spring-env
@@ -122,7 +122,7 @@ services:
       <<: *spring-build
       args:
         USECASE_DIR: digital-product-passport
-        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre7}
         PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *spring-env
@@ -140,7 +140,7 @@ services:
       <<: *spring-build
       args:
         USECASE_DIR: selective-disclosure
-        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre7}
         PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *spring-env

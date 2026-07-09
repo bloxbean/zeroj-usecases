@@ -4,6 +4,8 @@ plugins {
     id 'base'
 }
 
+apply from: file('gradle/usecase-versions.gradle')
+
 def usecaseProjects = [
         'digital-product-passport',
         'identity-kyc',
@@ -29,11 +31,12 @@ def wrapperCommand = System.getProperty('os.name').toLowerCase(Locale.ROOT).cont
         ? 'gradlew.bat'
         : './gradlew'
 
+def forwardedVersionProperties = ['zerojVersion', 'julcVersion', 'cclVersion']
+
 def registerUsecaseGradleTask = { String taskPrefix, String gradleTask, List<String> extraArgs, String action ->
-    def forwardedArgs = []
-    if (project.hasProperty('zerojVersion')) {
-        forwardedArgs += "-PzerojVersion=${project.property('zerojVersion')}"
-    }
+    def forwardedArgs = forwardedVersionProperties
+            .findAll { project.hasProperty(it) }
+            .collect { "-P${it}=${project.property(it)}" }
     usecaseProjects.collect { projectName ->
         def registeredTaskName = "${taskPrefix}${taskSuffix(projectName)}"
         tasks.register(registeredTaskName, Exec) {

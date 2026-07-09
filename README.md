@@ -98,7 +98,7 @@ For the Docker demo path:
 - Yaci DevKit running on the host
 
 Docker demos use the released ZeroJ version configured by `ZEROJ_VERSION`
-(`0.1.0-pre4` by default). A sibling ZeroJ checkout is optional and only needed
+(`0.1.0-pre7` by default). A sibling ZeroJ checkout is optional and only needed
 when you explicitly opt into publishing a local ZeroJ build during Docker image
 builds.
 
@@ -107,6 +107,11 @@ For direct Java runs:
 - Java 25, preferably GraalVM
 - Yaci DevKit for any on-chain flow
 - Node.js is optional; frontends are already built into the Spring JARs
+
+Gradle dependency defaults for ZeroJ, Julc, and cardano-client-lib live in
+[`gradle/usecase-versions.gradle`](gradle/usecase-versions.gradle) and are used
+by every independent use-case build. Override them with `-PzerojVersion=...`,
+`-PjulcVersion=...`, or `-PcclVersion=...`.
 
 The demo mnemonic and address are local-devnet only. Do not use them on public
 or production networks.
@@ -251,7 +256,7 @@ cd ../zeroj
 ./gradlew publishToMavenLocal
 
 cd ../zeroj-usecases
-gradle buildAllUsecasesNoTests -PzerojVersion=0.1.0-pre4
+gradle buildAllUsecasesNoTests -PzerojVersion=0.1.0-pre7
 ```
 
 For Docker builds, use `PUBLISH_LOCAL_ZEROJ=true` and point

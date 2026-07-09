@@ -26,7 +26,7 @@ services:
       args:
         USECASE_DIR: examples/minimal-circuits/plonk/proof-of-reserves
         APP_NAME: proof-of-reserves-plonk
-        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre7}
         PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *yaci-env
@@ -44,7 +44,7 @@ services:
       args:
         USECASE_DIR: examples/minimal-circuits/plonk/compliance-credential
         APP_NAME: compliance-credential-plonk
-        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre4}
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre7}
         PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
     environment:
       <<: *yaci-env
