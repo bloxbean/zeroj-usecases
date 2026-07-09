@@ -44,7 +44,7 @@ class SnarkjsSetupIT {
         var snark = new SnarkjsSetup(dir, 300);
         Path r1cs = snark.exportR1cs(cons, numWires, numPublic, true);
 
-        // Phase 1 (universal) — the CLI's ptau/filecoin modes consume an already-prepared .ptau.
+        // Phase 1 (universal) — the CLI's ptau mode consumes an already-prepared .ptau.
         sh(dir, "powersoftau", "new", "bls12-381", "8", "pot0.ptau");
         sh(dir, "powersoftau", "contribute", "pot0.ptau", "pot1.ptau", "--name=it", "-e=it-entropy");
         sh(dir, "powersoftau", "prepare", "phase2", "pot1.ptau", "pot_final.ptau");
@@ -76,38 +76,25 @@ class SnarkjsSetupIT {
     }
 
     @Test
-    void filecoinPrepare_fromLocalPhase1_thenCeremony_verifies(@TempDir Path dir) throws Exception {
+    void ptauPrecheck_acceptsBls381_rejectsWrongCurveAndSize(@TempDir Path dir) throws Exception {
         assumeTrue(SnarkjsSetup.findSnarkjs() != null, "snarkjs not installed");
 
-        int n = 64, numWires = n + 2, numPublic = 1;
-        List<R1CSConstraint> cons = chain(n);
-        BigInteger[] witness = witness(n);
+        // A small BLS12-381 ptau (power 8): accepted at 2^8, rejected when a larger power is required.
+        sh(dir, "powersoftau", "new", "bls12-381", "8", "bls.ptau");
+        Path bls = dir.resolve("bls.ptau");
+        var h = PtauFile.readHeader(bls);
+        assertEquals(48, h.n8(), "BLS12-381 field element is 48 bytes");
+        assertEquals(8, h.power());
+        PtauFile.requireBls381(bls, 8); // OK
+        assertThrows(IllegalArgumentException.class, () -> PtauFile.requireBls381(bls, 25),
+                "must reject a ptau that is too small for the circuit");
 
-        // Stand in for the downloaded Filecoin phase-1 with a small locally-generated one.
-        sh(dir, "powersoftau", "new", "bls12-381", "8", "pot0.ptau");
-        sh(dir, "powersoftau", "contribute", "pot0.ptau", "phase1.ptau", "--name=it", "-e=it");
-
-        // FilecoinSetup: verify + prepare phase2 (download/convert skipped via --phase1-file).
-        Path prepared = new FilecoinSetup(dir, 300)
-                .source(null, dir.resolve("phase1.ptau")).ackCost(true).downloadAndPrepare(true);
-        assertNotNull(prepared, "prepare should produce a ptau");
-
-        var snark = new SnarkjsSetup(dir, 300);
-        Path r1cs = snark.exportR1cs(cons, numWires, numPublic, true);
-        Path finalZkey = snark.runCeremony(r1cs, prepared, 1, true);
-        Path keys = dir.resolve("keys");
-        snark.importToStore(finalZkey, keys);
-
-        try (var loaded = Groth16PkStore.load(keys)) {
-            var cs = ZkeyPkStoreImporter.snarkjsConstraints(cons, numPublic);
-            Groth16ProofBLS381 proof = Groth16ProverBLS381.proveWithReaders(
-                    loaded.pk(), loaded.readers(), BlstProverBackend.create(), witness, cs, numWires, loaded.domain());
-            VkIO.write(keys, Bundle.vkSetup(loaded));
-            ProofIO.writeProof(dir, proof);
-            var pts = ProofIO.readProof(dir.resolve(ProofIO.PROOF_FILE));
-            assertTrue(OffchainVerifier.verify(VkIO.readVk(keys), pts, new BigInteger[]{witness[1]}),
-                    "proof under the filecoin-prepared ceremony key must verify");
-        }
+        // A BN254 ptau (e.g. PSE Perpetual Powers of Tau) must be rejected as the wrong curve.
+        sh(dir, "powersoftau", "new", "bn128", "8", "bn.ptau");
+        Path bn = dir.resolve("bn.ptau");
+        assertEquals(32, PtauFile.readHeader(bn).n8(), "BN254 field element is 32 bytes");
+        var ex = assertThrows(IllegalArgumentException.class, () -> PtauFile.requireBls381(bn, 8));
+        assertTrue(ex.getMessage().toLowerCase().contains("bls12-381"), "message should name the required curve");
     }
 
     private static List<R1CSConstraint> chain(int n) {

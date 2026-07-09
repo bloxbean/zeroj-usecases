@@ -59,7 +59,7 @@ public final class Bundle {
         p.setProperty("fingerprint", fingerprint(numConstraints, numWires, numPublic));
         p.setProperty("zerojVersion", zerojVersion);
         p.setProperty("createdAt", createdAt);
-        // snarkjs-based setups (ptau/filecoin) append public-input binding rows — the prover needs to know.
+        // snarkjs-based setups (ptau) append public-input binding rows — the prover needs to know.
         p.setProperty("snarkjsConstraints", Boolean.toString(!"local".equals(setupMode)));
         try (var out = Files.newOutputStream(dir.resolve(BUNDLE_PROPS))) {
             p.store(out, "Account-ownership proof key bundle (ADR-0001)");
@@ -76,7 +76,7 @@ public final class Bundle {
         return p;
     }
 
-    /** True when the bundle was produced by an snarkjs/ptau/Filecoin ceremony (binding rows present). */
+    /** True when the bundle was produced by an snarkjs/ptau ceremony (binding rows present). */
     public boolean isSnarkjsKey() {
         return Boolean.parseBoolean(metadata().getProperty("snarkjsConstraints", "false"));
     }

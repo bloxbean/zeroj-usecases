@@ -19,16 +19,24 @@ import java.util.concurrent.Callable;
         description = "One-time: produce the proving/verification key bundle (coordinator).")
 public final class SetupCommand implements Callable<Integer> {
 
-    enum TauMode { local, ptau, filecoin }
+    enum TauMode { local, ptau }
 
     @Option(names = "--tau", defaultValue = "local",
-            description = "Setup mode: local (single-party, dev/testing), ptau (real phase-2 from a "
-                    + "prepared .ptau, needs snarkjs), filecoin (auto-download the attested phase-1). "
-                    + "Default: ${DEFAULT-VALUE}.")
+            description = "Setup mode: local (single-party, dev/testing) or ptau (real phase-2 from a "
+                    + "prepared BLS12-381 .ptau, needs snarkjs). Default: ${DEFAULT-VALUE}.")
     TauMode tau;
 
-    @Option(names = "--ptau", description = "Prepared .ptau file (2^25+) for --tau ptau.")
+    @Option(names = "--ptau", description = "Prepared BLS12-381 .ptau file (2^25+) for --tau ptau.")
     Path ptau;
+
+    @Option(names = "--ptau-url",
+            description = "Download the prepared .ptau from this URL (resumable) for --tau ptau, "
+                    + "instead of --ptau. Must be BLS12-381 (e.g. a Filecoin/Zcash phase-1).")
+    String ptauUrl;
+
+    @Option(names = "--verify-ptau",
+            description = "Run `snarkjs powersoftau verify` on the .ptau before use (slow; recommended for downloads).")
+    boolean verifyPtau;
 
     @Option(names = "--zkey", description = "Import an already-finalized .zkey (a real ceremony's output) instead of running snarkjs setup.")
     Path zkey;
@@ -43,20 +51,6 @@ public final class SetupCommand implements Callable<Integer> {
     @Option(names = "--timeout-hours", defaultValue = "48",
             description = "Per-step snarkjs timeout in hours. Default: ${DEFAULT-VALUE}.")
     int timeoutHours;
-
-    @Option(names = "--filecoin-url", description = "Phase-1 source URL for --tau filecoin (resumable download).")
-    String filecoinUrl;
-
-    @Option(names = "--phase1-file", description = "Local phase-1 file for --tau filecoin (skips download).")
-    Path phase1File;
-
-    @Option(names = "--i-understand-filecoin-cost",
-            description = "Acknowledge the large download + multi-hour prepare of --tau filecoin.")
-    boolean ackFilecoin;
-
-    @Option(names = "--truncate-to", defaultValue = "-1",
-            description = "Best-effort truncate the phase-1 to 2^N before prepare (--tau filecoin).")
-    int truncateTo;
 
     @Option(names = "--keys", defaultValue = "keys",
             description = "Output key-bundle directory. Default: ${DEFAULT-VALUE}.")
@@ -94,8 +88,7 @@ public final class SetupCommand implements Callable<Integer> {
                     System.err.println("""
                             --tau local runs a SINGLE-PARTY trusted setup: this machine learns the setup
                             randomness and could forge proofs. Fine for testing; for anything trusted use
-                            --tau ptau / --tau filecoin (a multi-party ceremony). Re-run with
-                            --i-understand-insecure to proceed.""");
+                            --tau ptau (a real phase-2 ceremony). Re-run with --i-understand-insecure to proceed.""");
                     return 2;
                 }
                 System.out.println("Running single-party trusted setup (dev/testing) — this takes a while ...");
@@ -107,17 +100,7 @@ public final class SetupCommand implements Callable<Integer> {
                 VkIO.write(keysDir, setup);
             }
             case ptau -> {
-                int rc = ptauSetup(svc, resolveWorkDir(), ptau);
-                if (rc != 0) return rc;
-            }
-            case filecoin -> {
-                Path prepared = new FilecoinSetup(resolveWorkDir(), timeoutHours * 3600L)
-                        .source(filecoinUrl, phase1File)
-                        .ackCost(ackFilecoin)
-                        .truncateTo(truncateTo)
-                        .downloadAndPrepare(force);
-                if (prepared == null) return 2;
-                int rc = ptauSetup(svc, resolveWorkDir(), prepared);
+                int rc = ptauSetup(svc, resolveWorkDir());
                 if (rc != 0) return rc;
             }
         }
@@ -134,19 +117,41 @@ public final class SetupCommand implements Callable<Integer> {
     }
 
     /**
-     * Real phase-2 setup from a prepared {@code .ptau}: export R1CS → snarkjs {@code groth16 setup}
-     * (+ coordinator contributions + beacon) or import a supplied finalized {@code .zkey} → import
-     * into the proving-key store → export {@code vk.json}.
+     * Real phase-2 setup from a prepared BLS12-381 {@code .ptau} (provided via {@code --ptau} or
+     * downloaded via {@code --ptau-url}): export R1CS → snarkjs {@code groth16 setup} (+ coordinator
+     * contributions + beacon), or import a supplied finalized {@code .zkey} → import into the
+     * proving-key store → export {@code vk.json}.
      */
-    private int ptauSetup(OwnershipCircuitService svc, Path work, Path ptauFile) throws Exception {
+    private int ptauSetup(OwnershipCircuitService svc, Path work) throws Exception {
+        // resolve the ptau: a local --ptau file, or download it from --ptau-url
+        Path ptauFile = ptau;
+        if (ptauFile == null && ptauUrl != null)
+            ptauFile = PtauFile.download(ptauUrl, work.resolve("downloaded.ptau"), force);
+
         if (ptauFile == null && zkey == null) {
-            System.err.println("--tau ptau needs either --ptau <prepared.ptau> or --zkey <finalized.zkey>.");
+            System.err.println("--tau ptau needs --ptau <file>, --ptau-url <url>, or --zkey <finalized.zkey>.");
             return 2;
         }
+
+        // fail fast on the wrong curve/size before any expensive work
+        if (ptauFile != null) {
+            int minPower = domainPower(svc.numConstraints(), svc.numPublicInputs());
+            try {
+                PtauFile.requireBls381(ptauFile, minPower);
+            } catch (IllegalArgumentException e) {
+                System.err.println(e.getMessage());
+                return 2;
+            }
+        }
+
         var snark = new SnarkjsSetup(work, timeoutHours * 3600L);
         if (zkey == null && !snark.available()) {
             System.err.println("snarkjs not found. Install it (npm i -g snarkjs) or pass --zkey <finalized.zkey>.");
             return 2;
+        }
+        if (verifyPtau && ptauFile != null && snark.available()) {
+            System.out.println("Verifying the .ptau (snarkjs powersoftau verify) ...");
+            snark.run(true, null, "powersoftau", "verify", ptauFile.toString());
         }
         System.out.println("Phase-2 setup via snarkjs (work dir: " + work + ") ...");
         Path r1cs = snark.exportR1cs(svc.constraints(), svc.numWires(), svc.numPublicInputs(), force);
@@ -168,6 +173,14 @@ public final class SetupCommand implements Callable<Integer> {
             VkIO.write(keysDir, Bundle.vkSetup(loaded));
         }
         return 0;
+    }
+
+    /** Smallest power of two whose domain (2^p) covers the circuit — the minimum ptau power. */
+    private static int domainPower(int numConstraints, int numPublic) {
+        long need = (long) numConstraints + numPublic + 1;
+        int p = 1;
+        while ((1L << p) < need) p++;
+        return p;
     }
 
     private Path resolveWorkDir() throws java.io.IOException {

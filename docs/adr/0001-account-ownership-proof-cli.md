@@ -70,7 +70,7 @@ A new independent gradle project at `zeroj-usecases/account-ownership-recovery-c
 
 ```
 account-ownership-recovery-cli
-├── setup    --tau local|ptau|filecoin [--ptau <file>] [--keys <dir>]     (coordinator, one-time)
+├── setup    --tau local|ptau [--ptau <file> | --ptau-url <url>] [--keys <dir>]  (coordinator, one-time)
 ├── prove    [--keys <dir>] [--out <dir>] [--account N] [--index N]       (user, ~3–5 min)
 ├── verify   [--offchain] [--proof <file>]                                 (user, seconds)
 │            --onchain [--bf-url <url>] [--bf-key <key>]
@@ -84,8 +84,9 @@ the proving-key store (~23 GB, mmap-loadable), the verification key, the circuit
 | mode | what happens | trust level | cost |
 |---|---|---|---|
 | `local` (default) | single-party setup from a generated tau scalar; no downloads | **dev/testing only** — the machine that ran it could forge proofs; the CLI prints an explicit warning and requires a `--i-understand-insecure` acknowledgement | ~47 min on a ~90 GB-heap machine |
-| `ptau` | real phase 2 from a user-supplied **prepared** `.ptau` (≥ 2²⁵): CLI exports the circuit R1CS, orchestrates `snarkjs groth16 setup` (+ prints contribution/beacon guidance for running a proper ceremony per ZeroJ ADR-0031), finalizes via the streaming zkey importer | as strong as the ptau + phase-2 ceremony used | minutes past the ptau; requires `snarkjs` on PATH |
-| `filecoin` | fetches the publicly attested BLS12-381 phase-1 (Filecoin ceremony, 2²⁷) automatically, then: convert → `snarkjs powersoftau verify` (mandatory — validates the conversion independently) → truncate to 2²⁵ → `prepare phase2` → continue as `ptau` mode | strongest phase-1 available (~20 attested independent participants) | **honest costs:** ~50–100 GB download; the one-time `prepare phase2` measured ~60–105 h in Node at 2²⁵; conversion tooling not yet proven against the real files (open item in ZeroJ ADR-0031). Best-effort in v1, coordinator-only, and the prepared ptau is cached forever once produced |
+| `ptau` | real phase 2 from a **prepared BLS12-381** `.ptau` (≥ 2²⁵), supplied via `--ptau <file>` or fetched with `--ptau-url <url>` (resumable). A fast header pre-check rejects the wrong curve (e.g. a BN254 PSE ptau) or too-small a power before any expensive work; optional `--verify-ptau` runs `snarkjs powersoftau verify`. CLI then exports the circuit R1CS, orchestrates `snarkjs groth16 setup` + coordinator contributions + a finalization beacon + `snarkjs zkey verify`, and finalizes via the streaming zkey importer. `--zkey <finalized.zkey>` imports a real multi-party ceremony's output instead (pure-Java import, no snarkjs). | as strong as the ptau + phase-2 ceremony used | minutes past the ptau; requires `snarkjs` on PATH (except the `--zkey` import) |
+
+> **Design update:** an earlier draft had a dedicated `filecoin` mode that auto-downloaded + converted + `prepare phase2`'d the raw Filecoin phase-1. That conversion step was best-effort and unproven against the real files, and the ptau **must** be BLS12-381 regardless of source. It was therefore generalized to `--ptau-url` (download *any* prepared BLS12-381 ptau) + the header pre-check. Obtaining/converting a raw phase-1 (Filecoin, Zcash, …) into a prepared `.ptau` is now an out-of-band step the operator does once; the CLI consumes the ready `.ptau`.
 
 **`prove`** — prompts for the mnemonic with hidden input (**never** accepted as a CLI argument,
 environment variable, or file); derives the root key in-process; computes the witness; loads the
@@ -136,9 +137,10 @@ Two zips, both uploaded to the zeroj-usecases GitHub release:
 - **Seed handling:** mnemonic via hidden interactive prompt only; root key derived in-process;
   nothing secret is written or transmitted. The proof + public inputs are the only outputs.
 - **Setup trust:** `local` keys are for development/testing — whoever ran the setup can forge
-  proofs. Any production deployment must publish a bundle produced from the `ptau`/`filecoin` path,
-  ideally with a multi-party phase-2 ceremony (ZeroJ ADR-0031 tooling: snarkjs or the
-  `zeroj-ceremony` native contributor; verification always via stock `snarkjs zkey verify`).
+  proofs. Any production deployment must publish a bundle produced from the `ptau` path, ideally with
+  a multi-party phase-2 ceremony (ZeroJ ADR-0031 tooling: snarkjs or the `zeroj-ceremony` native
+  contributor; verification always via stock `snarkjs zkey verify`). The `.ptau` must be BLS12-381
+  (header pre-check enforces this).
 - **Bundle integrity:** users verify `manifest.sha256` (automated by the CLI) against the hashes
   the coordinator publishes; the circuit fingerprint pins the exact R1CS the keys bind to.
 - **On-chain gate:** the demo validator verifies the proof against the datum-pinned pkh; it does
@@ -150,8 +152,10 @@ Two zips, both uploaded to the zeroj-usecases GitHub release:
 - **Proving hardware:** ~64 GB+ RAM required today (measured ~66–70 GB peak). Mitigations tracked
   upstream: hint-based circuit reduction (~19M → ~11–12M) once the gadget audit clears; witness
   streaming; optionally a remote-proving deployment of this same app on a server.
-- **Filecoin mode** is coordinator-grade, not consumer-grade (download size + one-time prepare
-  time) — by design it exists so the *published key bundle* can carry real phase-1 trust.
+- **Obtaining a BLS12-381 phase-1** is on the operator: a raw ceremony phase-1 (Filecoin, Zcash) must
+  be converted + `prepare phase2`'d into a `.ptau` out of band (tens of GB, one-time multi-hour job),
+  then passed via `--ptau`/`--ptau-url`. The CLI only consumes a ready prepared ptau (and pre-checks
+  its curve/size).
 - The app pins one derivation path shape (`account'/0/index`, configurable indices); other roles
   or multi-address batching are follow-ups.
 
@@ -163,7 +167,7 @@ Two zips, both uploaded to the zeroj-usecases GitHub release:
 | M2 | `prove` | proof generated from a real mnemonic against M1 keys in ≤ 5 min warm; secrets never persisted |
 | M3 | `verify` off-chain + on-chain | off-chain pairing check green; on-chain verify green against Yaci DevKit with default endpoint |
 | M4 | `setup --tau ptau` | snarkjs-orchestrated phase 2 from a small prepared ptau on a rehearsal circuit + the real circuit path wired |
-| M5 | `setup --tau filecoin` | download/convert/verify/truncate/prepare orchestration with resume support; costs surfaced to the operator before starting |
+| M5 | `--ptau-url` + ptau pre-check | resumable download of any prepared BLS12-381 ptau; header pre-check rejects wrong curve (BN254/PSE) or too-small power before expensive work; optional `--verify-ptau` |
 | M6 | `distZip` + README/USAGE + release upload wiring | zip installs + runs on a clean machine; docs cover both roles end to end |
 
 Each milestone: implement → test → iterate before moving on.

@@ -80,8 +80,8 @@ too small for the store.
 
 - **Java 25** (GraalVM or any JDK 25). The bundled launcher auto-sizes the heap to ~80 % of RAM;
   override with `AOR_JAVA_OPTS`, e.g. `AOR_JAVA_OPTS="-Xmx110g"`.
-- **snarkjs + Node** — only for `setup --tau ptau|filecoin` (a real ceremony). Not needed to prove
-  or verify. `npm install -g snarkjs`.
+- **snarkjs + Node** — only for `setup --tau ptau` (a real ceremony). Not needed to prove or verify.
+  `npm install -g snarkjs`.
 - **A node/Blockfrost endpoint** — only for `verify --onchain`. Defaults to a local
   [Yaci DevKit](https://github.com/bloxbean/yaci-devkit) at `http://localhost:8080/api/v1/`.
 
@@ -89,22 +89,30 @@ too small for the store.
 
 ## Setup modes (coordinator)
 
+`setup` is a one-time, coordinator-only step (users never run it — they download the published
+bundle). The trusted setup has two phases: **phase 1** (powers of tau) is universal and
+circuit-independent — you *reuse* an existing attested one, you don't generate it; **phase 2** is
+circuit-specific and is what these modes run.
+
 ```bash
-# local  — single-party, DEV/TESTING ONLY (this machine could forge proofs)
+# local — single-party, DEV/TESTING ONLY (this machine could forge proofs)
 bin/account-ownership-recovery-cli setup --tau local --i-understand-insecure
 
-# ptau   — real phase-2 ceremony from a prepared powers-of-tau (needs snarkjs)
+# ptau  — run phase 2 against a prepared phase-1 you already have (INPUT; needs snarkjs)
 bin/account-ownership-recovery-cli setup --tau ptau --ptau powersOfTau25.ptau
 
-# ptau   — import a finalized .zkey produced by a real multi-party ceremony
-bin/account-ownership-recovery-cli setup --tau ptau --zkey circuit_final.zkey
+# ptau  — same, but download the .ptau first (resumable)
+bin/account-ownership-recovery-cli setup --tau ptau --ptau-url <url> --verify-ptau
 
-# filecoin — auto-download an attested phase-1, convert/verify/prepare (coordinator-grade, best effort)
-bin/account-ownership-recovery-cli setup --tau filecoin --filecoin-url <url> --i-understand-filecoin-cost
+# ptau  — import a finalized .zkey produced by a real multi-party ceremony (no snarkjs needed)
+bin/account-ownership-recovery-cli setup --tau ptau --zkey circuit_final.zkey
 ```
 
-For anything beyond testing, publish a bundle from the `ptau`/`filecoin` path (ideally a proper
-multi-party ceremony) — not `--tau local`.
+The `.ptau` is an **input** you obtain, not something the CLI generates. It **must be BLS12-381**
+(this circuit's curve) and power ≥ 25 — the CLI checks the header and fails early otherwise. A BN254
+ptau (e.g. the **PSE Perpetual Powers of Tau**) is a different curve and cannot be used; get a
+BLS12-381 phase-1 (e.g. a **Filecoin** or **Zcash** ceremony). For anything beyond testing, publish a
+bundle from the `ptau` path (ideally a proper multi-party ceremony) — not `--tau local`.
 
 See **USAGE.md** for every command and option.
 

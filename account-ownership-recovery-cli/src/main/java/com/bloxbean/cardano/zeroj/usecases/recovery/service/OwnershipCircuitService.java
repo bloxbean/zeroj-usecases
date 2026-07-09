@@ -53,7 +53,7 @@ public class OwnershipCircuitService {
      * Single-party (development) trusted setup from a random tau. Returns the {@link
      * Groth16SetupBLS381.SetupResult} for the caller to persist ({@code Groth16PkStore.save}) and
      * export the VK from. <b>Insecure</b>: this JVM knows tau and could forge proofs — use only for
-     * testing, or produce the key bundle via the ptau/Filecoin path.
+     * testing, or produce the key bundle via the ptau ceremony path.
      */
     public Groth16SetupBLS381.SetupResult localSetup() {
         compile();
@@ -75,7 +75,7 @@ public class OwnershipCircuitService {
     /**
      * Prove against a loaded key.
      *
-     * @param snarkjsKey true when the key came from an snarkjs/ptau/Filecoin ceremony — snarkjs's
+     * @param snarkjsKey true when the key came from an snarkjs/ptau ceremony — snarkjs's
      *                   Groth16 setup appends one public-input binding row per public signal, so the
      *                   prover's QAP must use {@link ZkeyPkStoreImporter#snarkjsConstraints}. A local
      *                   setup uses the raw constraints.

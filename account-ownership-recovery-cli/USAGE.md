@@ -83,11 +83,14 @@ establishes ownership.
 ## `setup` — produce the key bundle (coordinator, one-time)
 
 ```bash
-bin/account-ownership-recovery-cli setup --tau <local|ptau|filecoin> [options] [--keys keys]
+bin/account-ownership-recovery-cli setup --tau <local|ptau> [options] [--keys keys]
 ```
 
 Common options: `--keys <dir>` (output), `--force` (overwrite), `--work-dir <dir>` (ceremony
 scratch), `--timeout-hours <n>` (per snarkjs step).
+
+The trusted setup has two phases: **phase 1** (powers of tau) is universal — you *reuse* an attested
+one, you don't generate it; **phase 2** is circuit-specific and is what `setup` runs.
 
 ### `--tau local` (dev/testing)
 ```bash
@@ -99,27 +102,33 @@ production bundle from this mode.
 
 ### `--tau ptau` (real phase-2 ceremony)
 ```bash
-# run the phase-2 ceremony here from a prepared powers-of-tau (>= 2^25)
+# run the phase-2 ceremony here from a prepared BLS12-381 powers-of-tau (>= 2^25)
 setup --tau ptau --ptau powersOfTau25.ptau [--contributions 1]
 
-# or import a finalized .zkey from a ceremony run elsewhere (snarkjs or zeroj-ceremony)
+# download the .ptau first (resumable), and verify it before use
+setup --tau ptau --ptau-url https://.../ppot_bls381_25.ptau --verify-ptau
+
+# import a finalized .zkey from a ceremony run elsewhere (snarkjs or zeroj-ceremony) — no snarkjs needed
 setup --tau ptau --zkey circuit_final.zkey [--ptau powersOfTau25.ptau]
 ```
-With `--ptau`: exports the circuit R1CS, runs `snarkjs groth16 setup`, `--contributions` coordinator
-contributions, a finalization beacon, and `snarkjs zkey verify` (the independent check), then imports
-the key. With `--zkey`: imports an already-finalized ceremony key (and verifies it if `--ptau` is
-also given). Requires snarkjs on PATH for the snarkjs steps.
 
-### `--tau filecoin` (attested phase-1, best effort)
-```bash
-setup --tau filecoin --filecoin-url <url> --i-understand-filecoin-cost [--truncate-to 25]
-setup --tau filecoin --phase1-file phase1.ptau --i-understand-filecoin-cost   # skip download
-```
-Downloads (resumable) a publicly-attested BLS12-381 phase-1, converts to `.ptau` if needed, runs
-`powersoftau verify`, optionally truncates, and `prepare phase2`, then continues as `ptau`.
-**Coordinator-grade, best effort:** the phase-1 is tens of GB and `prepare phase2` at 2^25 is a
-one-time multi-hour job (cached forever). If your ceremony's phase-1 needs a specific
-download/convert step, prepare the `.ptau` out of band and pass it via `--tau ptau --ptau`.
+- `--ptau <file>` — a **prepared** phase-1 you already have (an input, not produced here).
+- `--ptau-url <url>` — download that file first (resumable); combine with `--verify-ptau` to run
+  `snarkjs powersoftau verify` on it before use (recommended for downloads; slow at 2²⁵).
+- `--zkey <file>` — import an already-finalized ceremony key; verified against `--ptau` if given.
+  This path needs **no snarkjs** (the import is pure Java).
+
+With `--ptau`/`--ptau-url` (no `--zkey`): exports the circuit R1CS, runs `snarkjs groth16 setup`,
+`--contributions` coordinator contributions, a finalization beacon, and `snarkjs zkey verify`, then
+imports the key. Requires snarkjs on PATH for those steps.
+
+**The `.ptau` must be BLS12-381** (this circuit's curve) and power ≥ 25. The CLI reads the ptau header
+and **fails early** if it's the wrong curve or too small. A BN254 ptau — e.g. the **PSE Perpetual
+Powers of Tau** — cannot be used; obtain a BLS12-381 phase-1 (e.g. a **Filecoin** or **Zcash**
+ceremony), or run your own with `snarkjs powersoftau new bls12-381 25 …`.
+
+For a genuine multi-party phase-2 ceremony, run the contributions out of band (snarkjs, or the
+`zeroj-ceremony` tool) and import the finalized key with `--zkey`.
 
 ---
 
