@@ -4,15 +4,19 @@ plugins {
 
 group = 'com.bloxbean.cardano'
 
-// Release version: the repo-wide <repo-root>/version.properties (single source), overridable with
-// -PreleaseVersion. Falls back to a default so this project still builds if copied out of the repo.
-version = project.findProperty('releaseVersion') ?: {
+// All versions come from the repo-wide version.properties (walking up to the repo root); -P overrides;
+// inlined fallbacks keep this project buildable if copied out of the repo.
+def repoVersions = {
+    def props = new Properties()
     for (def dir = projectDir; dir != null; dir = dir.parentFile) {
         def vf = new File(dir, 'version.properties')
-        if (vf.isFile()) { def p = new Properties(); vf.withInputStream { p.load(it) }; return p.getProperty('version') }
+        if (vf.isFile()) { vf.withInputStream { props.load(it) }; break }
     }
-    return '0.1.0-SNAPSHOT'
+    props
 }()
+def ver = { String key, String fallback -> project.findProperty(key) ?: repoVersions.getProperty(key) ?: fallback }
+
+version = project.findProperty('releaseVersion') ?: repoVersions.getProperty('version') ?: '0.1.0-SNAPSHOT'
 
 java {
     toolchain { languageVersion = JavaLanguageVersion.of(25) }
@@ -25,9 +29,9 @@ repositories {
     maven { url = uri("https://repo.spring.io/milestone") }
 }
 
-def zerojVersion = project.findProperty('zerojVersion') ?: '0.1.0-pre5'
-def julcVersion  = project.findProperty('julcVersion')  ?: '0.1.0-pre14'
-def cclVersion   = project.findProperty('cclVersion')   ?: '0.8.0-pre4'
+def zerojVersion = ver('zerojVersion', '0.1.0-pre7')
+def julcVersion  = ver('julcVersion', '0.1.0-pre14')
+def cclVersion   = ver('cclVersion', '0.8.0-pre4')
 
 dependencies {
     // ZeroJ ZK: circuit DSL + gadgets, prover, on-chain julc verifier, blst prover backend.

@@ -1,5 +1,10 @@
+// All versions live in <repo-root>/version.properties (the single source). This exposes the
+// dependency versions as ext properties for the coordinated usecase builds, with -P / env override.
+def versions = new Properties()
+file("${rootDir}/version.properties").withInputStream { versions.load(it) }
+
 ext {
-    zerojVersion = project.findProperty('zerojVersion') ?: System.getenv('ZEROJ_VERSION') ?: '0.1.0-pre7'
-    julcVersion = project.findProperty('julcVersion') ?: System.getenv('JULC_VERSION') ?: '0.1.0-pre14'
-    cclVersion = project.findProperty('cclVersion') ?: System.getenv('CCL_VERSION') ?: '0.8.0-pre4'
+    zerojVersion = project.findProperty('zerojVersion') ?: System.getenv('ZEROJ_VERSION') ?: versions.getProperty('zerojVersion')
+    julcVersion = project.findProperty('julcVersion') ?: System.getenv('JULC_VERSION') ?: versions.getProperty('julcVersion')
+    cclVersion = project.findProperty('cclVersion') ?: System.getenv('CCL_VERSION') ?: versions.getProperty('cclVersion')
 }
