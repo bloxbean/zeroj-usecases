@@ -130,6 +130,14 @@ setup-cli verify --onchain
 For trying the tool without installing Java — great for the light commands (`verify` / `info` /
 `import` / `export-r1cs`). Bind-mount a host `keys/` folder to **reuse an existing bundle**.
 
+**Published image (no build)** — once the GHCR image is pushed (Actions ▸ *account-ownership-recovery-cli
+— GHCR image*):
+```bash
+docker run --rm -v $PWD/keys:/work/keys -v $PWD/proofs:/work/proofs \
+  ghcr.io/bloxbean/account-ownership-recovery-cli verify
+```
+
+**Build locally** (from source):
 ```bash
 # build the fat jar once, then the image
 ./gradlew fatJar

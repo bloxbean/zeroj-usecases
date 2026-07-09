@@ -1,0 +1,121 @@
+name: account-ownership-recovery-cli — GHCR image
+
+# Manually build the Account-Ownership Proof CLI and push its Docker image to GitHub Container
+# Registry (ghcr.io). Trigger from the Actions tab (workflow_dispatch).
+#
+# The image version defaults to `version` in the CLI's build.gradle, or override it via the input.
+#
+# ZeroJ and Julc are not on Maven Central yet, so they're built from source into the runner's local
+# Maven repo first. The refs you pass MUST publish the versions the CLI pins in gradle.properties
+# (zerojVersion / julcVersion), otherwise the CLI build won't resolve its dependencies.
+#
+# One-time: set the package visibility to Public (repo Packages settings) so anonymous `docker pull`
+# works and it stays free.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Image tag (blank = read `version` from the CLI build.gradle)'
+        required: false
+        default: ''
+      latest:
+        description: 'Also push :latest'
+        type: boolean
+        default: true
+      zeroj_ref:
+        description: 'bloxbean/zeroj git ref to build (must publish the pinned zerojVersion)'
+        default: 'main'
+      julc_ref:
+        description: 'bloxbean/julc git ref to build (must publish the pinned julcVersion)'
+        default: 'main'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  ghcr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout zeroj-usecases
+        uses: actions/checkout@v4
+        with:
+          path: zeroj-usecases
+
+      - name: Set up JDK 25 (GraalVM)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'graalvm'
+          java-version: '25'
+
+      # --- dependencies from source (remove once on Maven Central) ---
+      - name: Checkout julc
+        uses: actions/checkout@v4
+        with:
+          repository: bloxbean/julc
+          ref: ${{ inputs.julc_ref }}
+          path: julc
+      - name: Build julc -> mavenLocal
+        run: cd julc && ./gradlew publishToMavenLocal -x test --no-daemon
+
+      - name: Checkout zeroj
+        uses: actions/checkout@v4
+        with:
+          repository: bloxbean/zeroj
+          ref: ${{ inputs.zeroj_ref }}
+          path: zeroj
+      - name: Build zeroj -> mavenLocal
+        run: cd zeroj && ./gradlew publishToMavenLocal -x test -PskipSigning --no-daemon
+
+      # --- build the fat jar the image wraps ---
+      - name: Build the CLI fat jar
+        run: cd zeroj-usecases/account-ownership-recovery-cli && ./gradlew fatJar --no-daemon
+
+      - name: Resolve image version
+        id: ver
+        env:
+          IN_VERSION: ${{ inputs.version }}
+        run: |
+          V="$IN_VERSION"
+          if [ -z "$V" ]; then
+            V=$(grep -m1 "^version" zeroj-usecases/account-ownership-recovery-cli/build.gradle \
+                | sed -E "s/.*'([^']+)'.*/\1/")
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Image version: $V"
+
+      # --- build + push image ---
+      - name: Docker metadata (tags/labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/account-ownership-recovery-cli
+          tags: |
+            type=raw,value=${{ steps.ver.outputs.version }}
+            type=raw,value=latest,enable=${{ inputs.latest }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: zeroj-usecases/account-ownership-recovery-cli
+          file: zeroj-usecases/account-ownership-recovery-cli/docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Summary
+        run: |
+          {
+            echo "### Pushed image"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
