@@ -96,13 +96,26 @@ argument — always the hidden prompt.
 # off-chain (default): pure-Java pairing check against vk.json — sub-second, no network
 setup-cli verify [--keys keys] [--proof proofs]
 
-# on-chain: lock a gate UTxO (datum = pkh) at the bundled validator, unlock it with the proof
-setup-cli verify --onchain [--bf-url http://localhost:8080/api/v1/] [--bf-key <project-id>]
+# on-chain, Yaci DevKit (default: --network devnet) — auto-funds the admin account
+setup-cli verify --onchain
+
+# on-chain, hosted Blockfrost — --network auto-sets the URL; pass the key (flag or env)
+setup-cli verify --onchain --network preprod --bf-key preprod...
+BLOCKFROST_PROJECT_ID=preprod...  setup-cli verify --onchain --network preprod
 ```
 
-On-chain defaults to a local **Yaci DevKit** (auto-funds the payer). Against a hosted network pass
-`--bf-url`/`--bf-key`; the funding wallet (prompted, hidden) must already hold ADA — it only submits
-the demo transactions; the proof itself establishes ownership.
+**Backend (`--network`):** `devnet | preview | preprod | mainnet` selects **both** the Cardano
+network **and** the default Blockfrost URL:
+- `devnet` (default) → local **Yaci DevKit** (`http://localhost:8080/api/v1/`), no key.
+- `preview`/`preprod`/`mainnet` → the matching **Blockfrost** endpoint. Pass the project key via
+  `--bf-key` **or** the `BLOCKFROST_PROJECT_ID` env var. Override the URL with `--bf-url` if needed.
+
+**Admin / funding account:** on-chain verify locks a gate UTxO and pays fees + collateral from an
+**admin account** — the account of the mnemonic in the **`AOR_ADMIN_MNEMONIC`** env var, else the
+**hidden prompt** (base address `m/1852'/1815'/0'/0/0`). To use a different admin, use a different
+mnemonic. This is a **funding wallet, not the wallet being proven** — use a low-value account. On
+`devnet` it's auto-funded; elsewhere it must **already hold ADA**. It only submits the demo
+transactions — the proof itself establishes ownership.
 
 ## `info` — inspect a bundle
 

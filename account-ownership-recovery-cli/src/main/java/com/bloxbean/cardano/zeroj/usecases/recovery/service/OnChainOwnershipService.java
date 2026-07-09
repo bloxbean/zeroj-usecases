@@ -5,7 +5,7 @@ import com.bloxbean.cardano.client.address.AddressProvider;
 import com.bloxbean.cardano.client.api.model.Amount;
 import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.cardano.client.backend.api.BackendService;
-import com.bloxbean.cardano.client.common.model.Networks;
+import com.bloxbean.cardano.client.common.model.Network;
 import com.bloxbean.cardano.client.function.helper.SignerProviders;
 import com.bloxbean.cardano.client.plutus.spec.*;
 import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
@@ -30,15 +30,17 @@ public class OnChainOwnershipService {
     private final BackendService backendService;
     private final Account adminAccount;
     private final SnarkjsToCardano.VkCompressed vk;
+    private final Network network;
 
     private PlutusScript script;
     private String scriptAddr;
 
     public OnChainOwnershipService(BackendService backendService, Account adminAccount,
-                                   SnarkjsToCardano.VkCompressed vk) {
+                                   SnarkjsToCardano.VkCompressed vk, Network network) {
         this.backendService = backendService;
         this.adminAccount = adminAccount;
         this.vk = vk;
+        this.network = network;
     }
 
     public synchronized void initialize() {
@@ -49,7 +51,7 @@ public class OnChainOwnershipService {
                 new BytesPlutusData(vk.gamma()),
                 new BytesPlutusData(vk.delta()),
                 vkIcData(vk.ic()));
-        scriptAddr = AddressProvider.getEntAddress(script, Networks.testnet()).toBech32();
+        scriptAddr = AddressProvider.getEntAddress(script, network).toBech32();
     }
 
     public String scriptAddress() { initialize(); return scriptAddr; }
