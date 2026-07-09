@@ -1,16 +1,18 @@
-name: account-ownership-recovery-cli release
+name: release (account-ownership-recovery-cli)
 
-# Builds the Account-Ownership Proof CLI fat-jar + native zips and attaches them to a GitHub release.
+# Builds the Account-Ownership Proof CLI fat-jar + native zips and attaches them to a GitHub Release.
 #
-#   preview : Actions ▸ Run workflow  → builds + uploads the zips as a workflow artifact (no release)
-#   release : push a tag  account-ownership-recovery-cli-v*  → uploads the zips to that release
+#   preview : Actions ▸ Run workflow            → builds + uploads the zips as a workflow ARTIFACT
+#   release : push a repo tag  v<version>        → uploads the zips to the GitHub RELEASE for that tag
 #
-# ZeroJ / Julc / cardano-client-lib all resolve from Maven Central (the versions pinned in
-# account-ownership-recovery-cli/gradle.properties must be published there).
+# The release version comes from the tag (`v0.1.0-pre1` -> 0.1.0-pre1), which should match
+# version.properties at the repo root. ZeroJ / Julc / cardano-client-lib resolve from Maven Central.
+#
+# Future usecases (private-voting, …) can be added as extra build/upload steps here.
 
 on:
   push:
-    tags: ['account-ownership-recovery-cli-v*']
+    tags: ['v*']
   workflow_dispatch: {}
 
 permissions:
@@ -28,21 +30,31 @@ jobs:
           distribution: 'graalvm'
           java-version: '25'
 
-      - name: Build fat-jar distZip (dependencies from Maven Central)
-        run: cd account-ownership-recovery-cli && ./gradlew distZip --no-daemon
+      - name: Resolve release version (tag > version.properties)
+        id: ver
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V=$(grep -m1 '^version' version.properties | cut -d= -f2)
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Release version: $V"
+
+      - name: Build fat-jar distZip (deps from Maven Central)
+        run: cd account-ownership-recovery-cli && ./gradlew distZip -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
 
       - name: Build native binary zip (this runner's platform)
-        run: cd account-ownership-recovery-cli && ./gradlew nativeDistZip --no-daemon
-        # For all-platform native binaries, run this job on a linux/macos/windows × x64/arm64 matrix
-        # (mirror zeroj's release.yml ceremony-cli matrix); this single job builds linux-x86_64.
+        run: cd account-ownership-recovery-cli && ./gradlew nativeDistZip -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
+        # For all-platform native binaries, run this job on a linux/macos/windows × x64/arm64 matrix.
 
       - name: Upload workflow artifact (preview + release)
         uses: actions/upload-artifact@v4
         with:
-          name: account-ownership-recovery-cli-zip
+          name: account-ownership-recovery-cli-${{ steps.ver.outputs.version }}
           path: account-ownership-recovery-cli/build/dist/*.zip
 
-      - name: Attach to GitHub release (tag builds only)
+      - name: Attach to the GitHub Release (tag builds only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:

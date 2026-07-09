@@ -7,15 +7,20 @@ name: account-ownership-recovery-cli — GHCR image
 # gradle.properties must be published there. (Requires zeroj >= the version that ships
 # zeroj-crypto-blst on Central.)
 #
-# The image version defaults to `version` in the CLI's build.gradle, or override it via the input.
+# Triggers:
+#   - a repo tag `v<version>` (same tag that cuts a release) -> pushes :<version> + :latest
+#   - manual (Actions ▸ Run workflow), optionally overriding the tag/version
+# Version: tag > manual input > version.properties (repo root).
 # One-time: set the package visibility to Public (repo Packages settings) so anonymous `docker pull`
 # works and it stays free.
 
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       version:
-        description: 'Image tag (blank = read `version` from the CLI build.gradle)'
+        description: 'Image tag (blank = version.properties)'
         required: false
         default: ''
       latest:
@@ -39,21 +44,19 @@ jobs:
           distribution: 'temurin'
           java-version: '25'
 
-      - name: Build the CLI fat jar (dependencies from Maven Central)
-        run: cd account-ownership-recovery-cli && ./gradlew fatJar --no-daemon
-
-      - name: Resolve image version
+      - name: Resolve image version (tag > input > version.properties)
         id: ver
         env:
           IN_VERSION: ${{ inputs.version }}
         run: |
-          V="$IN_VERSION"
-          if [ -z "$V" ]; then
-            V=$(grep -m1 "^version" account-ownership-recovery-cli/build.gradle \
-                | sed -E "s/.*'([^']+)'.*/\1/")
-          fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then V="${GITHUB_REF_NAME#v}"
+          elif [ -n "$IN_VERSION" ]; then V="$IN_VERSION"
+          else V=$(grep -m1 '^version' version.properties | cut -d= -f2); fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "Image version: $V"
+
+      - name: Build the CLI fat jar (dependencies from Maven Central)
+        run: cd account-ownership-recovery-cli && ./gradlew fatJar -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
 
       - name: Docker metadata (tags/labels)
         id: meta
@@ -62,7 +65,7 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/account-ownership-recovery-cli
           tags: |
             type=raw,value=${{ steps.ver.outputs.version }}
-            type=raw,value=latest,enable=${{ inputs.latest }}
+            type=raw,value=latest,enable=${{ inputs.latest != 'false' }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
