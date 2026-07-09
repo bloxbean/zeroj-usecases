@@ -56,9 +56,15 @@ jobs:
       - name: Build zeroj -> mavenLocal
         run: cd zeroj && ./gradlew publishToMavenLocal -x test -PskipSigning --no-daemon
 
-      # --- the CLI distribution ---
-      - name: Build CLI distZip
+      # --- the CLI distributions ---
+      - name: Build fat-jar distZip
         run: cd zeroj-usecases/account-ownership-recovery-cli && ./gradlew distZip --no-daemon
+
+      - name: Build native binary zip (this runner's platform)
+        run: cd zeroj-usecases/account-ownership-recovery-cli && ./gradlew nativeDistZip --no-daemon
+        # GraalVM native-image is provided by the 'graalvm' setup-java distribution above.
+        # For all-platform native binaries, run this job on a linux/macos/windows × x64/arm64 matrix
+        # (mirror zeroj's release.yml ceremony-cli matrix); this single job builds linux-x86_64.
 
       - name: Upload workflow artifact (preview + release)
         uses: actions/upload-artifact@v4

@@ -88,11 +88,13 @@ public final class Bundle {
 
     /**
      * Close a loaded store, ignoring failures. In a GraalVM native image the store's shared mmap
-     * Arena cannot be closed (shared-arena close is disabled by default), which would otherwise
-     * throw after a successful prove/verify — the OS reclaims the mapping on exit regardless.
+     * Arena cannot be closed — the close fatally aborts the process ({@code VMError.unsupportedFeature},
+     * which is not a catchable throwable), so we skip it entirely there. The OS reclaims the mapping
+     * on exit regardless. On the JVM, close frees the mapping normally.
      */
     public static void closeQuietly(AutoCloseable c) {
         if (c == null) return;
+        if (System.getProperty("org.graalvm.nativeimage.imagecode") != null) return; // skip in native image
         try { c.close(); } catch (Throwable ignored) {}
     }
 

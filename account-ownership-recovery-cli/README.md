@@ -70,7 +70,11 @@ On smaller machines `prove`/`setup --tau local` will run out of memory. Verifica
 
 The native binary runs every command, but proving on it uses the pure-Java backend (blst reaches
 `libblst` via FFM, which isn't wired into the image) and is slower than the fat jar — so for heavy
-proving, use the fat jar. Off-chain verification on the native binary is ~0.1 s.
+proving, use the fat jar. Off-chain verification on the native binary (with `vk.json`) is ~0.1 s and
+needs no flags. Operations that load the 23 GB proving-key store on the native binary (`prove`, or
+`verify` when `vk.json` is absent) need an explicit large heap, e.g.
+`./account-ownership-recovery-cli -Xmx110g prove` — the native image's default heap address space is
+too small for the store.
 
 ## Install / requirements
 
