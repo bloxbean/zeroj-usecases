@@ -86,8 +86,19 @@ public class OwnershipCircuitService {
         List<R1CSConstraint> cons = snarkjsKey
                 ? ZkeyPkStoreImporter.snarkjsConstraints(r1cs.constraints(), r1cs.numPublicInputs())
                 : r1cs.constraints();
-        return Groth16ProverBLS381.proveWithReaders(key.pk(), key.readers(), backend,
-                witness, cons, r1cs.numWires(), key.domain());
+        int domain = key.domain();
+
+        // ADR-0033 M2: the constraints list + compiled circuit graph are many GB at 19M
+        // constraints and are needed only to build the H polynomial. Compute H, then release
+        // them (null the cached circuit/r1cs) so none of that memory is resident during the five
+        // MSMs — where the proving-heap peak (and the OOM) occurred. `compile()` is idempotent, so
+        // a later prove in the same process simply recompiles.
+        BigInteger[] hCoeffs = Groth16ProverBLS381.computeH(cons, witness, cons.size(), domain);
+        cons = null;
+        circuit = null;
+        r1cs = null;
+
+        return Groth16ProverBLS381.proveWithHCoeffs(key.pk(), key.readers(), backend, witness, hCoeffs);
     }
 
     /** ZkBytes input keys are {@code base_i}, one byte per element. */

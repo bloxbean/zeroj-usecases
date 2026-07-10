@@ -88,13 +88,15 @@ See **USAGE.md** for every command and option.
 | step | time | notes |
 |---|---|---|
 | `setup` (local) | ~47 min | one-time, ~90 GB heap |
-| key bundle on disk | ~23 GB | mmap-loaded, not fully read into RAM |
-| `prove` | **~4.7 min** | ~100 s mmap key load + ~2 s witness + ~165 s blst prove |
+| key bundle on disk | ~23 GB | mmap-loaded (instant), not read into the JVM heap |
+| `prove` | **~2.5 min** | ~20 s circuit compile + ~2 s witness + ~130 s blst prove (ADR-0033) |
 | `verify` (off-chain) | **~0.2 s** | reads the small `vk.json` |
 | `verify --onchain` | **~5 s** | one lock + one unlock tx on Yaci DevKit |
 
-**Hardware:** proving needs a large-memory machine — **~64 GB+ RAM** (measured ~66–70 GB peak). On
-smaller machines `prove`/`setup` run out of memory. Verification is light.
+**Hardware:** proving needs **~24 GB+ RAM** (measured floor: 20 GB heap passes, 16 GB does not —
+ADR-0033; was ~70 GB before it). The 23 GB key bundle is memory-mapped, so it uses the page cache,
+not the heap. `setup` still needs a ~90 GB-heap machine (one-time, coordinator only). Verification
+is light.
 
 ---
 

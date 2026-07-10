@@ -19,8 +19,8 @@ import java.util.concurrent.Callable;
 
 /**
  * Generate an ownership proof from the wallet mnemonic. This is where a normal user starts: given a
- * downloaded key bundle, it takes a few minutes and needs a large-memory machine (the proving key is
- * mmap-loaded, ~2 min; the proof itself, ~2–3 min on the blst multi-core backend).
+ * downloaded key bundle, it takes ~2.5 min end-to-end with ≥24 GB of heap (the proving key is
+ * mmap-loaded instantly; the proof itself is ~2 min on the blst multi-core backend — ADR-0033).
  *
  * <p>The mnemonic is read via a hidden interactive prompt — never a command-line argument, an
  * environment variable, or a file. The root key derived from it stays in memory and is never
@@ -30,14 +30,20 @@ import java.util.concurrent.Callable;
         description = "Generate an ownership proof from your mnemonic.")
 public final class ProveCommand implements Callable<Integer> {
 
+    // ADR-0033 measured heap floors for the 19M-constraint prove: 20 GB passes (2026-07-09,
+    // blst, ~2.6 min), 16 GB OOMs in the R1CS frontend compile before the prove is reached.
+    // HARD_MIN: below this the run cannot complete; RECOMMENDED: no-GC-tax headroom (~2.2 min).
+    private static final int HARD_MIN_HEAP_GB = 20;
+    private static final int RECOMMENDED_HEAP_GB = 24;
+
     enum Backend { blst, java }
 
     @Option(names = "--keys", defaultValue = "keys", description = "Key-bundle directory. Default: ${DEFAULT-VALUE}.")
     Path keysDir;
 
     @Option(names = "--backend", defaultValue = "blst",
-            description = "Prover backend: blst (fast native, ~2-3 min) or java (pure-Java multi-core, "
-                    + "~9 min, no native lib). Default: ${DEFAULT-VALUE}.")
+            description = "Prover backend: blst (native) or java (pure-Java multi-core, no native "
+                    + "lib). Both ~2-3 min since ADR-0033. Default: ${DEFAULT-VALUE}.")
     Backend backend;
 
     @Option(names = "--out", defaultValue = "proofs", description = "Output directory for the proof. Default: ${DEFAULT-VALUE}.")
@@ -63,6 +69,23 @@ public final class ProveCommand implements Callable<Integer> {
             System.err.println("No key bundle at " + keysDir.toAbsolutePath()
                     + "\nRun `setup` (coordinator) or download a published bundle into this directory.");
             return 2;
+        }
+
+        // ADR-0033: fail fast on an obviously-too-small heap, BEFORE the multi-GB circuit compile
+        // and the mnemonic prompt. Sizes below the hard floor cannot complete regardless of
+        // backend — 16 GB dies in the R1CS compile itself, so this check must come first.
+        // round to nearest GB: -Xmx20g reports maxMemory() slightly under 20 GB
+        long maxHeapGb = (Runtime.getRuntime().maxMemory() + (1L << 29)) / (1L << 30);
+        if (maxHeapGb < HARD_MIN_HEAP_GB) {
+            System.err.printf("Not enough heap: -Xmx is ~%d GB but proving this circuit needs at "
+                    + "least ~%d GB (recommended %d GB). Re-run with a larger -Xmx (the fat-jar/native "
+                    + "launchers auto-size to ~80%% of RAM), on a machine with enough RAM.%n",
+                    maxHeapGb, HARD_MIN_HEAP_GB, RECOMMENDED_HEAP_GB);
+            return 2;
+        }
+        if (maxHeapGb < RECOMMENDED_HEAP_GB) {
+            System.err.printf("Warning: -Xmx is ~%d GB; proving may be tight (recommended ~%d GB). "
+                    + "Continuing.%n", maxHeapGb, RECOMMENDED_HEAP_GB);
         }
 
         var svc = new OwnershipCircuitService();
@@ -145,10 +168,11 @@ public final class ProveCommand implements Callable<Integer> {
     private ProverBackend selectBackend() {
         if (backend == Backend.java) { backendLabel = "java"; return ProverBackend.PURE_JAVA; }
         // blst reaches libblst via FFM downcalls, which aren't registered in this native image.
-        // Route to the pure-Java backend so proving works; use the fat jar for the fast blst path.
+        // Route to the pure-Java backend so proving works — since ADR-0033 (mmap'd key, no
+        // marshalling) it proves in the same ~2-3 min as blst at this scale.
         if (System.getProperty("org.graalvm.nativeimage.imagecode") != null) {
             System.err.println("Note: blst is unavailable in the native binary — using the pure-Java "
-                    + "backend (slower). For the fast blst prover, use the fat-jar distribution.");
+                    + "backend (comparable speed).");
             backendLabel = "java";
             return ProverBackend.PURE_JAVA;
         }
@@ -158,7 +182,8 @@ public final class ProveCommand implements Callable<Integer> {
             return b;
         } catch (Throwable t) {
             System.err.println("blst native backend unavailable (" + t.getMessage()
-                    + ") — falling back to the pure-Java backend (slower). Use --backend java to silence this.");
+                    + ") — falling back to the pure-Java backend (comparable speed). "
+                    + "Use --backend java to silence this.");
             backendLabel = "java";
             return ProverBackend.PURE_JAVA;
         }

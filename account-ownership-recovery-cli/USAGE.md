@@ -86,9 +86,9 @@ Compiles the circuit + checks its fingerprint, prompts for your **mnemonic (hidd
 root key + target address (`m/1852'/1815'/<account>'/0/<index>`), mmap-loads the proving key, proves,
 writes `proofs/proof.json` + `proofs/public-inputs.json`, and self-checks off-chain.
 
-`--backend blst` (default) is the fast native prover (~2–3 min); `--backend java` is pure-Java (~9
-min, no native lib). Takes ~5 min and needs ~64 GB+ RAM. The mnemonic is never accepted as an
-argument — always the hidden prompt.
+`--backend blst` (default) is the native prover; `--backend java` is pure-Java (no native lib) —
+both prove in ~2–3 min since ADR-0033. Takes ~2.5–4 min end-to-end and needs **~24 GB+ RAM**
+(measured floor 20 GB). The mnemonic is never accepted as an argument — always the hidden prompt.
 
 ## `verify` — check a proof
 
@@ -177,10 +177,11 @@ KEYS_DIR=$PWD/keys PROOFS_DIR=$PWD/proofs AOR_ADMIN_MNEMONIC="…" \
 ```
 
 - **Light commands work anywhere** (verify only needs the tiny `vk.json`).
-- **`prove` / `setup` are the exception:** they need ~80 GB and memory-map the 23 GB store. That's only
-  practical on a big **Linux** host — set `mem_limit` in the compose file and `JAVA_OPTS="-Xmx80g"`.
-  On Docker Desktop (mac/win) the VM RAM cap + slow mmap over bind-mounts make heavy proving
-  impractical; use the fat-jar or native distribution directly for that.
+- **`prove` / `setup` are the exception:** `prove` needs ~24 GB heap (ADR-0033) and memory-maps the
+  23 GB store; `setup` needs ~90 GB. That's most practical on a **Linux** host — set `mem_limit`
+  in the compose file and `JAVA_OPTS="-Xmx24g"` (or more). On Docker Desktop (mac/win) the VM RAM
+  cap + slow mmap over bind-mounts can still make heavy proving slow; the fat-jar or native
+  distribution directly is the smoother path.
 
 ## Exit codes
 `0` success · `1` verification failed / internal error · `2` bad usage / missing bundle / missing
