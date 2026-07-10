@@ -10,7 +10,7 @@ import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16PkStore;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.ProverBackend;
-import com.bloxbean.cardano.zeroj.crypto.groth16.ZkeyPkStoreImporter;
+import com.bloxbean.cardano.zeroj.crypto.msm.FlatScalars;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.usecases.recovery.circuit.OwnershipProofCircuit;
 
@@ -74,6 +74,18 @@ public class OwnershipCircuitService {
     }
 
     /**
+     * {@link #witness} packed to flat canonical limbs (ADR-0034 M3, 32 B/scalar) — the boxed
+     * {@code BigInteger[]} (~3 GB at 43.7M wires) is consumed during packing and the circuit
+     * graph (~3 GB, only needed for witness calculation) is released first, so neither is
+     * resident during the prove. A later {@code witness()} in the same process recompiles.
+     */
+    public FlatScalars witnessFlat(byte[] rootKL, byte[] rootKR, byte[] rootChainCode, byte[] pkh) {
+        BigInteger[] w = witness(rootKL, rootKR, rootChainCode, pkh);
+        circuit = null; // graph served its purpose; r1cs (the packed constraints) stays for prove()
+        return FlatScalars.packConsuming(w, w.length);
+    }
+
+    /**
      * Prove against a loaded key.
      *
      * @param snarkjsKey true when the key came from an snarkjs/ptau ceremony — snarkjs's
@@ -81,7 +93,7 @@ public class OwnershipCircuitService {
      *                   prover's QAP must use {@link ZkeyPkStoreImporter#snarkjsConstraints}. A local
      *                   setup uses the raw constraints.
      */
-    public Groth16ProofBLS381 prove(Groth16PkStore.Loaded key, BigInteger[] witness,
+    public Groth16ProofBLS381 prove(Groth16PkStore.Loaded key, FlatScalars witness,
                                     ProverBackend backend, boolean snarkjsKey) {
         compile();
         // ADR-0034 M2: computeH reads the packed CSR matrices (~12 B/term) instead of 19M map
@@ -97,9 +109,11 @@ public class OwnershipCircuitService {
         // peak. The packed matrices are computeH's input and are released right after it, so
         // neither is resident during the five MSMs. `compile()` is idempotent, so a later prove
         // in the same process simply recompiles.
+        // ADR-0034 M3: witness and hCoeffs stay flat (32 B/scalar) end-to-end — nothing on the
+        // prove path boxes a field element.
         circuit = null;
         r1cs = null;
-        BigInteger[] hCoeffs = Groth16ProverBLS381.computeH(flat, witness, bindingRows, domain);
+        FlatScalars hCoeffs = Groth16ProverBLS381.computeHFlat(flat, witness, bindingRows, domain);
         flat = null;
 
         return Groth16ProverBLS381.proveWithHCoeffs(key.pk(), key.readers(), backend, witness, hCoeffs);

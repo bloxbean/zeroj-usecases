@@ -30,12 +30,12 @@ import java.util.concurrent.Callable;
         description = "Generate an ownership proof from your mnemonic.")
 public final class ProveCommand implements Callable<Integer> {
 
-    // ADR-0034 M2 measured heap floors for the 19M-constraint prove (2026-07-10, packed CSR
-    // constraints): 10 GB passes (~2.3 min blst), 8 GB OOMs in computeH (FFT + witness +
-    // hCoeffs — the ADR-0034 M3 target). HARD_MIN: below this the run cannot complete;
-    // RECOMMENDED: comfortable headroom.
-    private static final int HARD_MIN_HEAP_GB = 10;
-    private static final int RECOMMENDED_HEAP_GB = 12;
+    // ADR-0034 M3 measured heap floors for the 19M-constraint prove (2026-07-10, packed CSR
+    // constraints + flat witness/hCoeffs): 8 GB passes (~2.2 min blst), 6 GB OOMs in the R1CS
+    // frontend compile. HARD_MIN: below this the run cannot complete; RECOMMENDED: comfortable
+    // headroom.
+    private static final int HARD_MIN_HEAP_GB = 8;
+    private static final int RECOMMENDED_HEAP_GB = 10;
 
     enum Backend { blst, java }
 
@@ -126,7 +126,8 @@ public final class ProveCommand implements Callable<Integer> {
 
             System.out.println("Computing witness ...");
             long tw = System.nanoTime();
-            BigInteger[] witness = svc.witness(wallet.rootKL(), wallet.rootKR(), wallet.rootChainCode(), wallet.pkh());
+            // packed flat scalars (ADR-0034 M3): the boxed witness dies inside witnessFlat
+            var witness = svc.witnessFlat(wallet.rootKL(), wallet.rootKR(), wallet.rootChainCode(), wallet.pkh());
             System.out.printf("  witness: %.1fs%n", secs(tw));
 
             ProverBackend prover = selectBackend();
