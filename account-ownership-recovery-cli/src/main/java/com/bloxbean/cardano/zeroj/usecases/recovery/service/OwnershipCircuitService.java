@@ -88,15 +88,16 @@ public class OwnershipCircuitService {
                 : r1cs.constraints();
         int domain = key.domain();
 
-        // ADR-0033 M2: the constraints list + compiled circuit graph are many GB at 19M
-        // constraints and are needed only to build the H polynomial. Compute H, then release
-        // them (null the cached circuit/r1cs) so none of that memory is resident during the five
-        // MSMs — where the proving-heap peak (and the OOM) occurred. `compile()` is idempotent, so
-        // a later prove in the same process simply recompiles.
-        BigInteger[] hCoeffs = Groth16ProverBLS381.computeH(cons, witness, cons.size(), domain);
-        cons = null;
+        // ADR-0033 M2 / ADR-0034 M1: the compiled circuit graph (~3 GB at 19M) is only needed for
+        // witness calculation — already done by the caller — so release it (and r1cs; the local
+        // `cons` holds the constraint list) BEFORE computeH, which was the measured 16.8 GB peak.
+        // The constraints are computeH's input and are released right after it, so neither is
+        // resident during the five MSMs. `compile()` is idempotent, so a later prove in the same
+        // process simply recompiles.
         circuit = null;
         r1cs = null;
+        BigInteger[] hCoeffs = Groth16ProverBLS381.computeH(cons, witness, cons.size(), domain);
+        cons = null;
 
         return Groth16ProverBLS381.proveWithHCoeffs(key.pk(), key.readers(), backend, witness, hCoeffs);
     }
