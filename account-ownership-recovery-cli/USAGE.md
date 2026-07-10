@@ -185,10 +185,14 @@ KEYS_DIR=$PWD/keys PROOFS_DIR=$PWD/proofs AOR_ADMIN_MNEMONIC="…" \
 - **Light commands work anywhere** (verify only needs the tiny `vk.json`).
 - **`prove` / `setup` are the exception:** `prove` needs ~10 GB heap (ADR-0034) and memory-maps the
   ~9.6 GB sparse store; `setup` needs ~8 GB heap (measured floor; ADR-0035). For either, set `mem_limit` in the compose file and
-  `JAVA_OPTS="-Xmx8g"` (or more). Measured: **both fit a hard 16 GiB cap** — prove 2.6 min (`-Xmx8g`, ADR-0034 M5) and setup 11.5 min (`-Xmx12g`, ADR-0035 M5). On a **Linux 16 GB host** that maps directly. On a 16 GB **Docker Desktop** machine (mac/win) the VM keeps ~3-4 GB from the host, so prove fits easily but setup gets tight — prefer the fat jar on the host there. Reference: a container hard-capped at
-  `--memory=16g` proves in **~2.6 min** on Docker Desktop (mac) with the keys bind-mounted —
-  the CLI auto-selects the pure-Java backend there (blst's native MSM buffers don't fit a 16 GB
-  cap at this circuit size).
+  `JAVA_OPTS="-Xmx8g"`. Measured (ADR-0035): the **whole loop fits a hard 16 GiB cap with zero
+  swap** — one container chained `setup` (9.6 min) → `prove` (2.7 min, self-check PASS) →
+  `verify` (VALID) at `-Xmx8g` for both heavy steps, sparse bundle on a Docker volume,
+  **12.6 min total**. On a **Linux 16 GB host** that maps directly. On a 16 GB **Docker Desktop**
+  machine (mac/win) the VM keeps ~3-4 GB from the host, so the heavy steps get tight — prefer
+  the fat jar on the host there. Writing the bundle to a **named volume** (VM-native disk) is
+  noticeably faster than a bind mount (VirtioFS write penalty on ~10 GB of output); the CLI
+  auto-selects the pure-Java backend under a 16 GB cap (blst's native MSM buffers don't fit).
 
 ## Exit codes
 `0` success · `1` verification failed / internal error · `2` bad usage / missing bundle / missing
