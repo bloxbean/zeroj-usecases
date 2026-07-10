@@ -75,7 +75,7 @@ generate it. A BN254 ptau (e.g. the PSE Perpetual Powers of Tau) is the wrong cu
 ```bash
 bin/account-ownership-recovery-cli setup --i-understand-insecure
 ```
-Single-party setup (~6–7 min, ~12 GB heap — ADR-0035; a 16 GB machine works). **Insecure:** this machine learns the setup randomness and
+Single-party setup (~6–7 min; `-Xmx8g` is the measured heap floor — ADR-0035; a 16 GB machine works). **Insecure:** this machine learns the setup randomness and
 could forge proofs. Generate once, cache the bundle, reuse for demos. Never publish a production
 bundle from this path.
 
@@ -87,20 +87,21 @@ See **USAGE.md** for every command and option.
 
 | step | time | notes |
 |---|---|---|
-| `setup` (local) | **~6.3 min** | one-time, ~12 GB heap — fits a 16 GB machine (ADR-0035); also writes `r1cs.bin` so the first prove skips its compile |
+| `setup` (local) | **~6.3 min** | one-time, 8 GB heap (measured floor; 12 GB validated under a hard 16 GiB cap) — fits a 16 GB machine (ADR-0035); also writes `r1cs.bin` so the first prove skips its compile |
 | key bundle on disk | **~9.6 GB** (sparse, the default — ADR-0035 M6; ~57% of points are infinity and are stored as 1 bit each) | mmap-loaded (instant), not read into the JVM heap; dense ~24 GB via `setup --dense`, imports stay dense |
-| `prove` (first run) | **~2.4 min** | ~17 s compile (then cached to `keys/r1cs.bin`, ~0.9 GB) + witness + ~1.9 min prove |
-| `prove` (cached) | **~2.1 min** | compile skipped — ~14 s witness + ~1.9 min prove (ADR-0033/0034; java and blst backends measure the same) |
+| `prove` (first run) | **~1.5 min** | ~17 s compile (then cached to `keys/r1cs.bin`, ~0.9 GB) + witness + ~56 s prove — a `setup`-produced bundle already ships `r1cs.bin`, so its first prove is the cached case |
+| `prove` (cached) | **~1.1 min** | compile skipped — ~14 s witness + ~56 s prove (ADR-0033/0034; java and blst backends measure the same) |
 | `verify` (off-chain) | **~0.2 s** | reads the small `vk.json` |
 | `verify --onchain` | **~5 s** | one lock + one unlock tx on Yaci DevKit |
 
 **Hardware:** proving needs **~10 GB+ RAM** (measured floor: 8 GB heap on the first run, 7 GB once
 `r1cs.bin` is cached; 6 GB does not work — ADR-0034. This was ~70 GB before ADR-0033/0034). The
-23 GB key bundle is memory-mapped, so it uses the page cache, not the heap — **an ordinary 16 GB
-machine proves in ~2.6 min** (validated under a hard 16 GiB memory cap). The default prover is
-pure Java (same speed as blst at this size, no native memory); `--backend blst` opts into the
-native MSM, which needs ~10 GB beyond the heap and suits ≥24 GB machines. `setup` still needs a
-~12 GB of heap (ADR-0035) — the same 16 GB machine that proves. Verification is light.
+~9.6 GB (sparse) key bundle is memory-mapped, so it uses the page cache, not the heap — **an
+ordinary 16 GB machine proves in ~2.6 min** (validated under a hard 16 GiB memory cap). The
+default prover is pure Java (same speed as blst at this size, no native memory); `--backend blst`
+opts into the native MSM, which needs ~10 GB beyond the heap and suits ≥24 GB machines. `setup`
+runs in **8 GB of heap** (measured: `-Xmx8g`, 6.4 min — ADR-0035) — the same 16 GB machine that
+proves. Verification is light.
 
 ---
 

@@ -65,7 +65,7 @@ setup-cli import --zkey circuit_final.zkey [--keys keys] [--force]
 setup-cli setup --i-understand-insecure [--keys keys] [--force]
 ```
 
-Single-party setup (~6–7 min, ~12 GB heap — ADR-0035; a 16 GB machine works). **Insecure:** this machine learns the setup randomness and
+Single-party setup (~6–7 min; `-Xmx8g` is the measured heap floor — ADR-0035; a 16 GB machine works). **Insecure:** this machine learns the setup randomness and
 could forge proofs. Requires the `--i-understand-insecure` acknowledgement.
 
 **Demo tip:** run this **once**, then keep/cache the `keys/` bundle and reuse it — anyone can
@@ -137,7 +137,7 @@ recomputes `SHA256SUMS` over the whole bundle (~10 GB sparse / ~24 GB dense — 
 ## End-to-end (local Yaci DevKit, using a local dev bundle)
 
 ```bash
-AOR_JAVA_OPTS="-Xmx12g" setup-cli setup --i-understand-insecure   # once, ~6-7 min
+AOR_JAVA_OPTS="-Xmx8g" setup-cli setup --i-understand-insecure    # once, ~6-7 min (8g = measured floor)
 setup-cli info
 setup-cli prove
 setup-cli verify
@@ -184,7 +184,7 @@ KEYS_DIR=$PWD/keys PROOFS_DIR=$PWD/proofs AOR_ADMIN_MNEMONIC="…" \
 
 - **Light commands work anywhere** (verify only needs the tiny `vk.json`).
 - **`prove` / `setup` are the exception:** `prove` needs ~10 GB heap (ADR-0034) and memory-maps the
-  23 GB store; `setup` needs ~12 GB (ADR-0035). For either, set `mem_limit` in the compose file and
+  ~9.6 GB sparse store; `setup` needs ~8 GB heap (measured floor; ADR-0035). For either, set `mem_limit` in the compose file and
   `JAVA_OPTS="-Xmx8g"` (or more). Measured: **both fit a hard 16 GiB cap** — prove 2.6 min (`-Xmx8g`, ADR-0034 M5) and setup 11.5 min (`-Xmx12g`, ADR-0035 M5). On a **Linux 16 GB host** that maps directly. On a 16 GB **Docker Desktop** machine (mac/win) the VM keeps ~3-4 GB from the host, so prove fits easily but setup gets tight — prefer the fat jar on the host there. Reference: a container hard-capped at
   `--memory=16g` proves in **~2.6 min** on Docker Desktop (mac) with the keys bind-mounted —
   the CLI auto-selects the pure-Java backend there (blst's native MSM buffers don't fit a 16 GB
