@@ -21,8 +21,9 @@ import java.util.concurrent.Callable;
 
 /**
  * Generate an ownership proof from the wallet mnemonic. This is where a normal user starts: given a
- * downloaded key bundle, it takes ~2.5 min end-to-end with ≥24 GB of heap (the proving key is
- * mmap-loaded instantly; the proof itself is ~2 min on the blst multi-core backend — ADR-0033).
+ * downloaded key bundle, it takes ~2-3 min end-to-end with ≥10 GB of heap (the proving key is
+ * mmap-loaded instantly, the constraints come from the r1cs.bin cache, and the multi-core prove is
+ * ~2 min on either backend — ADR-0033/0034).
  *
  * <p>The mnemonic is read via a hidden interactive prompt — never a command-line argument, an
  * environment variable, or a file. The root key derived from it stays in memory and is never
@@ -46,9 +47,12 @@ public final class ProveCommand implements Callable<Integer> {
     @Option(names = "--keys", defaultValue = "keys", description = "Key-bundle directory. Default: ${DEFAULT-VALUE}.")
     Path keysDir;
 
-    @Option(names = "--backend", defaultValue = "blst",
-            description = "Prover backend: blst (native) or java (pure-Java multi-core, no native "
-                    + "lib). Both ~2-3 min since ADR-0033. Default: ${DEFAULT-VALUE}.")
+    @Option(names = "--backend", defaultValue = "java",
+            description = "Prover backend. java (default): pure-Java multi-core — same speed as "
+                    + "blst at this circuit size since ADR-0033/0034, no native lib, and safe on "
+                    + "small-memory machines. blst: native MSM — may be faster on some hardware, "
+                    + "but its native buffers need ~10 GB beyond the heap (OOM risk under ~24 GB "
+                    + "total memory — ADR-0034 M5).")
     Backend backend;
 
     @Option(names = "--out", defaultValue = "proofs", description = "Output directory for the proof. Default: ${DEFAULT-VALUE}.")
@@ -220,15 +224,26 @@ public final class ProveCommand implements Callable<Integer> {
 
     private String backendLabel = "blst";
 
-    /** blst by default; pure-Java fallback if the native lib can't load or we're in a GraalVM image. */
+    /**
+     * Pure Java is the default (ADR-0034 M5): same speed as blst at this circuit size, no native
+     * lib, native-image-clean, and no hidden native memory — blst's concurrent MSM arenas need
+     * ~10 GB beyond the heap at 19M constraints (a hard-capped 16 GB cgroup OOM-kills blst but
+     * completes pure Java in ~2.6 min). {@code --backend blst} opts in explicitly; it may be
+     * faster on some hardware.
+     */
     private ProverBackend selectBackend() {
-        if (backend == Backend.java) { backendLabel = "java"; return ProverBackend.PURE_JAVA; }
+        if (backend != Backend.blst) { backendLabel = "java"; return ProverBackend.PURE_JAVA; }
+
+        long totalGb = totalMemoryGb();
+        if (totalGb > 0 && totalGb < 24) {
+            System.err.printf("Warning: --backend blst on a ~%d GB machine — blst's native MSM "
+                    + "buffers need ~10 GB beyond the heap at this circuit size and may be "
+                    + "OOM-killed. --backend java is equally fast here. Continuing.%n", totalGb);
+        }
         // blst reaches libblst via FFM downcalls, which aren't registered in this native image.
-        // Route to the pure-Java backend so proving works — since ADR-0033 (mmap'd key, no
-        // marshalling) it proves in the same ~2-3 min as blst at this scale.
         if (System.getProperty("org.graalvm.nativeimage.imagecode") != null) {
             System.err.println("Note: blst is unavailable in the native binary — using the pure-Java "
-                    + "backend (comparable speed).");
+                    + "backend (same speed).");
             backendLabel = "java";
             return ProverBackend.PURE_JAVA;
         }
@@ -238,10 +253,20 @@ public final class ProveCommand implements Callable<Integer> {
             return b;
         } catch (Throwable t) {
             System.err.println("blst native backend unavailable (" + t.getMessage()
-                    + ") — falling back to the pure-Java backend (comparable speed). "
-                    + "Use --backend java to silence this.");
+                    + ") — falling back to the pure-Java backend (same speed).");
             backendLabel = "java";
             return ProverBackend.PURE_JAVA;
+        }
+    }
+
+    /** Total physical (or cgroup-capped) memory in GB; -1 if undeterminable. Container-aware. */
+    private static long totalMemoryGb() {
+        try {
+            var os = (com.sun.management.OperatingSystemMXBean)
+                    java.lang.management.ManagementFactory.getOperatingSystemMXBean();
+            return (os.getTotalMemorySize() + (1L << 29)) >> 30;
+        } catch (Throwable t) {
+            return -1;
         }
     }
 

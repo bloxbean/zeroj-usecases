@@ -86,12 +86,15 @@ Compiles the circuit + checks its fingerprint, prompts for your **mnemonic (hidd
 root key + target address (`m/1852'/1815'/<account>'/0/<index>`), mmap-loads the proving key, proves,
 writes `proofs/proof.json` + `proofs/public-inputs.json`, and self-checks off-chain.
 
-`--backend blst` (default) is the native prover; `--backend java` is pure-Java (no native lib) —
-both prove in ~2–3 min since ADR-0033. Takes ~2–4 min end-to-end and needs **~10 GB+ RAM**
-(measured floor: 8 GB first run, 7 GB once the constraint cache exists — ADR-0034; an ordinary
-16 GB machine can prove). The first prove writes `keys/r1cs.bin` (~0.9 GB) so later proves skip
-the circuit compile; `--no-cache` disables it. The mnemonic is never accepted as an argument —
-always the hidden prompt.
+`--backend` picks the prover. The default is **`java`** (pure-Java multi-core): same speed as
+blst at this circuit size since ADR-0033/0034, no native lib, and safe on small-memory machines.
+`--backend blst` opts into the native MSM — possibly faster on some hardware, but its native
+buffers need ~10 GB beyond the heap (OOM risk under ~24 GB total memory — ADR-0034 M5). Takes
+~2–4 min end-to-end and needs **~10 GB+ RAM** (measured floor: 8 GB first run, 7 GB once the
+constraint cache exists; a 16 GB machine proves in ~2.6 min, validated under a hard memory cap).
+The first prove writes `keys/r1cs.bin` (~0.9 GB) so later proves skip the circuit compile;
+`--no-cache` disables it. The mnemonic is never accepted as an argument — always the hidden
+prompt.
 
 ## `verify` — check a proof
 
@@ -182,9 +185,10 @@ KEYS_DIR=$PWD/keys PROOFS_DIR=$PWD/proofs AOR_ADMIN_MNEMONIC="…" \
 - **Light commands work anywhere** (verify only needs the tiny `vk.json`).
 - **`prove` / `setup` are the exception:** `prove` needs ~10 GB heap (ADR-0034) and memory-maps the
   23 GB store; `setup` needs ~90 GB. For `prove`, set `mem_limit` in the compose file and
-  `JAVA_OPTS="-Xmx10g"` (or more). On Docker Desktop (mac/win) the VM RAM cap + slow mmap over
-  bind-mounts can still make heavy proving slow; the fat-jar or native distribution directly is
-  the smoother path.
+  `JAVA_OPTS="-Xmx8g"` (or more). Measured (ADR-0034 M5): a container hard-capped at
+  `--memory=16g` proves in **~2.6 min** on Docker Desktop (mac) with the keys bind-mounted —
+  the CLI auto-selects the pure-Java backend there (blst's native MSM buffers don't fit a 16 GB
+  cap at this circuit size).
 
 ## Exit codes
 `0` success · `1` verification failed / internal error · `2` bad usage / missing bundle / missing
