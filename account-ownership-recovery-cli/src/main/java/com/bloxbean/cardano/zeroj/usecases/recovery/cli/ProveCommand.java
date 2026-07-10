@@ -1,6 +1,8 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.cli;
 
 import com.bloxbean.cardano.client.common.model.Networks;
+import com.bloxbean.cardano.zeroj.api.R1CSFlat;
+import com.bloxbean.cardano.zeroj.api.R1CSFlatIO;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16PkStore;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.ProverBackend;
@@ -30,11 +32,13 @@ import java.util.concurrent.Callable;
         description = "Generate an ownership proof from your mnemonic.")
 public final class ProveCommand implements Callable<Integer> {
 
-    // ADR-0034 M3 measured heap floors for the 19M-constraint prove (2026-07-10, packed CSR
-    // constraints + flat witness/hCoeffs): 8 GB passes (~2.2 min blst), 6 GB OOMs in the R1CS
-    // frontend compile. HARD_MIN: below this the run cannot complete; RECOMMENDED: comfortable
-    // headroom.
+    // ADR-0034 measured heap floors for the 19M-constraint prove (2026-07-10, packed CSR
+    // constraints + flat witness/hCoeffs + r1cs.bin cache): a first run must compile — 8 GB
+    // passes, 6 GB OOMs in the compile; with a matching r1cs.bin the compile is skipped and
+    // 7 GB passes (6 GB OOMs building the witness graph). HARD_MIN: below this the run cannot
+    // complete; RECOMMENDED: comfortable headroom.
     private static final int HARD_MIN_HEAP_GB = 8;
+    private static final int HARD_MIN_CACHED_HEAP_GB = 7;
     private static final int RECOMMENDED_HEAP_GB = 10;
 
     enum Backend { blst, java }
@@ -63,6 +67,11 @@ public final class ProveCommand implements Callable<Integer> {
             description = "Skip the off-chain pairing self-check after proving.")
     boolean selfVerify = true;
 
+    @Option(names = "--no-cache",
+            description = "Recompile the circuit instead of using/creating the r1cs.bin constraint "
+                    + "cache in the keys directory (ADR-0034 M4).")
+    boolean noCache;
+
     @Override
     public Integer call() throws Exception {
         var bundle = new Bundle(keysDir);
@@ -72,16 +81,28 @@ public final class ProveCommand implements Callable<Integer> {
             return 2;
         }
 
+        // ADR-0034 M4: the packed constraints are a pure function of the circuit, so a
+        // fingerprint-matched r1cs.bin beside the key bundle skips the whole R1CS compile
+        // (the circuit graph is still built later for witness calculation). A stale, foreign,
+        // or tampered cache is ignored/harmless: the fingerprint gates staleness, and a proof
+        // from wrong constraints cannot pass the pairing self-check against this bundle's VK.
+        // Only the header is probed here — the full ~1 GB load happens after the witness is
+        // packed, so the constraints never coexist with the witness-generation peak.
+        String bundleFp = bundle.metadata().getProperty("fingerprint");
+        Path cacheFile = keysDir.resolve("r1cs.bin");
+        boolean cacheDeferred = !noCache && bundleFp != null && R1CSFlatIO.hasMatching(cacheFile, bundleFp);
+
         // ADR-0033: fail fast on an obviously-too-small heap, BEFORE the multi-GB circuit compile
         // and the mnemonic prompt. Sizes below the hard floor cannot complete regardless of
-        // backend — 16 GB dies in the R1CS compile itself, so this check must come first.
-        // round to nearest GB: -Xmx20g reports maxMemory() slightly under 20 GB
+        // backend; with a matching constraint cache the compile is skipped and the floor is
+        // 1 GB lower. round to nearest GB: -Xmx8g reports maxMemory() slightly under 8 GB.
+        int hardMin = cacheDeferred ? HARD_MIN_CACHED_HEAP_GB : HARD_MIN_HEAP_GB;
         long maxHeapGb = (Runtime.getRuntime().maxMemory() + (1L << 29)) / (1L << 30);
-        if (maxHeapGb < HARD_MIN_HEAP_GB) {
+        if (maxHeapGb < hardMin) {
             System.err.printf("Not enough heap: -Xmx is ~%d GB but proving this circuit needs at "
                     + "least ~%d GB (recommended %d GB). Re-run with a larger -Xmx (the fat-jar/native "
                     + "launchers auto-size to ~80%% of RAM), on a machine with enough RAM.%n",
-                    maxHeapGb, HARD_MIN_HEAP_GB, RECOMMENDED_HEAP_GB);
+                    maxHeapGb, hardMin, RECOMMENDED_HEAP_GB);
             return 2;
         }
         if (maxHeapGb < RECOMMENDED_HEAP_GB) {
@@ -90,19 +111,40 @@ public final class ProveCommand implements Callable<Integer> {
         }
 
         var svc = new OwnershipCircuitService();
-        System.out.println("Compiling circuit (BLS12-381) ...");
         long t0 = System.nanoTime();
-        svc.compile();
-        int nc = svc.numConstraints(), nw = svc.numWires(), np = svc.numPublicInputs();
-        String fp = Bundle.fingerprint(nc, nw, np);
-        System.out.printf("  %,d constraints | %.1fs%n", nc, secs(t0));
+        R1CSFlat flat = null;
+        String fp;
+        int numPublic;
+        if (cacheDeferred) {
+            fp = bundleFp;
+            numPublic = Integer.parseInt(fp.substring(fp.lastIndexOf('p') + 1));
+            System.out.printf("Constraint cache matches (%s) — compile skipped%n", cacheFile.getFileName());
+        } else {
+            System.out.println("Compiling circuit (BLS12-381) ...");
+            svc.compile();
+            int nc = svc.numConstraints(), nw = svc.numWires();
+            numPublic = svc.numPublicInputs();
+            fp = Bundle.fingerprint(nc, nw, numPublic);
+            System.out.printf("  %,d constraints | %.1fs%n", nc, secs(t0));
 
-        String bundleFp = bundle.metadata().getProperty("fingerprint");
-        if (bundleFp != null && !bundleFp.equals(fp)) {
-            System.err.println("Circuit/key mismatch: bundle fingerprint " + bundleFp
-                    + " but this build's circuit is " + fp + ". The bundle was made for a different circuit.");
-            return 2;
+            if (bundleFp != null && !bundleFp.equals(fp)) {
+                System.err.println("Circuit/key mismatch: bundle fingerprint " + bundleFp
+                        + " but this build's circuit is " + fp + ". The bundle was made for a different circuit.");
+                return 2;
+            }
+            flat = svc.compile().flat();
+            if (!noCache) {
+                try {
+                    long tc = System.nanoTime();
+                    R1CSFlatIO.write(flat, fp, cacheFile);
+                    System.out.printf("  constraints cached → %s (%.1fs; later proves skip the compile)%n",
+                            cacheFile, secs(tc));
+                } catch (Exception e) {
+                    System.err.println("  (could not write r1cs cache: " + e.getMessage() + " — continuing)");
+                }
+            }
         }
+        int bindingRows = bundle.isSnarkjsKey() ? numPublic + 1 : 0;
 
         String mnemonic = readMnemonic();
         if (mnemonic == null || mnemonic.isBlank()) {
@@ -130,10 +172,22 @@ public final class ProveCommand implements Callable<Integer> {
             var witness = svc.witnessFlat(wallet.rootKL(), wallet.rootKR(), wallet.rootChainCode(), wallet.pkh());
             System.out.printf("  witness: %.1fs%n", secs(tw));
 
+            if (cacheDeferred) {
+                // deferred full cache load (ADR-0034 M4) — the graph is gone, witness is packed
+                long tc = System.nanoTime();
+                flat = R1CSFlatIO.readIfMatches(cacheFile, fp);
+                if (flat == null) { // vanished/corrupted since the header probe — recompile
+                    System.err.println("  (r1cs cache unreadable — recompiling)");
+                    flat = svc.compile().flat();
+                }
+                System.out.printf("  %,d constraints loaded: %.1fs%n", flat.rows(), secs(tc));
+            }
+
             ProverBackend prover = selectBackend();
             System.out.println("Generating proof (" + backendLabel + ", multi-core) ...");
             long tp = System.nanoTime();
-            Groth16ProofBLS381 proof = svc.prove(loaded, witness, prover, bundle.isSnarkjsKey());
+            Groth16ProofBLS381 proof = svc.prove(loaded, witness, flat, bindingRows, prover);
+            flat = null;
             System.out.printf("  proof generated: %.1fs%n", secs(tp));
             if (!(proof.a().isOnCurve() && proof.b().isOnCurve() && proof.c().isOnCurve())) {
                 System.err.println("Internal error: generated proof is not on-curve.");

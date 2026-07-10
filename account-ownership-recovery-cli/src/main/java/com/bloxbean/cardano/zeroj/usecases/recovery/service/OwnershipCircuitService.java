@@ -33,11 +33,20 @@ public class OwnershipCircuitService {
     private CircuitBuilder circuit;
     private R1CSConstraintSystem r1cs;
 
+    /**
+     * Build the circuit graph only (idempotent) — enough for witness calculation. The R1CS
+     * compile is separate ({@link #compile}) so a prove with a cached {@code r1cs.bin}
+     * (ADR-0034 M4) never pays it.
+     */
+    public synchronized CircuitBuilder graph() {
+        if (circuit == null) circuit = OwnershipProofCircuit.build();
+        return circuit;
+    }
+
     /** Compile the {@code @ZKCircuit} to R1CS over BLS12-381 (idempotent). */
     public synchronized R1CSConstraintSystem compile() {
         if (r1cs == null) {
-            circuit = OwnershipProofCircuit.build();
-            r1cs = circuit.compileR1CS(CurveId.BLS12_381);
+            r1cs = graph().compileR1CS(CurveId.BLS12_381);
         }
         return r1cs;
     }
@@ -64,13 +73,12 @@ public class OwnershipCircuitService {
 
     /** The witness for "root key ({@code kL,kR,cc}) derives via m/1852'/1815'/0'/0/0 to {@code pkh}". */
     public BigInteger[] witness(byte[] rootKL, byte[] rootKR, byte[] rootChainCode, byte[] pkh) {
-        compile();
         Map<String, List<BigInteger>> in = new HashMap<>();
         putBytes(in, "rootKL", rootKL);
         putBytes(in, "rootKR", rootKR);
         putBytes(in, "rootChainCode", rootChainCode);
         putBytes(in, "pkh", pkh);
-        return circuit.calculateWitness(in, CurveId.BLS12_381);
+        return graph().calculateWitness(in, CurveId.BLS12_381);
     }
 
     /**
@@ -93,22 +101,21 @@ public class OwnershipCircuitService {
      *                   prover's QAP must use {@link ZkeyPkStoreImporter#snarkjsConstraints}. A local
      *                   setup uses the raw constraints.
      */
+    /**
+     * Prove with an explicitly supplied packed constraint system — from a fresh compile or the
+     * {@code r1cs.bin} cache (ADR-0034 M4), so a cache-hit prove never runs {@code compileR1CS}.
+     *
+     * @param bindingRows snarkjs ceremony keys append one public-input binding row per public
+     *                    signal ({@code numPublic + 1}); 0 for a local-setup key.
+     */
     public Groth16ProofBLS381 prove(Groth16PkStore.Loaded key, FlatScalars witness,
-                                    ProverBackend backend, boolean snarkjsKey) {
-        compile();
-        // ADR-0034 M2: computeH reads the packed CSR matrices (~12 B/term) instead of 19M map
-        // rows; a snarkjs ceremony key's public-input binding rows (A={s:1}, B={}) are handled
-        // as a row count, never materialized.
-        R1CSFlat flat = r1cs.flat();
-        int bindingRows = snarkjsKey ? r1cs.numPublicInputs() + 1 : 0;
+                                    R1CSFlat flat, int bindingRows, ProverBackend backend) {
         int domain = key.domain();
 
         // ADR-0033 M2 / ADR-0034 M1: the compiled circuit graph (~3 GB at 19M) is only needed for
-        // witness calculation — already done by the caller — so release it (and r1cs; the local
-        // `flat` holds the packed constraints) BEFORE computeH, which was the measured 16.8 GB
-        // peak. The packed matrices are computeH's input and are released right after it, so
-        // neither is resident during the five MSMs. `compile()` is idempotent, so a later prove
-        // in the same process simply recompiles.
+        // witness calculation — already done by the caller — so release any cached compile state
+        // BEFORE computeH. The packed matrices are computeH's input and the caller should drop
+        // its own reference after this call; nothing heavy is resident during the five MSMs.
         // ADR-0034 M3: witness and hCoeffs stay flat (32 B/scalar) end-to-end — nothing on the
         // prove path boxes a field element.
         circuit = null;

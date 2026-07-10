@@ -87,9 +87,11 @@ root key + target address (`m/1852'/1815'/<account>'/0/<index>`), mmap-loads the
 writes `proofs/proof.json` + `proofs/public-inputs.json`, and self-checks off-chain.
 
 `--backend blst` (default) is the native prover; `--backend java` is pure-Java (no native lib) —
-both prove in ~2–3 min since ADR-0033. Takes ~2.5–4 min end-to-end and needs **~10 GB+ RAM**
-(measured floor 8 GB — ADR-0034; an ordinary 16 GB machine can prove). The mnemonic is never
-accepted as an argument — always the hidden prompt.
+both prove in ~2–3 min since ADR-0033. Takes ~2–4 min end-to-end and needs **~10 GB+ RAM**
+(measured floor: 8 GB first run, 7 GB once the constraint cache exists — ADR-0034; an ordinary
+16 GB machine can prove). The first prove writes `keys/r1cs.bin` (~0.9 GB) so later proves skip
+the circuit compile; `--no-cache` disables it. The mnemonic is never accepted as an argument —
+always the hidden prompt.
 
 ## `verify` — check a proof
 
