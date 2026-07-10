@@ -130,7 +130,7 @@ setup-cli info [--keys keys] [--verify-integrity]
 ```
 
 Shows mode, circuit fingerprint, size, and whether `vk.json` is present. `--verify-integrity`
-recomputes `SHA256SUMS` over the whole ~23 GB bundle (slow).
+recomputes `SHA256SUMS` over the whole bundle (~10 GB sparse / ~24 GB dense — slow).
 
 ---
 
@@ -185,7 +185,7 @@ KEYS_DIR=$PWD/keys PROOFS_DIR=$PWD/proofs AOR_ADMIN_MNEMONIC="…" \
 - **Light commands work anywhere** (verify only needs the tiny `vk.json`).
 - **`prove` / `setup` are the exception:** `prove` needs ~10 GB heap (ADR-0034) and memory-maps the
   23 GB store; `setup` needs ~12 GB (ADR-0035). For either, set `mem_limit` in the compose file and
-  `JAVA_OPTS="-Xmx8g"` (or more). Measured (ADR-0034 M5): a container hard-capped at
+  `JAVA_OPTS="-Xmx8g"` (or more). Measured: **both fit a hard 16 GiB cap** — prove 2.6 min (`-Xmx8g`, ADR-0034 M5) and setup 11.5 min (`-Xmx12g`, ADR-0035 M5). On a **Linux 16 GB host** that maps directly. On a 16 GB **Docker Desktop** machine (mac/win) the VM keeps ~3-4 GB from the host, so prove fits easily but setup gets tight — prefer the fat jar on the host there. Reference: a container hard-capped at
   `--memory=16g` proves in **~2.6 min** on Docker Desktop (mac) with the keys bind-mounted —
   the CLI auto-selects the pure-Java backend there (blst's native MSM buffers don't fit a 16 GB
   cap at this circuit size).

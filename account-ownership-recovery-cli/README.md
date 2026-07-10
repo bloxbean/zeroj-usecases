@@ -88,7 +88,7 @@ See **USAGE.md** for every command and option.
 | step | time | notes |
 |---|---|---|
 | `setup` (local) | **~6.3 min** | one-time, ~12 GB heap — fits a 16 GB machine (ADR-0035); also writes `r1cs.bin` so the first prove skips its compile |
-| key bundle on disk | ~23 GB | mmap-loaded (instant), not read into the JVM heap |
+| key bundle on disk | **~9.6 GB** (sparse, the default — ADR-0035 M6; ~57% of points are infinity and are stored as 1 bit each) | mmap-loaded (instant), not read into the JVM heap; dense ~24 GB via `setup --dense`, imports stay dense |
 | `prove` (first run) | **~2.4 min** | ~17 s compile (then cached to `keys/r1cs.bin`, ~0.9 GB) + witness + ~1.9 min prove |
 | `prove` (cached) | **~2.1 min** | compile skipped — ~14 s witness + ~1.9 min prove (ADR-0033/0034; java and blst backends measure the same) |
 | `verify` (off-chain) | **~0.2 s** | reads the small `vk.json` |

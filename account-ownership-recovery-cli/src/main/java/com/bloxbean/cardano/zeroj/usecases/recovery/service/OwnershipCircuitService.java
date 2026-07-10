@@ -80,6 +80,12 @@ public class OwnershipCircuitService {
      * party) — testing only.
      */
     public Groth16SetupBLS381.SetupResult localSetupToStore(java.nio.file.Path dir) throws java.io.IOException {
+        return localSetupToStore(dir, true);
+    }
+
+    /** {@link #localSetupToStore(java.nio.file.Path)} choosing the store format (ADR-0035 M6a). */
+    public Groth16SetupBLS381.SetupResult localSetupToStore(java.nio.file.Path dir, boolean sparse)
+            throws java.io.IOException {
         compile();
         R1CSFlat flat = r1cs.flat();
         int nc = r1cs.numConstraints(), nw = r1cs.numWires(), np = r1cs.numPublicInputs();
@@ -96,7 +102,7 @@ public class OwnershipCircuitService {
             System.err.println("  (could not write r1cs cache: " + e.getMessage() + " — continuing)");
         }
         BigInteger tau = new BigInteger(512, new SecureRandom()).mod(MontFr381.modulus());
-        return Groth16SetupBLS381.setupToStore(flat, nw, np, tau, dir);
+        return Groth16SetupBLS381.setupToStore(flat, nw, np, tau, dir, sparse);
     }
 
     /** The witness for "root key ({@code kL,kR,cc}) derives via m/1852'/1815'/0'/0/0 to {@code pkh}". */
