@@ -2,6 +2,7 @@ package com.bloxbean.cardano.zeroj.usecases.recovery.service;
 
 import com.bloxbean.cardano.zeroj.api.CurveId;
 import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
+import com.bloxbean.cardano.zeroj.api.R1CSFlat;
 import com.bloxbean.cardano.zeroj.bls12381.field.MontFr381;
 import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
 import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
@@ -83,21 +84,23 @@ public class OwnershipCircuitService {
     public Groth16ProofBLS381 prove(Groth16PkStore.Loaded key, BigInteger[] witness,
                                     ProverBackend backend, boolean snarkjsKey) {
         compile();
-        List<R1CSConstraint> cons = snarkjsKey
-                ? ZkeyPkStoreImporter.snarkjsConstraints(r1cs.constraints(), r1cs.numPublicInputs())
-                : r1cs.constraints();
+        // ADR-0034 M2: computeH reads the packed CSR matrices (~12 B/term) instead of 19M map
+        // rows; a snarkjs ceremony key's public-input binding rows (A={s:1}, B={}) are handled
+        // as a row count, never materialized.
+        R1CSFlat flat = r1cs.flat();
+        int bindingRows = snarkjsKey ? r1cs.numPublicInputs() + 1 : 0;
         int domain = key.domain();
 
         // ADR-0033 M2 / ADR-0034 M1: the compiled circuit graph (~3 GB at 19M) is only needed for
         // witness calculation — already done by the caller — so release it (and r1cs; the local
-        // `cons` holds the constraint list) BEFORE computeH, which was the measured 16.8 GB peak.
-        // The constraints are computeH's input and are released right after it, so neither is
-        // resident during the five MSMs. `compile()` is idempotent, so a later prove in the same
-        // process simply recompiles.
+        // `flat` holds the packed constraints) BEFORE computeH, which was the measured 16.8 GB
+        // peak. The packed matrices are computeH's input and are released right after it, so
+        // neither is resident during the five MSMs. `compile()` is idempotent, so a later prove
+        // in the same process simply recompiles.
         circuit = null;
         r1cs = null;
-        BigInteger[] hCoeffs = Groth16ProverBLS381.computeH(cons, witness, cons.size(), domain);
-        cons = null;
+        BigInteger[] hCoeffs = Groth16ProverBLS381.computeH(flat, witness, bindingRows, domain);
+        flat = null;
 
         return Groth16ProverBLS381.proveWithHCoeffs(key.pk(), key.readers(), backend, witness, hCoeffs);
     }

@@ -30,11 +30,12 @@ import java.util.concurrent.Callable;
         description = "Generate an ownership proof from your mnemonic.")
 public final class ProveCommand implements Callable<Integer> {
 
-    // ADR-0033 measured heap floors for the 19M-constraint prove: 20 GB passes (2026-07-09,
-    // blst, ~2.6 min), 16 GB OOMs in the R1CS frontend compile before the prove is reached.
-    // HARD_MIN: below this the run cannot complete; RECOMMENDED: no-GC-tax headroom (~2.2 min).
-    private static final int HARD_MIN_HEAP_GB = 20;
-    private static final int RECOMMENDED_HEAP_GB = 24;
+    // ADR-0034 M2 measured heap floors for the 19M-constraint prove (2026-07-10, packed CSR
+    // constraints): 10 GB passes (~2.3 min blst), 8 GB OOMs in computeH (FFT + witness +
+    // hCoeffs — the ADR-0034 M3 target). HARD_MIN: below this the run cannot complete;
+    // RECOMMENDED: comfortable headroom.
+    private static final int HARD_MIN_HEAP_GB = 10;
+    private static final int RECOMMENDED_HEAP_GB = 12;
 
     enum Backend { blst, java }
 
