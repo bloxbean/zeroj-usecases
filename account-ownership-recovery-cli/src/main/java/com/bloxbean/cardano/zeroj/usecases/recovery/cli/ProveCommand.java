@@ -38,8 +38,8 @@ public final class ProveCommand implements Callable<Integer> {
     // passes, 6 GB OOMs in the compile; with a matching r1cs.bin the compile is skipped and
     // 7 GB passes (6 GB OOMs building the witness graph). HARD_MIN: below this the run cannot
     // complete; RECOMMENDED: comfortable headroom.
-    private static final int HARD_MIN_HEAP_GB = 8;
-    private static final int HARD_MIN_CACHED_HEAP_GB = 7;
+    private static final int HARD_MIN_HEAP_GB = 4; // TEMP probe
+    private static final int HARD_MIN_CACHED_HEAP_GB = 4; // TEMP probe
     private static final int RECOMMENDED_HEAP_GB = 10;
 
     enum Backend { blst, java }
@@ -166,25 +166,29 @@ public final class ProveCommand implements Callable<Integer> {
 
         System.out.println("Loading proving key (mmap) ...");
         long tl = System.nanoTime();
+        java.lang.foreign.Arena csArena = null; // mmap arena for the deferred constraint cache
         var loaded = Groth16PkStore.load(keysDir);
         try {
             System.out.printf("  key loaded: %.1fs%n", secs(tl));
 
             System.out.println("Computing witness ...");
             long tw = System.nanoTime();
-            // packed flat scalars (ADR-0034 M3): the boxed witness dies inside witnessFlat
+            // born-flat witness (ADR-0034 M7): evaluated into 4 MB chunks, consolidated after
+            // the graph is released
             var witness = svc.witnessFlat(wallet.rootKL(), wallet.rootKR(), wallet.rootChainCode(), wallet.pkh());
             System.out.printf("  witness: %.1fs%n", secs(tw));
 
             if (cacheDeferred) {
-                // deferred full cache load (ADR-0034 M4) — the graph is gone, witness is packed
+                // deferred cache load (ADR-0034 M4) — the graph is gone, witness is packed.
+                // M6a: the CSR arrays are mmap'd (segment-backed), not heap-loaded — like the key.
                 long tc = System.nanoTime();
-                flat = R1CSFlatIO.readIfMatches(cacheFile, fp);
+                csArena = java.lang.foreign.Arena.ofShared();
+                flat = R1CSFlatIO.readMapped(cacheFile, fp, csArena);
                 if (flat == null) { // vanished/corrupted since the header probe — recompile
                     System.err.println("  (r1cs cache unreadable — recompiling)");
                     flat = svc.compile().flat();
                 }
-                System.out.printf("  %,d constraints loaded: %.1fs%n", flat.rows(), secs(tc));
+                System.out.printf("  %,d constraints mapped: %.1fs%n", flat.rows(), secs(tc));
             }
 
             ProverBackend prover = selectBackend();
@@ -213,6 +217,9 @@ public final class ProveCommand implements Callable<Integer> {
             }
         } finally {
             Bundle.closeQuietly(loaded);   // shared mmap Arena close is unsupported in a native image
+            if (csArena != null) {
+                try { csArena.close(); } catch (Throwable ignore) { /* native-image: unmapped at exit */ }
+            }
         }
 
         System.out.printf("%nProof written to %s (%s, %s)%n", outDir.toAbsolutePath(),

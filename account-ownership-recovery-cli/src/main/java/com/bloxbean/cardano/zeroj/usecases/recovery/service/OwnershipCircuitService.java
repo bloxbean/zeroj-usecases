@@ -82,14 +82,19 @@ public class OwnershipCircuitService {
     }
 
     /**
-     * {@link #witness} packed to flat canonical limbs (ADR-0034 M3, 32 B/scalar) — the boxed
-     * {@code BigInteger[]} (~3 GB at 43.7M wires) is consumed during packing and the circuit
-     * graph (~3 GB, only needed for witness calculation) is released first, so neither is
+     * {@link #witness} born flat (ADR-0034 M7): the calculator writes canonical limbs directly
+     * (32 B/wire — no boxed {@code BigInteger[]}, no packing step), and the circuit graph
+     * (~3 GB, only needed for witness calculation) is released before returning, so neither is
      * resident during the prove. A later {@code witness()} in the same process recompiles.
      */
     public FlatScalars witnessFlat(byte[] rootKL, byte[] rootKR, byte[] rootChainCode, byte[] pkh) {
+        // Measured (ADR-0034 phase 2): the BOXED witness wins here — this circuit is bit-heavy,
+        // so most wires alias the shared ONE/ZERO BigIntegers (~0.4 GB extra beside the 5.7 GB
+        // graph), while flat storage always costs the full 32 B/wire (1.4 GB) and pushed the
+        // witness-generation peak past the 7 GB floor. Pack to flat AFTER the graph is released;
+        // packConsuming drops the boxed elements as they convert.
         BigInteger[] w = witness(rootKL, rootKR, rootChainCode, pkh);
-        circuit = null; // graph served its purpose; r1cs (the packed constraints) stays for prove()
+        circuit = null; // graph served its purpose; r1cs (if compiled) stays for prove()
         return FlatScalars.packConsuming(w, w.length);
     }
 
