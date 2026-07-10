@@ -5,7 +5,7 @@
 Commands: `export-r1cs` · `import` · `setup` · `prove` · `verify` · `info`.
 
 The fat-jar launcher auto-sizes the JVM heap to ~80 % of RAM; override with
-`AOR_JAVA_OPTS="-Xmx110g"`. The native binary takes `-Xmx…` before the subcommand for store-loading
+`AOR_JAVA_OPTS="-Xmx12g"`. The native binary takes `-Xmx…` before the subcommand for store-loading
 commands.
 
 **Where things run:** the phase-2 **ceremony is external** (snarkjs, outside this tool). Everything
@@ -65,7 +65,7 @@ setup-cli import --zkey circuit_final.zkey [--keys keys] [--force]
 setup-cli setup --i-understand-insecure [--keys keys] [--force]
 ```
 
-Single-party setup (~47 min, ~90 GB heap). **Insecure:** this machine learns the setup randomness and
+Single-party setup (~6–7 min, ~12 GB heap — ADR-0035; a 16 GB machine works). **Insecure:** this machine learns the setup randomness and
 could forge proofs. Requires the `--i-understand-insecure` acknowledgement.
 
 **Demo tip:** run this **once**, then keep/cache the `keys/` bundle and reuse it — anyone can
@@ -137,7 +137,7 @@ recomputes `SHA256SUMS` over the whole ~23 GB bundle (slow).
 ## End-to-end (local Yaci DevKit, using a local dev bundle)
 
 ```bash
-AOR_JAVA_OPTS="-Xmx110g" setup-cli setup --i-understand-insecure   # coordinator, once
+AOR_JAVA_OPTS="-Xmx12g" setup-cli setup --i-understand-insecure   # once, ~6-7 min
 setup-cli info
 setup-cli prove
 setup-cli verify
@@ -184,7 +184,7 @@ KEYS_DIR=$PWD/keys PROOFS_DIR=$PWD/proofs AOR_ADMIN_MNEMONIC="…" \
 
 - **Light commands work anywhere** (verify only needs the tiny `vk.json`).
 - **`prove` / `setup` are the exception:** `prove` needs ~10 GB heap (ADR-0034) and memory-maps the
-  23 GB store; `setup` needs ~90 GB. For `prove`, set `mem_limit` in the compose file and
+  23 GB store; `setup` needs ~12 GB (ADR-0035). For either, set `mem_limit` in the compose file and
   `JAVA_OPTS="-Xmx8g"` (or more). Measured (ADR-0034 M5): a container hard-capped at
   `--memory=16g` proves in **~2.6 min** on Docker Desktop (mac) with the keys bind-mounted —
   the CLI auto-selects the pure-Java backend there (blst's native MSM buffers don't fit a 16 GB

@@ -82,9 +82,19 @@ public class OwnershipCircuitService {
     public Groth16SetupBLS381.SetupResult localSetupToStore(java.nio.file.Path dir) throws java.io.IOException {
         compile();
         R1CSFlat flat = r1cs.flat();
-        int nw = r1cs.numWires(), np = r1cs.numPublicInputs();
+        int nc = r1cs.numConstraints(), nw = r1cs.numWires(), np = r1cs.numPublicInputs();
         circuit = null; // ADR-0035 M2: graph (~5.7 GB) + CS released before the heavy phase
         r1cs = null;
+        // ADR-0035 M5: emit the constraint cache in the same pass — the first prove against this
+        // fresh bundle skips its ~18 s compile (best-effort; the CLI would rewrite it anyway).
+        try {
+            java.nio.file.Files.createDirectories(dir);
+            com.bloxbean.cardano.zeroj.api.R1CSFlatIO.write(flat,
+                    com.bloxbean.cardano.zeroj.usecases.recovery.cli.Bundle.fingerprint(nc, nw, np),
+                    dir.resolve("r1cs.bin"));
+        } catch (Exception e) {
+            System.err.println("  (could not write r1cs cache: " + e.getMessage() + " — continuing)");
+        }
         BigInteger tau = new BigInteger(512, new SecureRandom()).mod(MontFr381.modulus());
         return Groth16SetupBLS381.setupToStore(flat, nw, np, tau, dir);
     }

@@ -75,7 +75,7 @@ generate it. A BN254 ptau (e.g. the PSE Perpetual Powers of Tau) is the wrong cu
 ```bash
 bin/account-ownership-recovery-cli setup --i-understand-insecure
 ```
-Single-party setup (~47 min, ~90 GB heap). **Insecure:** this machine learns the setup randomness and
+Single-party setup (~6–7 min, ~12 GB heap — ADR-0035; a 16 GB machine works). **Insecure:** this machine learns the setup randomness and
 could forge proofs. Generate once, cache the bundle, reuse for demos. Never publish a production
 bundle from this path.
 
@@ -87,7 +87,7 @@ See **USAGE.md** for every command and option.
 
 | step | time | notes |
 |---|---|---|
-| `setup` (local) | ~47 min | one-time, ~90 GB heap |
+| `setup` (local) | **~6.3 min** | one-time, ~12 GB heap — fits a 16 GB machine (ADR-0035); also writes `r1cs.bin` so the first prove skips its compile |
 | key bundle on disk | ~23 GB | mmap-loaded (instant), not read into the JVM heap |
 | `prove` (first run) | **~2.4 min** | ~17 s compile (then cached to `keys/r1cs.bin`, ~0.9 GB) + witness + ~1.9 min prove |
 | `prove` (cached) | **~2.1 min** | compile skipped — ~14 s witness + ~1.9 min prove (ADR-0033/0034; java and blst backends measure the same) |
@@ -100,7 +100,7 @@ See **USAGE.md** for every command and option.
 machine proves in ~2.6 min** (validated under a hard 16 GiB memory cap). The default prover is
 pure Java (same speed as blst at this size, no native memory); `--backend blst` opts into the
 native MSM, which needs ~10 GB beyond the heap and suits ≥24 GB machines. `setup` still needs a
-~90 GB-heap machine (one-time, coordinator only). Verification is light.
+~12 GB of heap (ADR-0035) — the same 16 GB machine that proves. Verification is light.
 
 ---
 
@@ -122,7 +122,7 @@ into the image) and is slower — **use the fat jar for heavy proving**; the nat
 ## Requirements
 
 - **Java 25** (GraalVM or any JDK 25). The fat-jar launcher auto-sizes the heap to ~80 % of RAM;
-  override with `AOR_JAVA_OPTS`, e.g. `AOR_JAVA_OPTS="-Xmx110g"`.
+  override with `AOR_JAVA_OPTS`, e.g. `AOR_JAVA_OPTS="-Xmx12g"`.
 - **snarkjs + Node** — only for the **external** ceremony (never invoked by this CLI). `export-r1cs`,
   `import`, `setup`, `prove`, `verify` need no snarkjs.
 - **A node/Blockfrost endpoint** — only for `verify --onchain`. Defaults to a local
