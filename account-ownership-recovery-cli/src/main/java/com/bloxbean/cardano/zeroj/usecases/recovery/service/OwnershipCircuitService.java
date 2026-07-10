@@ -71,6 +71,24 @@ public class OwnershipCircuitService {
         return Groth16SetupBLS381.setup(r1cs.constraints(), r1cs.numWires(), r1cs.numPublicInputs(), tau);
     }
 
+    /**
+     * {@link #localSetup()} streamed straight into the {@code Groth16PkStore} layout at
+     * {@code dir} (ADR-0035 M2/M3): the circuit graph and constraint system are released before
+     * the point generation, the QAP evaluations live as flat limbs, and every point is written
+     * into the mmap'd key files — no proving-key array is ever heap-resident. Byte-identical
+     * output to {@code localSetup()} + {@code Groth16PkStore.save}. <b>Insecure</b> (single
+     * party) — testing only.
+     */
+    public Groth16SetupBLS381.SetupResult localSetupToStore(java.nio.file.Path dir) throws java.io.IOException {
+        compile();
+        R1CSFlat flat = r1cs.flat();
+        int nw = r1cs.numWires(), np = r1cs.numPublicInputs();
+        circuit = null; // ADR-0035 M2: graph (~5.7 GB) + CS released before the heavy phase
+        r1cs = null;
+        BigInteger tau = new BigInteger(512, new SecureRandom()).mod(MontFr381.modulus());
+        return Groth16SetupBLS381.setupToStore(flat, nw, np, tau, dir);
+    }
+
     /** The witness for "root key ({@code kL,kR,cc}) derives via m/1852'/1815'/0'/0/0 to {@code pkh}". */
     public BigInteger[] witness(byte[] rootKL, byte[] rootKR, byte[] rootChainCode, byte[] pkh) {
         Map<String, List<BigInteger>> in = new HashMap<>();

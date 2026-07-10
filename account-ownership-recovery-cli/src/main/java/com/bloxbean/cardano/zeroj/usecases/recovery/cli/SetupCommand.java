@@ -57,12 +57,12 @@ public final class SetupCommand implements Callable<Integer> {
         int nc = svc.numConstraints(), nw = svc.numWires(), np = svc.numPublicInputs();
         System.out.printf("  %,d constraints | %,d wires | %d public%n", nc, nw, np);
 
-        System.out.println("Running single-party trusted setup (dev/testing) — this takes a while (~47 min) ...");
+        System.out.println("Running single-party trusted setup (dev/testing) — this takes a while ...");
         long t = System.nanoTime();
-        var setup = svc.localSetup();
-        System.out.printf("  setup complete: %.1f min%n", (System.nanoTime() - t) / 6e10);
-        System.out.println("Saving proving-key store + verification key ...");
-        Groth16PkStore.save(setup, keysDir);
+        // ADR-0035: streamed setup — every point is written straight into the mmap'd key files,
+        // so no proving-key array is ever heap-resident.
+        var setup = svc.localSetupToStore(keysDir);
+        System.out.printf("  setup complete (streamed to store): %.1f min%n", (System.nanoTime() - t) / 6e10);
         VkIO.write(keysDir, setup);
 
         bundle.finalizeAndReport("local", nc, nw, np);
