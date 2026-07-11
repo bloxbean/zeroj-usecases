@@ -44,8 +44,10 @@ public final class Bundle {
         return Groth16PkStore.exists(dir) && Files.isRegularFile(dir.resolve(BUNDLE_PROPS));
     }
 
+    /** Canonical circuit fingerprint — the format is owned by {@link Groth16Pipeline} now. */
     public static String fingerprint(int numConstraints, int numWires, int numPublic) {
-        return "c" + numConstraints + "-w" + numWires + "-p" + numPublic;
+        return com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Pipeline
+                .fingerprint(numConstraints, numWires, numPublic);
     }
 
     /** Write {@code bundle.properties} (call after the proving-key store has been saved to {@code dir}). */

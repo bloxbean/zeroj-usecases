@@ -2,14 +2,10 @@ package com.bloxbean.cardano.zeroj.usecases.recovery.service;
 
 import com.bloxbean.cardano.zeroj.api.CurveId;
 import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
-import com.bloxbean.cardano.zeroj.api.R1CSFlat;
 import com.bloxbean.cardano.zeroj.bls12381.field.MontFr381;
 import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
 import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16PkStore;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.ProverBackend;
+import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Pipeline;
 import com.bloxbean.cardano.zeroj.crypto.msm.FlatScalars;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.usecases.recovery.circuit.OwnershipProofCircuit;
@@ -83,26 +79,25 @@ public class OwnershipCircuitService {
         return localSetupToStore(dir, true);
     }
 
-    /** {@link #localSetupToStore(java.nio.file.Path)} choosing the store format (ADR-0035 M6a). */
+    /**
+     * {@link #localSetupToStore(java.nio.file.Path)} choosing the store format (ADR-0035 M6a).
+     * Orchestration (graph release + {@code r1cs.bin} emission + streamed store) lives in
+     * {@link Groth16Pipeline#setup} since it is circuit-agnostic; this method only compiles,
+     * drops its references, and delegates.
+     */
     public Groth16SetupBLS381.SetupResult localSetupToStore(java.nio.file.Path dir, boolean sparse)
             throws java.io.IOException {
         compile();
-        R1CSFlat flat = r1cs.flat();
-        int nc = r1cs.numConstraints(), nw = r1cs.numWires(), np = r1cs.numPublicInputs();
+        var cc = new Groth16Pipeline.Compiled(r1cs.flat(),
+                r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs());
         circuit = null; // ADR-0035 M2: graph (~5.7 GB) + CS released before the heavy phase
         r1cs = null;
-        // ADR-0035 M5: emit the constraint cache in the same pass — the first prove against this
-        // fresh bundle skips its ~18 s compile (best-effort; the CLI would rewrite it anyway).
-        try {
-            java.nio.file.Files.createDirectories(dir);
-            com.bloxbean.cardano.zeroj.api.R1CSFlatIO.write(flat,
-                    com.bloxbean.cardano.zeroj.usecases.recovery.cli.Bundle.fingerprint(nc, nw, np),
-                    dir.resolve("r1cs.bin"));
-        } catch (Exception e) {
-            System.err.println("  (could not write r1cs cache: " + e.getMessage() + " — continuing)");
-        }
         BigInteger tau = new BigInteger(512, new SecureRandom()).mod(MontFr381.modulus());
-        return Groth16SetupBLS381.setupToStore(flat, nw, np, tau, dir, sparse);
+        return Groth16Pipeline.setup(cc, tau, dir, sparse, new Groth16Pipeline.Progress() {
+            @Override public void constraintCacheWriteFailed(Exception e) {
+                System.err.println("  (could not write r1cs cache: " + e.getMessage() + " — continuing)");
+            }
+        });
     }
 
     /** The witness for "root key ({@code kL,kR,cc}) derives via m/1852'/1815'/0'/0/0 to {@code pkh}". */
@@ -128,42 +123,16 @@ public class OwnershipCircuitService {
         // witness-generation peak past the 7 GB floor. Pack to flat AFTER the graph is released;
         // packConsuming drops the boxed elements as they convert.
         BigInteger[] w = witness(rootKL, rootKR, rootChainCode, pkh);
-        circuit = null; // graph served its purpose; r1cs (if compiled) stays for prove()
+        // Both compiled references go here (ADR-0033 M2): Groth16Pipeline already extracted the
+        // packed matrices it needs, so nothing of the compile survives into the H/MSM phase.
+        circuit = null;
+        r1cs = null;
         return FlatScalars.packConsuming(w, w.length);
     }
 
-    /**
-     * Prove against a loaded key.
-     *
-     * @param snarkjsKey true when the key came from an snarkjs/ptau ceremony — snarkjs's
-     *                   Groth16 setup appends one public-input binding row per public signal, so the
-     *                   prover's QAP must use {@link ZkeyPkStoreImporter#snarkjsConstraints}. A local
-     *                   setup uses the raw constraints.
-     */
-    /**
-     * Prove with an explicitly supplied packed constraint system — from a fresh compile or the
-     * {@code r1cs.bin} cache (ADR-0034 M4), so a cache-hit prove never runs {@code compileR1CS}.
-     *
-     * @param bindingRows snarkjs ceremony keys append one public-input binding row per public
-     *                    signal ({@code numPublic + 1}); 0 for a local-setup key.
-     */
-    public Groth16ProofBLS381 prove(Groth16PkStore.Loaded key, FlatScalars witness,
-                                    R1CSFlat flat, int bindingRows, ProverBackend backend) {
-        int domain = key.domain();
-
-        // ADR-0033 M2 / ADR-0034 M1: the compiled circuit graph (~3 GB at 19M) is only needed for
-        // witness calculation — already done by the caller — so release any cached compile state
-        // BEFORE computeH. The packed matrices are computeH's input and the caller should drop
-        // its own reference after this call; nothing heavy is resident during the five MSMs.
-        // ADR-0034 M3: witness and hCoeffs stay flat (32 B/scalar) end-to-end — nothing on the
-        // prove path boxes a field element.
-        circuit = null;
-        r1cs = null;
-        FlatScalars hCoeffs = Groth16ProverBLS381.computeHFlat(flat, witness, bindingRows, domain);
-        flat = null;
-
-        return Groth16ProverBLS381.proveWithHCoeffs(key.pk(), key.readers(), backend, witness, hCoeffs);
-    }
+    // The prove orchestration (cache-aware compile, deferred mapped constraints, H split, flat
+    // scalars end-to-end) moved to Groth16Pipeline.prove (zeroj-crypto) — it was circuit-agnostic.
+    // ProveCommand drives it directly with this service's compile/witness as the two suppliers.
 
     /** ZkBytes input keys are {@code base_i}, one byte per element. */
     private static void putBytes(Map<String, List<BigInteger>> in, String base, byte[] bytes) {

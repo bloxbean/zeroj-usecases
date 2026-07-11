@@ -1,9 +1,9 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.cli;
 
 import com.bloxbean.cardano.client.common.model.Networks;
-import com.bloxbean.cardano.zeroj.api.R1CSFlat;
-import com.bloxbean.cardano.zeroj.api.R1CSFlatIO;
+import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Keys;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16PkStore;
+import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Pipeline;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.ProverBackend;
 import com.bloxbean.cardano.zeroj.cryptoblst.BlstProverBackend;
@@ -38,8 +38,8 @@ public final class ProveCommand implements Callable<Integer> {
     // passes, 6 GB OOMs in the compile; with a matching r1cs.bin the compile is skipped and
     // 7 GB passes (6 GB OOMs building the witness graph). HARD_MIN: below this the run cannot
     // complete; RECOMMENDED: comfortable headroom.
-    private static final int HARD_MIN_HEAP_GB = 4; // TEMP probe
-    private static final int HARD_MIN_CACHED_HEAP_GB = 4; // TEMP probe
+    private static final int HARD_MIN_HEAP_GB = 8;
+    private static final int HARD_MIN_CACHED_HEAP_GB = 7;
     private static final int RECOMMENDED_HEAP_GB = 10;
 
     enum Backend { blst, java }
@@ -85,16 +85,13 @@ public final class ProveCommand implements Callable<Integer> {
             return 2;
         }
 
-        // ADR-0034 M4: the packed constraints are a pure function of the circuit, so a
-        // fingerprint-matched r1cs.bin beside the key bundle skips the whole R1CS compile
-        // (the circuit graph is still built later for witness calculation). A stale, foreign,
-        // or tampered cache is ignored/harmless: the fingerprint gates staleness, and a proof
-        // from wrong constraints cannot pass the pairing self-check against this bundle's VK.
-        // Only the header is probed here — the full ~1 GB load happens after the witness is
-        // packed, so the constraints never coexist with the witness-generation peak.
+        // ADR-0034 M4: a fingerprint-matched r1cs.bin beside the key bundle skips the whole R1CS
+        // compile; the mmap'd load is deferred until after the witness (Groth16Pipeline owns that
+        // ordering now). A stale, foreign, or tampered cache is ignored/harmless: the fingerprint
+        // gates staleness, and a proof from wrong constraints cannot pass the pairing self-check.
         String bundleFp = bundle.metadata().getProperty("fingerprint");
-        Path cacheFile = keysDir.resolve("r1cs.bin");
-        boolean cacheDeferred = !noCache && bundleFp != null && R1CSFlatIO.hasMatching(cacheFile, bundleFp);
+        Path cacheFile = noCache ? null : keysDir.resolve(Groth16Pipeline.R1CS_CACHE);
+        boolean cacheDeferred = Groth16Pipeline.cacheMatches(cacheFile, bundleFp);
 
         // ADR-0033: fail fast on an obviously-too-small heap, BEFORE the multi-GB circuit compile
         // and the mnemonic prompt. Sizes below the hard floor cannot complete regardless of
@@ -116,38 +113,27 @@ public final class ProveCommand implements Callable<Integer> {
 
         var svc = new OwnershipCircuitService();
         long t0 = System.nanoTime();
-        R1CSFlat flat = null;
-        String fp;
-        int numPublic;
-        if (cacheDeferred) {
-            fp = bundleFp;
-            numPublic = Integer.parseInt(fp.substring(fp.lastIndexOf('p') + 1));
-            System.out.printf("Constraint cache matches (%s) — compile skipped%n", cacheFile.getFileName());
-        } else {
-            System.out.println("Compiling circuit (BLS12-381) ...");
-            svc.compile();
-            int nc = svc.numConstraints(), nw = svc.numWires();
-            numPublic = svc.numPublicInputs();
-            fp = Bundle.fingerprint(nc, nw, numPublic);
-            System.out.printf("  %,d constraints | %.1fs%n", nc, secs(t0));
 
-            if (bundleFp != null && !bundleFp.equals(fp)) {
-                System.err.println("Circuit/key mismatch: bundle fingerprint " + bundleFp
-                        + " but this build's circuit is " + fp + ". The bundle was made for a different circuit.");
-                return 2;
+        // Memoized compile — Groth16Pipeline invokes it only when the cache can't be used.
+        var ccBox = new Groth16Pipeline.Compiled[1];
+        java.util.function.Supplier<Groth16Pipeline.Compiled> compile = () -> {
+            if (ccBox[0] == null) {
+                System.out.println("Compiling circuit (BLS12-381) ...");
+                long tc = System.nanoTime();
+                var cs = svc.compile();
+                ccBox[0] = new Groth16Pipeline.Compiled(cs.flat(),
+                        cs.numConstraints(), cs.numWires(), cs.numPublicInputs());
+                System.out.printf("  %,d constraints | %.1fs%n", cs.numConstraints(), secs(tc));
             }
-            flat = svc.compile().flat();
-            if (!noCache) {
-                try {
-                    long tc = System.nanoTime();
-                    R1CSFlatIO.write(flat, fp, cacheFile);
-                    System.out.printf("  constraints cached → %s (%.1fs; later proves skip the compile)%n",
-                            cacheFile, secs(tc));
-                } catch (Exception e) {
-                    System.err.println("  (could not write r1cs cache: " + e.getMessage() + " — continuing)");
-                }
-            }
-        }
+            return ccBox[0];
+        };
+        if (cacheDeferred)
+            System.out.printf("Constraint cache matches (%s) — compile skipped%n", cacheFile.getFileName());
+
+        // numPublic (for the snarkjs binding rows) comes from the bundle fingerprint — every
+        // bundle carries one; a fingerprint-less bundle falls back to an eager compile.
+        var dims = Groth16Pipeline.parseFingerprint(bundleFp);
+        int numPublic = dims != null ? dims.numPublic() : compile.get().numPublic();
         int bindingRows = bundle.isSnarkjsKey() ? numPublic + 1 : 0;
 
         String mnemonic = readMnemonic();
@@ -166,37 +152,52 @@ public final class ProveCommand implements Callable<Integer> {
 
         System.out.println("Loading proving key (mmap) ...");
         long tl = System.nanoTime();
-        java.lang.foreign.Arena csArena = null; // mmap arena for the deferred constraint cache
         var loaded = Groth16PkStore.load(keysDir);
         try {
             System.out.printf("  key loaded: %.1fs%n", secs(tl));
-
-            System.out.println("Computing witness ...");
-            long tw = System.nanoTime();
-            // born-flat witness (ADR-0034 M7): evaluated into 4 MB chunks, consolidated after
-            // the graph is released
-            var witness = svc.witnessFlat(wallet.rootKL(), wallet.rootKR(), wallet.rootChainCode(), wallet.pkh());
-            System.out.printf("  witness: %.1fs%n", secs(tw));
-
-            if (cacheDeferred) {
-                // deferred cache load (ADR-0034 M4) — the graph is gone, witness is packed.
-                // M6a: the CSR arrays are mmap'd (segment-backed), not heap-loaded — like the key.
-                long tc = System.nanoTime();
-                csArena = java.lang.foreign.Arena.ofShared();
-                flat = R1CSFlatIO.readMapped(cacheFile, fp, csArena);
-                if (flat == null) { // vanished/corrupted since the header probe — recompile
-                    System.err.println("  (r1cs cache unreadable — recompiling)");
-                    flat = svc.compile().flat();
-                }
-                System.out.printf("  %,d constraints mapped: %.1fs%n", flat.rows(), secs(tc));
-            }
-
             ProverBackend prover = selectBackend();
-            System.out.println("Generating proof (" + backendLabel + ", multi-core) ...");
-            long tp = System.nanoTime();
-            Groth16ProofBLS381 proof = svc.prove(loaded, witness, flat, bindingRows, prover);
-            flat = null;
-            System.out.printf("  proof generated: %.1fs%n", secs(tp));
+
+            // Narrates the pipeline stages in this CLI's format; tp anchors the prove timer at
+            // the same boundary as before (start of computeH — witness and mapped load excluded).
+            var progress = new Groth16Pipeline.Progress() {
+                long tp;
+                @Override public void constraintCacheWritten(Path f, double s) {
+                    System.out.printf("  constraints cached → %s (%.1fs; later proves skip the compile)%n", f, s);
+                }
+                @Override public void constraintCacheWriteFailed(Exception e) {
+                    System.err.println("  (could not write r1cs cache: " + e.getMessage() + " — continuing)");
+                }
+                @Override public void constraintsMapped(int rows, double s) {
+                    System.out.printf("  %,d constraints mapped: %.1fs%n", rows, s);
+                }
+                @Override public void constraintCacheUnreadable() {
+                    System.err.println("  (r1cs cache unreadable — recompiling)");
+                }
+                @Override public void proveStarted() {
+                    System.out.println("Generating proof (" + backendLabel + ", multi-core) ...");
+                    tp = System.nanoTime();
+                }
+            };
+
+            Groth16ProofBLS381 proof;
+            try {
+                proof = Groth16Pipeline.prove(Groth16Keys.of(loaded), cacheFile, bundleFp,
+                        compile,
+                        () -> {
+                            System.out.println("Computing witness ...");
+                            long tw = System.nanoTime();
+                            var w = svc.witnessFlat(wallet.rootKL(), wallet.rootKR(),
+                                    wallet.rootChainCode(), wallet.pkh());
+                            System.out.printf("  witness: %.1fs%n", secs(tw));
+                            return w;
+                        },
+                        bindingRows, prover, progress);
+            } catch (IllegalStateException e) {
+                System.err.println(e.getMessage()); // circuit/key fingerprint mismatch
+                return 2;
+            }
+            String fp = bundleFp != null ? bundleFp : ccBox[0].fingerprint();
+            System.out.printf("  proof generated: %.1fs%n", secs(progress.tp));
             if (!(proof.a().isOnCurve() && proof.b().isOnCurve() && proof.c().isOnCurve())) {
                 System.err.println("Internal error: generated proof is not on-curve.");
                 return 1;
@@ -217,9 +218,6 @@ public final class ProveCommand implements Callable<Integer> {
             }
         } finally {
             Bundle.closeQuietly(loaded);   // shared mmap Arena close is unsupported in a native image
-            if (csArena != null) {
-                try { csArena.close(); } catch (Throwable ignore) { /* native-image: unmapped at exit */ }
-            }
         }
 
         System.out.printf("%nProof written to %s (%s, %s)%n", outDir.toAbsolutePath(),
