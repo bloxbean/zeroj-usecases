@@ -24,7 +24,9 @@ import java.nio.file.Path;
  *       coordinates, in the same affine form the on-chain validator and the off-chain pairing check
  *       consume.</li>
  *   <li>{@code public-inputs.json} — the statement the proof is about: the payment key hash, the
- *       address, the derivation indices, the circuit fingerprint, and the 28 public-input scalars.</li>
+ *       address, the circuit fingerprint, and the 28 public-input scalars. The derivation path
+ *       (account/role/index) is a <b>secret</b> witness since circuit v2 and is deliberately not
+ *       recorded — this file travels with the proof to the verifier.</li>
  * </ul>
  */
 public final class ProofIO {
@@ -59,13 +61,11 @@ public final class ProofIO {
         MAPPER.writerWithDefaultPrettyPrinter().writeValue(dir.resolve(PROOF_FILE).toFile(), root);
     }
 
-    public static void writePublicInputs(Path dir, byte[] pkh, String address, int account, int index,
+    public static void writePublicInputs(Path dir, byte[] pkh, String address,
                                          String fingerprint) throws IOException {
         ObjectNode root = NF.objectNode();
         root.put("pkh", WalletDerivation.hex(pkh));
         root.put("address", address);
-        root.put("account", account);
-        root.put("index", index);
         root.put("fingerprint", fingerprint);
         ArrayNode pub = root.putArray("publicInputs");
         for (byte b : pkh) pub.add(Integer.toString(b & 0xff));

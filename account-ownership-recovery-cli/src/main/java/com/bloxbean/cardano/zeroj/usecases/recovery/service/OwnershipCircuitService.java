@@ -100,14 +100,23 @@ public class OwnershipCircuitService {
         });
     }
 
-    /** The witness for "root key ({@code kL,kR,cc}) derives via m/1852'/1815'/0'/0/0 to {@code pkh}". */
-    public BigInteger[] witness(byte[] rootKL, byte[] rootKR, byte[] rootChainCode, byte[] pkh) {
+    /** The witness for "root key ({@code kL,kR,cc}) derives via m/1852'/1815'/0'/role/index to {@code pkh}". */
+    public BigInteger[] witness(byte[] rootKL, byte[] rootKR, byte[] rootChainCode,
+                                int role, int index, byte[] pkh) {
         Map<String, List<BigInteger>> in = new HashMap<>();
         putBytes(in, "rootKL", rootKL);
         putBytes(in, "rootKR", rootKR);
         putBytes(in, "rootChainCode", rootChainCode);
+        putBytes(in, "role", le4(role));
+        putBytes(in, "index", le4(index));
         putBytes(in, "pkh", pkh);
         return graph().calculateWitness(in, CurveId.BLS12_381);
+    }
+
+    /** A soft derivation index as the circuit's 4 little-endian bytes. */
+    private static byte[] le4(int v) {
+        if (v < 0) throw new IllegalArgumentException("soft index must be in [0, 2^31): " + v);
+        return new byte[]{(byte) v, (byte) (v >>> 8), (byte) (v >>> 16), (byte) (v >>> 24)};
     }
 
     /**
@@ -116,13 +125,14 @@ public class OwnershipCircuitService {
      * (~3 GB, only needed for witness calculation) is released before returning, so neither is
      * resident during the prove. A later {@code witness()} in the same process recompiles.
      */
-    public FlatScalars witnessFlat(byte[] rootKL, byte[] rootKR, byte[] rootChainCode, byte[] pkh) {
+    public FlatScalars witnessFlat(byte[] rootKL, byte[] rootKR, byte[] rootChainCode,
+                                   int role, int index, byte[] pkh) {
         // Measured (ADR-0034 phase 2): the BOXED witness wins here — this circuit is bit-heavy,
         // so most wires alias the shared ONE/ZERO BigIntegers (~0.4 GB extra beside the 5.7 GB
         // graph), while flat storage always costs the full 32 B/wire (1.4 GB) and pushed the
         // witness-generation peak past the 7 GB floor. Pack to flat AFTER the graph is released;
         // packConsuming drops the boxed elements as they convert.
-        BigInteger[] w = witness(rootKL, rootKR, rootChainCode, pkh);
+        BigInteger[] w = witness(rootKL, rootKR, rootChainCode, role, index, pkh);
         // Both compiled references go here (ADR-0033 M2): Groth16Pipeline already extracted the
         // packed matrices it needs, so nothing of the compile survives into the H/MSM phase.
         circuit = null;
