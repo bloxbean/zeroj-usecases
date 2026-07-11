@@ -60,24 +60,24 @@ mkdir -p keys proofs
 
 # 1. one-time LOCAL setup (dev/testing only; give the container ~16 GB — Linux hosts map this directly)
 docker run --rm -e JAVA_OPTS="-Xmx8g" -v "$PWD/keys:/work/keys" \
-  ghcr.io/bloxbean/account-ownership-recovery-cli setup --i-understand-insecure
+  ghcr.io/bloxbean/account-ownership-recovery-cli:<version> setup --i-understand-insecure
 
 # 2. prove (-it for the hidden mnemonic prompt)
 docker run --rm -it -e JAVA_OPTS="-Xmx8g" -v "$PWD/keys:/work/keys" -v "$PWD/proofs:/work/proofs" \
-  ghcr.io/bloxbean/account-ownership-recovery-cli prove --role 0 --index 0
+  ghcr.io/bloxbean/account-ownership-recovery-cli:<version> prove --role 0 --index 0
 
 # 3. verify off-chain
 docker run --rm -v "$PWD/keys:/work/keys" -v "$PWD/proofs:/work/proofs" \
-  ghcr.io/bloxbean/account-ownership-recovery-cli verify
+  ghcr.io/bloxbean/account-ownership-recovery-cli:<version> verify
 
 # 4. verify on-chain — Yaci DevKit running on the HOST (inside the container, localhost is not the host)
 docker run --rm -it -e AOR_ADMIN_MNEMONIC="word1 … word24" -v "$PWD/keys:/work/keys" -v "$PWD/proofs:/work/proofs" \
-  ghcr.io/bloxbean/account-ownership-recovery-cli verify --onchain --bf-url http://host.docker.internal:8080/api/v1/
+  ghcr.io/bloxbean/account-ownership-recovery-cli:<version> verify --onchain --bf-url http://host.docker.internal:8080/api/v1/
 
 # 5. verify on-chain — preprod via Blockfrost
 docker run --rm -it -e BLOCKFROST_PROJECT_ID=preprod... -e AOR_ADMIN_MNEMONIC="word1 … word24" \
   -v "$PWD/keys:/work/keys" -v "$PWD/proofs:/work/proofs" \
-  ghcr.io/bloxbean/account-ownership-recovery-cli verify --onchain --network preprod
+  ghcr.io/bloxbean/account-ownership-recovery-cli:<version> verify --onchain --network preprod
 ```
 
 The heavy steps (`setup`, `prove`) fit a hard 16 GiB container (measured — see USAGE.md). On a
