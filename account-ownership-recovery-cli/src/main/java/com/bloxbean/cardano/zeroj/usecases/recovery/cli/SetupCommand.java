@@ -33,6 +33,12 @@ public final class SetupCommand implements Callable<Integer> {
     @Option(names = "--force", description = "Overwrite an existing key bundle in the keys directory.")
     boolean force;
 
+    @Option(names = "--dense",
+            description = "Write the dense (fixed-stride) store instead of the sparse default "
+                    + "(ADR-0035 M6: ~57%% of this circuit's key points are infinity — sparse is "
+                    + "~2.6x smaller on disk; both formats load identically).")
+    boolean dense;
+
     @Override
     public Integer call() throws Exception {
         var bundle = new Bundle(keysDir);
@@ -57,12 +63,12 @@ public final class SetupCommand implements Callable<Integer> {
         int nc = svc.numConstraints(), nw = svc.numWires(), np = svc.numPublicInputs();
         System.out.printf("  %,d constraints | %,d wires | %d public%n", nc, nw, np);
 
-        System.out.println("Running single-party trusted setup (dev/testing) — this takes a while (~47 min) ...");
+        System.out.println("Running single-party trusted setup (dev/testing) — this takes a while ...");
         long t = System.nanoTime();
-        var setup = svc.localSetup();
-        System.out.printf("  setup complete: %.1f min%n", (System.nanoTime() - t) / 6e10);
-        System.out.println("Saving proving-key store + verification key ...");
-        Groth16PkStore.save(setup, keysDir);
+        // ADR-0035: streamed setup — every point is written straight into the mmap'd key files,
+        // so no proving-key array is ever heap-resident. Sparse by default (M6a).
+        var setup = svc.localSetupToStore(keysDir, !dense);
+        System.out.printf("  setup complete (streamed to store): %.1f min%n", (System.nanoTime() - t) / 6e10);
         VkIO.write(keysDir, setup);
 
         bundle.finalizeAndReport("local", nc, nw, np);

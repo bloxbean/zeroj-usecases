@@ -1,0 +1,3 @@
+# Local key bundle for testing (the ~23 GB proving-key store) — never commit.
+keys*/
+proofs*/

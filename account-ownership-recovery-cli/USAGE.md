@@ -5,8 +5,8 @@
 Commands: `export-r1cs` · `import` · `setup` · `prove` · `verify` · `info`.
 
 The fat-jar launcher auto-sizes the JVM heap to ~80 % of RAM; override with
-`AOR_JAVA_OPTS="-Xmx110g"`. The native binary takes `-Xmx…` before the subcommand for store-loading
-commands.
+`AOR_JAVA_OPTS="-Xmx8g"` (8 GB is the measured floor for both `setup` and `prove`). The native
+binary takes `-Xmx…` before the subcommand for store-loading commands.
 
 **Where things run:** the phase-2 **ceremony is external** (snarkjs, outside this tool). Everything
 this CLI does is pure Java — no snarkjs, no ptau, no downloads.
@@ -20,7 +20,8 @@ account-ownership-recovery-cli/
 ├── bin/account-ownership-recovery-cli      # launcher (fat-jar zip)
 ├── lib/account-ownership-recovery-cli-*-all.jar
 ├── keys/                # the key bundle (from `setup`/`import`, or downloaded from the coordinator)
-│   ├── pointsA.bin … pointsL.bin, aux.bin   # proving-key store (mmap-loaded)
+│   ├── pointsA.bin … pointsL.bin, aux.bin   # proving-key store (mmap-loaded; sparse by default)
+│   ├── r1cs.bin                             # packed-constraint cache (proves skip the compile)
 │   ├── vk.json                              # verification key (small; used by verify)
 │   ├── bundle.properties                    # mode, circuit fingerprint, version
 │   ├── manifest.properties                  # store dimensions
@@ -65,7 +66,7 @@ setup-cli import --zkey circuit_final.zkey [--keys keys] [--force]
 setup-cli setup --i-understand-insecure [--keys keys] [--force]
 ```
 
-Single-party setup (~47 min, ~90 GB heap). **Insecure:** this machine learns the setup randomness and
+Single-party setup (~6–7 min; `-Xmx8g` is the measured heap floor — ADR-0035; a 16 GB machine works). **Insecure:** this machine learns the setup randomness and
 could forge proofs. Requires the `--i-understand-insecure` acknowledgement.
 
 **Demo tip:** run this **once**, then keep/cache the `keys/` bundle and reuse it — anyone can
@@ -78,17 +79,30 @@ could forge proofs. Requires the `--i-understand-insecure` acknowledgement.
 ## `prove` — generate a proof
 
 ```bash
-setup-cli prove [--keys keys] [--out proofs] [--account 0] [--index 0] [--mainnet] \
+setup-cli prove [--keys keys] [--out proofs] [--role 0] [--index 0] [--mainnet] \
     [--backend blst|java] [--no-self-verify]
 ```
 
-Compiles the circuit + checks its fingerprint, prompts for your **mnemonic (hidden)**, derives the
-root key + target address (`m/1852'/1815'/<account>'/0/<index>`), mmap-loads the proving key, proves,
-writes `proofs/proof.json` + `proofs/public-inputs.json`, and self-checks off-chain.
+Checks the circuit fingerprint (compiling only if `keys/r1cs.bin` is absent), prompts for your
+**mnemonic (hidden)**, derives the root key + target address
+(`m/1852'/1815'/0'/<role>/<index>`), mmap-loads the proving key, proves, writes
+`proofs/proof.json` + `proofs/public-inputs.json`, and self-checks off-chain.
 
-`--backend blst` (default) is the fast native prover (~2–3 min); `--backend java` is pure-Java (~9
-min, no native lib). Takes ~5 min and needs ~64 GB+ RAM. The mnemonic is never accepted as an
-argument — always the hidden prompt.
+**Path (`--role`, `--index`):** pick any address of the account — `--role 0` (default) is the
+external payment chain, `--role 1` the internal/change chain; `--index` is the address number.
+Since circuit v2 the path is a **secret witness**: only the payment key hash is a public input,
+and the path is not written to `public-inputs.json`. The CIP-1852 account is fixed at `0'`
+(`--account` other than 0 is rejected).
+
+`--backend` picks the prover. The default is **`java`** (pure-Java multi-core): same speed as
+blst at this circuit size since ADR-0033/0034, no native lib, and safe on small-memory machines.
+`--backend blst` opts into the native MSM — possibly faster on some hardware, but its native
+buffers need ~10 GB beyond the heap (OOM risk under ~24 GB total memory — ADR-0034 M5). Takes
+~2–4 min end-to-end and needs **~10 GB+ RAM** (measured floor: 8 GB first run, 7 GB once the
+constraint cache exists; a 16 GB machine proves in ~2.6 min, validated under a hard memory cap).
+The first prove writes `keys/r1cs.bin` (~0.9 GB) so later proves skip the circuit compile;
+`--no-cache` disables it. The mnemonic is never accepted as an argument — always the hidden
+prompt.
 
 ## `verify` — check a proof
 
@@ -124,14 +138,14 @@ setup-cli info [--keys keys] [--verify-integrity]
 ```
 
 Shows mode, circuit fingerprint, size, and whether `vk.json` is present. `--verify-integrity`
-recomputes `SHA256SUMS` over the whole ~23 GB bundle (slow).
+recomputes `SHA256SUMS` over the whole bundle (~10 GB sparse / ~24 GB dense — slow).
 
 ---
 
 ## End-to-end (local Yaci DevKit, using a local dev bundle)
 
 ```bash
-AOR_JAVA_OPTS="-Xmx110g" setup-cli setup --i-understand-insecure   # coordinator, once
+AOR_JAVA_OPTS="-Xmx8g" setup-cli setup --i-understand-insecure    # once, ~6-7 min (8g = measured floor)
 setup-cli info
 setup-cli prove
 setup-cli verify
@@ -177,10 +191,16 @@ KEYS_DIR=$PWD/keys PROOFS_DIR=$PWD/proofs AOR_ADMIN_MNEMONIC="…" \
 ```
 
 - **Light commands work anywhere** (verify only needs the tiny `vk.json`).
-- **`prove` / `setup` are the exception:** they need ~80 GB and memory-map the 23 GB store. That's only
-  practical on a big **Linux** host — set `mem_limit` in the compose file and `JAVA_OPTS="-Xmx80g"`.
-  On Docker Desktop (mac/win) the VM RAM cap + slow mmap over bind-mounts make heavy proving
-  impractical; use the fat-jar or native distribution directly for that.
+- **`prove` / `setup` are the exception:** `prove` needs ~10 GB heap (ADR-0034) and memory-maps the
+  ~9.6 GB sparse store; `setup` needs ~8 GB heap (measured floor; ADR-0035). For either, set `mem_limit` in the compose file and
+  `JAVA_OPTS="-Xmx8g"`. Measured (ADR-0035): the **whole loop fits a hard 16 GiB cap with zero
+  swap** — one container chained `setup` (9.6 min) → `prove` (2.7 min, self-check PASS) →
+  `verify` (VALID) at `-Xmx8g` for both heavy steps, sparse bundle on a Docker volume,
+  **12.6 min total**. On a **Linux 16 GB host** that maps directly. On a 16 GB **Docker Desktop**
+  machine (mac/win) the VM keeps ~3-4 GB from the host, so the heavy steps get tight — prefer
+  the fat jar on the host there. Writing the bundle to a **named volume** (VM-native disk) is
+  noticeably faster than a bind mount (VirtioFS write penalty on ~10 GB of output); the CLI
+  auto-selects the pure-Java backend under a 16 GB cap (blst's native MSM buffers don't fit).
 
 ## Exit codes
 `0` success · `1` verification failed / internal error · `2` bad usage / missing bundle / missing

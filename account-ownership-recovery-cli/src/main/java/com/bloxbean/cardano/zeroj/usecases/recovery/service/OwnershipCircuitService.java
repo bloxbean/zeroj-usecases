@@ -5,11 +5,8 @@ import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
 import com.bloxbean.cardano.zeroj.bls12381.field.MontFr381;
 import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
 import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16PkStore;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.ProverBackend;
-import com.bloxbean.cardano.zeroj.crypto.groth16.ZkeyPkStoreImporter;
+import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Pipeline;
+import com.bloxbean.cardano.zeroj.crypto.msm.FlatScalars;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.usecases.recovery.circuit.OwnershipProofCircuit;
 
@@ -32,11 +29,20 @@ public class OwnershipCircuitService {
     private CircuitBuilder circuit;
     private R1CSConstraintSystem r1cs;
 
+    /**
+     * Build the circuit graph only (idempotent) — enough for witness calculation. The R1CS
+     * compile is separate ({@link #compile}) so a prove with a cached {@code r1cs.bin}
+     * (ADR-0034 M4) never pays it.
+     */
+    public synchronized CircuitBuilder graph() {
+        if (circuit == null) circuit = OwnershipProofCircuit.build();
+        return circuit;
+    }
+
     /** Compile the {@code @ZKCircuit} to R1CS over BLS12-381 (idempotent). */
     public synchronized R1CSConstraintSystem compile() {
         if (r1cs == null) {
-            circuit = OwnershipProofCircuit.build();
-            r1cs = circuit.compileR1CS(CurveId.BLS12_381);
+            r1cs = graph().compileR1CS(CurveId.BLS12_381);
         }
         return r1cs;
     }
@@ -61,34 +67,82 @@ public class OwnershipCircuitService {
         return Groth16SetupBLS381.setup(r1cs.constraints(), r1cs.numWires(), r1cs.numPublicInputs(), tau);
     }
 
-    /** The witness for "root key ({@code kL,kR,cc}) derives via m/1852'/1815'/0'/0/0 to {@code pkh}". */
-    public BigInteger[] witness(byte[] rootKL, byte[] rootKR, byte[] rootChainCode, byte[] pkh) {
+    /**
+     * {@link #localSetup()} streamed straight into the {@code Groth16PkStore} layout at
+     * {@code dir} (ADR-0035 M2/M3): the circuit graph and constraint system are released before
+     * the point generation, the QAP evaluations live as flat limbs, and every point is written
+     * into the mmap'd key files — no proving-key array is ever heap-resident. Byte-identical
+     * output to {@code localSetup()} + {@code Groth16PkStore.save}. <b>Insecure</b> (single
+     * party) — testing only.
+     */
+    public Groth16SetupBLS381.SetupResult localSetupToStore(java.nio.file.Path dir) throws java.io.IOException {
+        return localSetupToStore(dir, true);
+    }
+
+    /**
+     * {@link #localSetupToStore(java.nio.file.Path)} choosing the store format (ADR-0035 M6a).
+     * Orchestration (graph release + {@code r1cs.bin} emission + streamed store) lives in
+     * {@link Groth16Pipeline#setup} since it is circuit-agnostic; this method only compiles,
+     * drops its references, and delegates.
+     */
+    public Groth16SetupBLS381.SetupResult localSetupToStore(java.nio.file.Path dir, boolean sparse)
+            throws java.io.IOException {
         compile();
+        var cc = new Groth16Pipeline.Compiled(r1cs.flat(),
+                r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs());
+        circuit = null; // ADR-0035 M2: graph (~5.7 GB) + CS released before the heavy phase
+        r1cs = null;
+        BigInteger tau = new BigInteger(512, new SecureRandom()).mod(MontFr381.modulus());
+        return Groth16Pipeline.setup(cc, tau, dir, sparse, new Groth16Pipeline.Progress() {
+            @Override public void constraintCacheWriteFailed(Exception e) {
+                System.err.println("  (could not write r1cs cache: " + e.getMessage() + " — continuing)");
+            }
+        });
+    }
+
+    /** The witness for "root key ({@code kL,kR,cc}) derives via m/1852'/1815'/0'/role/index to {@code pkh}". */
+    public BigInteger[] witness(byte[] rootKL, byte[] rootKR, byte[] rootChainCode,
+                                int role, int index, byte[] pkh) {
         Map<String, List<BigInteger>> in = new HashMap<>();
         putBytes(in, "rootKL", rootKL);
         putBytes(in, "rootKR", rootKR);
         putBytes(in, "rootChainCode", rootChainCode);
+        putBytes(in, "role", le4(role));
+        putBytes(in, "index", le4(index));
         putBytes(in, "pkh", pkh);
-        return circuit.calculateWitness(in, CurveId.BLS12_381);
+        return graph().calculateWitness(in, CurveId.BLS12_381);
+    }
+
+    /** A soft derivation index as the circuit's 4 little-endian bytes. */
+    private static byte[] le4(int v) {
+        if (v < 0) throw new IllegalArgumentException("soft index must be in [0, 2^31): " + v);
+        return new byte[]{(byte) v, (byte) (v >>> 8), (byte) (v >>> 16), (byte) (v >>> 24)};
     }
 
     /**
-     * Prove against a loaded key.
-     *
-     * @param snarkjsKey true when the key came from an snarkjs/ptau ceremony — snarkjs's
-     *                   Groth16 setup appends one public-input binding row per public signal, so the
-     *                   prover's QAP must use {@link ZkeyPkStoreImporter#snarkjsConstraints}. A local
-     *                   setup uses the raw constraints.
+     * {@link #witness} born flat (ADR-0034 M7): the calculator writes canonical limbs directly
+     * (32 B/wire — no boxed {@code BigInteger[]}, no packing step), and the circuit graph
+     * (~3 GB, only needed for witness calculation) is released before returning, so neither is
+     * resident during the prove. A later {@code witness()} in the same process recompiles.
      */
-    public Groth16ProofBLS381 prove(Groth16PkStore.Loaded key, BigInteger[] witness,
-                                    ProverBackend backend, boolean snarkjsKey) {
-        compile();
-        List<R1CSConstraint> cons = snarkjsKey
-                ? ZkeyPkStoreImporter.snarkjsConstraints(r1cs.constraints(), r1cs.numPublicInputs())
-                : r1cs.constraints();
-        return Groth16ProverBLS381.proveWithReaders(key.pk(), key.readers(), backend,
-                witness, cons, r1cs.numWires(), key.domain());
+    public FlatScalars witnessFlat(byte[] rootKL, byte[] rootKR, byte[] rootChainCode,
+                                   int role, int index, byte[] pkh) {
+        // Measured (ADR-0034 phase 2): the BOXED witness wins here — this circuit is bit-heavy,
+        // so most wires alias the shared ONE/ZERO BigIntegers (~0.4 GB extra beside the 5.7 GB
+        // graph), while flat storage always costs the full 32 B/wire (1.4 GB) and pushed the
+        // witness-generation peak past the 7 GB floor. Pack to flat AFTER the graph is released;
+        // packConsuming drops the boxed elements as they convert.
+        BigInteger[] w = witness(rootKL, rootKR, rootChainCode, role, index, pkh);
+        // Both compiled references go here (ADR-0033 M2): Groth16Pipeline already extracted the
+        // packed matrices it needs, so nothing of the compile survives into the H/MSM phase.
+        circuit = null;
+        r1cs = null;
+        return FlatScalars.packConsuming(w, w.length);
     }
+
+    // The prove orchestration (cache-aware compile, deferred mapped constraints, H split, flat
+    // scalars end-to-end) moved to Groth16Pipeline.prove (zeroj-crypto) — it was circuit-agnostic.
+    // ProveCommand drives it directly with this service's compile/witness as the two suppliers.
 
     /** ZkBytes input keys are {@code base_i}, one byte per element. */
     private static void putBytes(Map<String, List<BigInteger>> in, String base, byte[] bytes) {
