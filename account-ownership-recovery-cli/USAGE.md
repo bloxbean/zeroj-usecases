@@ -5,8 +5,8 @@
 Commands: `export-r1cs` · `import` · `setup` · `prove` · `verify` · `info`.
 
 The fat-jar launcher auto-sizes the JVM heap to ~80 % of RAM; override with
-`AOR_JAVA_OPTS="-Xmx12g"`. The native binary takes `-Xmx…` before the subcommand for store-loading
-commands.
+`AOR_JAVA_OPTS="-Xmx8g"` (8 GB is the measured floor for both `setup` and `prove`). The native
+binary takes `-Xmx…` before the subcommand for store-loading commands.
 
 **Where things run:** the phase-2 **ceremony is external** (snarkjs, outside this tool). Everything
 this CLI does is pure Java — no snarkjs, no ptau, no downloads.
@@ -20,7 +20,8 @@ account-ownership-recovery-cli/
 ├── bin/account-ownership-recovery-cli      # launcher (fat-jar zip)
 ├── lib/account-ownership-recovery-cli-*-all.jar
 ├── keys/                # the key bundle (from `setup`/`import`, or downloaded from the coordinator)
-│   ├── pointsA.bin … pointsL.bin, aux.bin   # proving-key store (mmap-loaded)
+│   ├── pointsA.bin … pointsL.bin, aux.bin   # proving-key store (mmap-loaded; sparse by default)
+│   ├── r1cs.bin                             # packed-constraint cache (proves skip the compile)
 │   ├── vk.json                              # verification key (small; used by verify)
 │   ├── bundle.properties                    # mode, circuit fingerprint, version
 │   ├── manifest.properties                  # store dimensions
@@ -78,13 +79,20 @@ could forge proofs. Requires the `--i-understand-insecure` acknowledgement.
 ## `prove` — generate a proof
 
 ```bash
-setup-cli prove [--keys keys] [--out proofs] [--account 0] [--index 0] [--mainnet] \
+setup-cli prove [--keys keys] [--out proofs] [--role 0] [--index 0] [--mainnet] \
     [--backend blst|java] [--no-self-verify]
 ```
 
-Compiles the circuit + checks its fingerprint, prompts for your **mnemonic (hidden)**, derives the
-root key + target address (`m/1852'/1815'/<account>'/0/<index>`), mmap-loads the proving key, proves,
-writes `proofs/proof.json` + `proofs/public-inputs.json`, and self-checks off-chain.
+Checks the circuit fingerprint (compiling only if `keys/r1cs.bin` is absent), prompts for your
+**mnemonic (hidden)**, derives the root key + target address
+(`m/1852'/1815'/0'/<role>/<index>`), mmap-loads the proving key, proves, writes
+`proofs/proof.json` + `proofs/public-inputs.json`, and self-checks off-chain.
+
+**Path (`--role`, `--index`):** pick any address of the account — `--role 0` (default) is the
+external payment chain, `--role 1` the internal/change chain; `--index` is the address number.
+Since circuit v2 the path is a **secret witness**: only the payment key hash is a public input,
+and the path is not written to `public-inputs.json`. The CIP-1852 account is fixed at `0'`
+(`--account` other than 0 is rejected).
 
 `--backend` picks the prover. The default is **`java`** (pure-Java multi-core): same speed as
 blst at this circuit size since ADR-0033/0034, no native lib, and safe on small-memory machines.

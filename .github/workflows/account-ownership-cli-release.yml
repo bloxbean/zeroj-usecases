@@ -1,12 +1,22 @@
 name: release (account-ownership-recovery-cli)
 
-# Builds the Account-Ownership Proof CLI fat-jar + native zips and attaches them to a GitHub Release.
+# Builds the Account-Ownership Proof CLI fat-jar zip + per-OS native zips and attaches them to a
+# GitHub Release.
 #
-#   preview : Actions ▸ Run workflow            → builds + uploads the zips as a workflow ARTIFACT
+#   preview : Actions ▸ Run workflow            → builds + uploads the zips as workflow ARTIFACTS
 #   release : push a repo tag  v<version>        → uploads the zips to the GitHub RELEASE for that tag
 #
 # The release version comes from the tag (`v0.1.0-pre1` -> 0.1.0-pre1), which should match
 # version.properties at the repo root. ZeroJ / Julc / cardano-client-lib resolve from Maven Central.
+#
+# Assets produced:
+#   account-ownership-recovery-cli-<v>.zip                fat jar + launcher (needs Java 25) — the
+#                                                         recommended distribution (fastest prover)
+#   account-ownership-recovery-cli-<v>-macos-arm64.zip    GraalVM native binary
+#   account-ownership-recovery-cli-<v>-linux-arm64.zip    GraalVM native binary
+#   account-ownership-recovery-cli-<v>-windows-x86_64.zip GraalVM native binary — proving always
+#                                                         uses the pure-Java backend on Windows
+#                                                         (the optional blst DLL is not packaged)
 #
 # Future usecases (private-voting, …) can be added as extra build/upload steps here.
 
@@ -19,12 +29,12 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  jar:
+    runs-on: ubuntu-22.04-arm
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 25 (GraalVM, for the native image)
+      - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
           distribution: 'graalvm'
@@ -44,14 +54,10 @@ jobs:
       - name: Build fat-jar distZip (deps from Maven Central)
         run: cd account-ownership-recovery-cli && ./gradlew distZip -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
 
-      - name: Build native binary zip (this runner's platform)
-        run: cd account-ownership-recovery-cli && ./gradlew nativeDistZip -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
-        # For all-platform native binaries, run this job on a linux/macos/windows × x64/arm64 matrix.
-
       - name: Upload workflow artifact (preview + release)
         uses: actions/upload-artifact@v4
         with:
-          name: account-ownership-recovery-cli-${{ steps.ver.outputs.version }}
+          name: account-ownership-recovery-cli-${{ steps.ver.outputs.version }}-jar
           path: account-ownership-recovery-cli/build/dist/*.zip
 
       - name: Attach to the GitHub Release (tag builds only)
@@ -59,4 +65,55 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: account-ownership-recovery-cli/build/dist/*.zip
+          fail_on_unmatched_files: true
+
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14            # Apple Silicon
+            platform: macos-arm64
+          - os: ubuntu-22.04-arm    # aarch64
+            platform: linux-arm64
+          - os: windows-latest      # x86_64; prove runs the pure-Java backend (no blst DLL)
+            platform: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # graalvm/setup-graalvm also configures the MSVC toolchain native-image needs on Windows.
+      - name: Set up GraalVM JDK 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          distribution: 'graalvm'
+          java-version: '25'
+
+      - name: Resolve release version (tag > version.properties)
+        id: ver
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V=$(grep -m1 '^version' version.properties | cut -d= -f2)
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Release version: $V"
+
+      - name: Build native binary zip (${{ matrix.platform }})
+        shell: bash
+        run: cd account-ownership-recovery-cli && ./gradlew nativeDistZip -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
+
+      - name: Upload workflow artifact (preview + release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: account-ownership-recovery-cli-${{ steps.ver.outputs.version }}-${{ matrix.platform }}
+          path: account-ownership-recovery-cli/build/dist/*-${{ matrix.platform }}.zip
+
+      - name: Attach to the GitHub Release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: account-ownership-recovery-cli/build/dist/*-${{ matrix.platform }}.zip
           fail_on_unmatched_files: true
