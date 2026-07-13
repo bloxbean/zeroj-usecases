@@ -1,36 +1,38 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.service;
 
+import com.bloxbean.cardano.zeroj.bls12381.Bls12381Codecs;
+import com.bloxbean.cardano.zeroj.bls12381.ec.G1Point;
+import com.bloxbean.cardano.zeroj.bls12381.ec.G2Point;
 import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG1BLS381;
 import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG2BLS381;
+import com.bloxbean.cardano.zeroj.bls12381.field.Fp;
+import com.bloxbean.cardano.zeroj.bls12381.field.Fp2;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
-import supranational.blst.P1_Affine;
-import supranational.blst.P2_Affine;
 
-import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Compresses proof/VK points to the on-chain 48-byte (G1) / 96-byte (G2) form.
+ *
+ * <p>Uses ZeroJ's <b>pure-Java</b> {@link Bls12381Codecs} — no native library — so {@code setup}
+ * and {@code prove} run on every platform, including Windows where blst isn't packaged. The output
+ * is the standard IETF/zkcrypto compressed serialization; it is verified byte-for-byte against
+ * blst's {@code compress()} in {@code ProofCompressorTest} so the on-chain redeemer bytes are
+ * unchanged.</p>
+ */
 public final class ProofCompressor {
-
-    private static final int FP_SIZE = 48;
 
     private ProofCompressor() {}
 
     public static byte[] g1Compress(JacobianG1BLS381.AffineG1 point) {
-        if (point.isInfinity()) { byte[] r = new byte[FP_SIZE]; r[0] = (byte) 0xC0; return r; }
-        byte[] u = new byte[FP_SIZE * 2];
-        writeFp(u, 0, point.xBigInt()); writeFp(u, FP_SIZE, point.yBigInt());
-        return new P1_Affine(u).compress();
+        return Bls12381Codecs.g1ToCompressed(toG1(point));
     }
 
     public static byte[] g2Compress(JacobianG2BLS381.AffineG2 point) {
-        if (point.isInfinity()) { byte[] r = new byte[FP_SIZE * 2]; r[0] = (byte) 0xC0; return r; }
-        byte[] u = new byte[FP_SIZE * 4];
-        writeFp(u, 0, point.x().imBigInt()); writeFp(u, FP_SIZE, point.x().reBigInt());
-        writeFp(u, FP_SIZE * 2, point.y().imBigInt()); writeFp(u, FP_SIZE * 3, point.y().reBigInt());
-        return new P2_Affine(u).compress();
+        return Bls12381Codecs.g2ToCompressed(toG2(point));
     }
 
     public static SnarkjsToCardano.ProofCompressed compressProof(Groth16ProofBLS381 proof) {
@@ -45,9 +47,16 @@ public final class ProofCompressor {
                 g2Compress(setup.gammaG2()), g2Compress(pk.deltaG2()), ic);
     }
 
-    private static void writeFp(byte[] buf, int off, BigInteger val) {
-        byte[] b = val.toByteArray();
-        int s = Math.max(0, b.length - FP_SIZE), c = Math.min(b.length, FP_SIZE);
-        System.arraycopy(b, s, buf, off + FP_SIZE - c, c);
+    private static G1Point toG1(JacobianG1BLS381.AffineG1 p) {
+        if (p.isInfinity()) return G1Point.INFINITY;
+        return new G1Point(Fp.of(p.xBigInt()), Fp.of(p.yBigInt()));
+    }
+
+    private static G2Point toG2(JacobianG2BLS381.AffineG2 p) {
+        if (p.isInfinity()) return G2Point.INFINITY;
+        // Fp2.of(c0=real, c1=imaginary); the codec serializes c1 (imaginary) first, per IETF.
+        return new G2Point(
+                Fp2.of(Fp.of(p.x().reBigInt()), Fp.of(p.x().imBigInt())),
+                Fp2.of(Fp.of(p.y().reBigInt()), Fp.of(p.y().imBigInt())));
     }
 }
