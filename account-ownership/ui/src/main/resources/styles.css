@@ -1,0 +1,107 @@
+/* Account Ownership Proof — modern flat theme (Cardano blue). */
+
+.root {
+    -fx-font-family: "SF Pro Text", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    -fx-background-color: #F4F7FC;
+    -accent: #2B5BE2;
+    -accent-dark: #1F49C9;
+    -ink: #16203A;
+    -muted: #64748B;
+    -border: #E2E8F4;
+}
+
+/* ---- app frame ---- */
+.app-header {
+    -fx-background-color: linear-gradient(to right, #12225F, #274FD0);
+    -fx-padding: 14 22 14 22;
+    -fx-alignment: center-left;
+    -fx-spacing: 12;
+}
+.app-header .app-name {
+    -fx-text-fill: white;
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+}
+.screen-wrap {
+    -fx-padding: 22;
+    -fx-background-color: #F4F7FC;
+}
+.content {
+    -fx-background-color: white;
+    -fx-background-radius: 14;
+    -fx-border-radius: 14;
+    -fx-border-color: -border;
+    -fx-border-width: 1;
+    -fx-padding: 26;
+    -fx-effect: dropshadow(gaussian, rgba(20,40,90,0.07), 20, 0, 0, 6);
+}
+
+/* ---- text ---- */
+.title        { -fx-font-size: 19px; -fx-font-weight: bold; -fx-text-fill: -ink; }
+.section-title{ -fx-font-size: 11.5px; -fx-font-weight: bold; -fx-text-fill: -muted; }
+.hint         { -fx-font-size: 12px; -fx-text-fill: -muted; }
+.status       { -fx-font-size: 13px; -fx-text-fill: -ink; }
+.field-label  { -fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #43506B; }
+.success      { -fx-text-fill: #1B873F; -fx-font-weight: bold; }
+.danger       { -fx-text-fill: #C0362C; -fx-font-weight: bold; }
+.warn         { -fx-text-fill: #B06B00; }
+.ok-muted     { -fx-text-fill: #1B873F; }
+
+/* ---- buttons ---- */
+.button {
+    -fx-background-color: -accent;
+    -fx-text-fill: white;
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-padding: 10 18 10 18;
+    -fx-background-radius: 9;
+    -fx-cursor: hand;
+}
+.button:hover    { -fx-background-color: -accent-dark; }
+.button:disabled { -fx-opacity: 0.45; }
+.button.secondary {
+    -fx-background-color: transparent;
+    -fx-text-fill: -accent;
+    -fx-border-color: -border;
+    -fx-border-radius: 9;
+    -fx-border-width: 1.4;
+}
+.button.secondary:hover { -fx-background-color: #EEF2FE; }
+.button.ghost {
+    -fx-background-color: transparent;
+    -fx-text-fill: -muted;
+    -fx-font-weight: normal;
+}
+.button.ghost:hover { -fx-background-color: #EAEFF7; -fx-text-fill: -ink; }
+
+/* ---- inputs ---- */
+.text-field, .password-field {
+    -fx-background-color: #FBFCFE;
+    -fx-border-color: -border;
+    -fx-border-radius: 8;
+    -fx-background-radius: 8;
+    -fx-padding: 9 12 9 12;
+    -fx-font-size: 13px;
+    -fx-prompt-text-fill: #9AA6BD;
+}
+.text-field:focused, .password-field:focused {
+    -fx-border-color: -accent;
+    -fx-border-width: 1.6;
+}
+
+/* ---- checkbox ---- */
+.check-box { -fx-font-size: 12.5px; -fx-text-fill: -ink; }
+.check-box .box {
+    -fx-background-color: white; -fx-border-color: #B7C2D8;
+    -fx-border-radius: 5; -fx-background-radius: 5; -fx-padding: 3;
+}
+.check-box:selected .box { -fx-background-color: -accent; -fx-border-color: -accent; }
+.check-box:selected .mark { -fx-background-color: white; }
+
+/* ---- progress bar ---- */
+.progress-bar { -fx-accent: -accent; }
+.progress-bar > .track { -fx-background-color: #E7ECF7; -fx-background-radius: 6; }
+.progress-bar > .bar   { -fx-background-radius: 6; -fx-background-insets: 0; }
+
+/* ---- separator ---- */
+.separator .line { -fx-border-color: -border; -fx-border-width: 1 0 0 0; }

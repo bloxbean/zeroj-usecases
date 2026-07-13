@@ -1,0 +1,159 @@
+plugins {
+    id 'application'
+    id 'org.openjfx.javafxplugin' version '0.1.0'
+}
+
+// ADR-0002: the desktop UI. Reuses the CLI's service layer (:cli) for setup/prove/verify and adds
+// the key-source chooser + resumable download. Packaged per-OS with a bundled open-source JRE 25
+// (jlink + jpackage) — see the packaging tasks (added in a later milestone).
+base { archivesName = 'account-ownership-recovery-ui' }
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven { url = uri("https://central.sonatype.com/repository/maven-snapshots"); content { snapshotsOnly() } }
+    maven { url = uri("https://repo.spring.io/milestone") }
+}
+
+javafx {
+    version = '25'
+    modules = ['javafx.controls']
+}
+
+dependencies {
+    implementation project(':cli')   // OwnershipCircuitService, Groth16Pipeline, ProofIO, VkIO, OffchainVerifier, Bundle …
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // Headless JavaFX UI testing (TestFX + Monocle) — drives the app with no display.
+    testImplementation 'org.testfx:testfx-core:4.0.18'
+    testImplementation 'org.testfx:testfx-junit5:4.0.18'
+    testImplementation 'org.hamcrest:hamcrest:2.2'   // TestFX API exposes org.hamcrest.Matcher
+    testImplementation('org.testfx:openjfx-monocle:21.0.2') { exclude group: 'org.openjfx' }
+}
+
+application {
+    mainClass = 'com.bloxbean.cardano.zeroj.usecases.recovery.ui.AccountOwnershipApp'
+    // blst FFM path stays open for prove --backend blst; setup/prove/verify default to pure Java.
+    applicationDefaultJvmArgs = [
+            '--enable-native-access=ALL-UNNAMED',
+            '-Dzeroj.allowInsecureTrustedSetup=true',
+            '-XX:MaxRAMPercentage=80'
+    ]
+}
+
+test {
+    useJUnitPlatform()
+    // Run TestFX headless via Monocle — no display needed (CI-friendly).
+    systemProperty 'testfx.robot', 'glass'
+    systemProperty 'testfx.headless', 'true'
+    systemProperty 'glass.platform', 'Monocle'
+    systemProperty 'monocle.platform', 'Headless'
+    systemProperty 'prism.order', 'sw'
+    systemProperty 'prism.text', 't2k'
+    systemProperty 'ui.capture', System.getProperty('ui.capture', 'false')  // -Dui.capture=true renders screenshots
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+}
+
+// ---- Packaging (ADR-0002): fat jar → jlink open-source runtime → jpackage installer ----
+// Run jlink/jpackage on an OpenJDK build (Temurin / Liberica / GraalVM CE — GPLv2+CE) so the
+// bundled runtime is redistributable; never Oracle JDK. JavaFX ships inside the fat jar (the
+// platform-classifier openjfx jars carry their own natives), so any OpenJDK 25 works as the base.
+// jpackage cannot cross-compile — build each OS on its own runner (see the release CI).
+
+def isWindows = System.getProperty('os.name').toLowerCase().contains('win')
+def isMac = System.getProperty('os.name').toLowerCase().contains('mac')
+// Native installer type per OS (override with -PinstallerType). Windows msi/exe need WiX Toolset;
+// Linux deb needs dpkg; mac dmg is built-in.
+def installerType = (project.findProperty('installerType') ?: (isWindows ? 'msi' : (isMac ? 'dmg' : 'deb'))).toString()
+def appName = 'AccountOwnershipProof'
+def appMainClass = 'com.bloxbean.cardano.zeroj.usecases.recovery.ui.Launcher'
+// jpackage needs a plain numeric version — strip any -preN suffix. macOS additionally forbids a
+// zero major version, so a pre-1.0 version (0.x) is coerced to 1.0.0 for the bundle (the real
+// release version stays in version.properties). Override with -PappVersion=<x.y.z>.
+def appVersion = {
+    if (project.hasProperty('appVersion')) return project.findProperty('appVersion').toString()
+    def m = (project.version.toString() =~ /^\d+(\.\d+){0,2}/)
+    def base = m.find() ? m.group() : '1.0.0'
+    return (base == '0' || base.startsWith('0.')) ? '1.0.0' : base
+}()
+
+tasks.register('fatJar', Jar) {
+    group = 'distribution'
+    archiveClassifier = 'all'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes 'Main-Class': appMainClass,
+                   'Implementation-Version': project.version,
+                   'Enable-Native-Access': 'ALL-UNNAMED'
+    }
+    from sourceSets.main.output
+    from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/versions/*/OSGI-INF/**'
+    zip64 = true
+}
+
+// jpackage copies EVERY jar from --input, so stage only the fat jar in a clean directory.
+tasks.register('jpackageInput', Copy) {
+    dependsOn tasks.named('fatJar')
+    from tasks.fatJar.archiveFile
+    into layout.buildDirectory.dir('jpackage-input')
+}
+
+tasks.register('jlinkRuntime', Exec) {
+    group = 'distribution'
+    description = 'Build a minimal open-source JRE with jlink (bundled into the app by jpackage).'
+    def javaHome = System.getProperty('java.home')
+    def out = layout.buildDirectory.dir('runtime').get().asFile
+    doFirst { project.delete(out) }
+    commandLine "${javaHome}/bin/jlink" + (isWindows ? '.exe' : ''),
+            '--add-modules', 'java.se,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.unsupported',
+            '--output', out.absolutePath,
+            '--strip-debug', '--no-header-files', '--no-man-pages'
+    outputs.dir out
+}
+
+// Platform-specific app icon (macOS .icns / Windows .ico / Linux .png).
+def appIcon = file("packaging/AccountOwnershipProof." + (isWindows ? 'ico' : (isMac ? 'icns' : 'png')))
+
+def jpackageArgs = { List extra ->
+    def javaHome = System.getProperty('java.home')
+    [ "${javaHome}/bin/jpackage" + (isWindows ? '.exe' : ''),
+      '--name', appName,
+      '--app-version', appVersion,
+      '--icon', appIcon.absolutePath,
+      '--input', layout.buildDirectory.dir('jpackage-input').get().asFile.absolutePath,
+      '--main-jar', tasks.fatJar.archiveFile.get().asFile.name,
+      '--main-class', appMainClass,
+      '--runtime-image', layout.buildDirectory.dir('runtime').get().asFile.absolutePath,
+      '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath,
+      '--java-options', '-XX:MaxRAMPercentage=80',
+      '--java-options', '--enable-native-access=ALL-UNNAMED',
+      '--java-options', '-Dzeroj.allowInsecureTrustedSetup=true' ] + extra
+}
+
+tasks.register('jpackageAppImage', Exec) {
+    group = 'distribution'
+    description = 'Portable app-image (self-contained app folder) with a bundled open-source JRE.'
+    dependsOn 'jpackageInput', 'jlinkRuntime'
+    doFirst {
+        def dest = layout.buildDirectory.dir('dist').get().asFile
+        dest.mkdirs()
+        project.delete(new File(dest, isWindows ? appName : "${appName}.app"))
+    }
+    commandLine jpackageArgs(['--type', 'app-image'])
+}
+
+tasks.register('jpackageInstaller', Exec) {
+    group = 'distribution'
+    description = "Native installer (${installerType}) with a bundled open-source JRE."
+    dependsOn 'jpackageInput', 'jlinkRuntime'
+    doFirst { layout.buildDirectory.dir('dist').get().asFile.mkdirs() }
+    commandLine jpackageArgs(['--type', installerType])
+}
