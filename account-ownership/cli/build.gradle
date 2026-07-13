@@ -4,6 +4,11 @@ plugins {
 
 group = 'com.bloxbean.cardano'
 
+// ADR-0002: this module is now the :cli subproject of account-ownership. The launcher scripts and
+// the Dockerfile glob `account-ownership-recovery-cli-*-all.jar`, and the release assets keep that
+// name — so pin the archive base name (a bare subproject would default it to `cli`).
+base { archivesName = 'account-ownership-recovery-cli' }
+
 // All versions come from the repo-wide version.properties (walking up to the repo root); -P overrides;
 // inlined fallbacks keep this project buildable if copied out of the repo.
 def repoVersions = {
@@ -92,6 +97,8 @@ test {
     jvmArgs cliJvmArgs
     maxHeapSize = project.findProperty('benchHeap') ?: '8g'
     systemProperty 'zeroj.allowInsecureTrustedSetup', 'true'
+    // forward the heavy-e2e gate to the forked test JVM: `-Daor.e2e=true` enables FlowsE2ETest
+    systemProperty 'aor.e2e', System.getProperty('aor.e2e', 'false')
 }
 
 // ---- Distribution: self-contained fat jar + run scripts + docs, zipped for GitHub releases ----

@@ -56,7 +56,7 @@ jobs:
           echo "Image version: $V"
 
       - name: Build the CLI fat jar (dependencies from Maven Central)
-        run: cd account-ownership-recovery-cli && ./gradlew fatJar -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
+        run: cd account-ownership && ./gradlew :cli:fatJar -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
 
       - name: Docker metadata (tags/labels)
         id: meta
@@ -77,8 +77,8 @@ jobs:
       - name: Build + push
         uses: docker/build-push-action@v6
         with:
-          context: account-ownership-recovery-cli
-          file: account-ownership-recovery-cli/docker/Dockerfile
+          context: account-ownership/cli
+          file: account-ownership/cli/docker/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
