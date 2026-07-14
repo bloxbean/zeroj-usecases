@@ -11,6 +11,7 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -60,7 +61,7 @@ public final class AccountOwnershipApp extends Application {
     }
 
     private void showVerify(Path proofDir) {
-        setContent(new VerifyView(KEYS_DIR, proofDir, this::showHome).build(), 660, 440);
+        setContent(new VerifyView(KEYS_DIR, proofDir, this::showHome).build(), 660, 800);
     }
 
     /** Home: key/proof status + the actions available in the current state. */
@@ -99,11 +100,17 @@ public final class AccountOwnershipApp extends Application {
         VBox.setVgrow(screen, Priority.ALWAYS);
         var wrap = new VBox(card);
         wrap.getStyleClass().add("screen-wrap");
-        VBox.setVgrow(card, Priority.ALWAYS);
+
+        // Scroll when the content is taller than the window (e.g. the verify screen's on-chain form).
+        var scroll = new ScrollPane(wrap);
+        scroll.setFitToWidth(true);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        scroll.getStyleClass().add("screen-scroll");
 
         var frame = new BorderPane();
         frame.setTop(header());
-        frame.setCenter(wrap);
+        frame.setCenter(scroll);
 
         if (stage.getScene() == null) {
             var scene = new Scene(frame, w, h);

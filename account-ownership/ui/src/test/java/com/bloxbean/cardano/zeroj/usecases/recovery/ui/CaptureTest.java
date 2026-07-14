@@ -43,6 +43,15 @@ class CaptureTest extends ApplicationTest {
         clickOn("Download official keys");
         WaitForAsyncUtils.waitForFxEvents();
         snap(outDir.resolve("3-download.png"));
+
+        clickOn("Back");
+        WaitForAsyncUtils.waitForFxEvents();
+        var verifyBtn = lookup("Verify a proof").queryButton();
+        if (!verifyBtn.isDisabled()) {   // reachable only when a key bundle exists
+            clickOn(verifyBtn);
+            WaitForAsyncUtils.waitForFxEvents();
+            snap(outDir.resolve("4-verify.png"));
+        }
     }
 
     private void snap(Path file) throws Exception {

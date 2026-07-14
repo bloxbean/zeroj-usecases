@@ -26,6 +26,14 @@
     -fx-padding: 22;
     -fx-background-color: #F4F7FC;
 }
+/* scroll container blends into the page (no border/box) */
+.screen-scroll {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+.screen-scroll > .viewport { -fx-background-color: transparent; }
 .content {
     -fx-background-color: white;
     -fx-background-radius: 14;

@@ -1,12 +1,23 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.cli;
 
+import com.bloxbean.cardano.client.account.Account;
+import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService;
+import com.bloxbean.cardano.client.common.model.Network;
 import com.bloxbean.cardano.client.common.model.Networks;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Keys;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16PkStore;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Pipeline;
 import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.crypto.groth16.ProverBackend;
+import com.bloxbean.cardano.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
+import com.bloxbean.cardano.zeroj.usecases.recovery.service.OnChainOwnershipService;
 import com.bloxbean.cardano.zeroj.usecases.recovery.service.OwnershipCircuitService;
+import com.bloxbean.cardano.zeroj.usecases.recovery.service.ProofCompressor;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -200,5 +211,86 @@ public final class Flows {
         var key = Groth16PkStore.load(bundleDir);
         try { return OffchainVerifier.verify(key, pts, pub); }
         finally { Bundle.closeQuietly(key); }
+    }
+
+    /** Result of an on-chain verification. */
+    public record OnChainResult(String txHash, String adminAddress, String scriptAddress) {}
+
+    private static final String DEVKIT_ADMIN = "http://localhost:10000";
+
+    /**
+     * Verify a proof <b>on-chain</b>: an admin/funding account locks a gate UTxO (datum = the pkh
+     * public inputs) at the validator, then unlocks it with the Groth16 proof — the ledger runs the
+     * verifier. Returns the unlock transaction hash.
+     *
+     * @param adminMnemonic funding wallet that locks the gate and pays fees + collateral — <b>not</b>
+     *                      the wallet being proven; use a low-value account. Zeroed before return.
+     *                      On {@code devnet} it is auto-funded by Yaci DevKit.
+     * @param network       {@code devnet | preview | preprod | mainnet}
+     * @param blockfrostKey Blockfrost project id — required for preview/preprod/mainnet; ignored on devnet
+     * @param bfUrl         optional endpoint override (blank = the network default; e.g. a DevKit at
+     *                      {@code http://host.docker.internal:8080/api/v1/})
+     * @throws IllegalArgumentException on an unknown network or a missing Blockfrost key
+     */
+    public static OnChainResult verifyOnChain(Path bundleDir, Path proofDir, char[] adminMnemonic,
+            String network, String blockfrostKey, String bfUrl, Consumer<String> stage) throws Exception {
+        String net = network == null ? "devnet" : network.trim().toLowerCase();
+        boolean devnet = net.equals("devnet");
+        Network cnet = switch (net) {
+            case "devnet" -> Networks.testnet();   // Yaci DevKit uses the testnet network id
+            case "preview" -> Networks.preview();
+            case "preprod" -> Networks.preprod();
+            case "mainnet" -> Networks.mainnet();
+            default -> throw new IllegalArgumentException("Unknown network: " + network);
+        };
+        String url = (bfUrl != null && !bfUrl.isBlank()) ? bfUrl.trim() : switch (net) {
+            case "devnet" -> "http://localhost:8080/api/v1/";
+            case "preview" -> "https://cardano-preview.blockfrost.io/api/v0/";
+            case "preprod" -> "https://cardano-preprod.blockfrost.io/api/v0/";
+            default -> "https://cardano-mainnet.blockfrost.io/api/v0/";
+        };
+        String key = blockfrostKey == null ? "" : blockfrostKey.trim();
+        if (!devnet && key.isEmpty())
+            throw new IllegalArgumentException("A Blockfrost project key is required for " + net + ".");
+
+        byte[] pkh = ProofIO.readPkh(proofDir.resolve(ProofIO.PUBLIC_FILE));
+        var compressed = ProofIO.readCompressedProof(proofDir.resolve(ProofIO.PROOF_FILE));
+
+        Account payer;
+        try {
+            payer = new Account(cnet, new String(adminMnemonic).trim());
+        } finally {
+            Arrays.fill(adminMnemonic, '\0');
+        }
+        stage.accept("Admin account: " + payer.baseAddress());
+        if (devnet) { stage.accept("Funding admin on Yaci DevKit…"); topUpDevKit(payer.baseAddress(), 10000); }
+
+        SnarkjsToCardano.VkCompressed vk;
+        if (VkIO.exists(bundleDir)) {
+            vk = VkIO.readVkCompressed(bundleDir);
+        } else {
+            var loaded = Groth16PkStore.load(bundleDir);
+            try { vk = ProofCompressor.compressVk(Bundle.vkSetup(loaded)); }
+            finally { Bundle.closeQuietly(loaded); }
+        }
+
+        var onChain = new OnChainOwnershipService(new BFBackendService(url, key), payer, vk, cnet);
+        stage.accept("Locking gate + unlocking with proof at " + onChain.scriptAddress() + " …");
+        String txHash = onChain.verifyOwnershipOnChain(compressed, pkh);
+        return new OnChainResult(txHash, payer.baseAddress(), onChain.scriptAddress());
+    }
+
+    /** Best-effort Yaci DevKit faucet top-up; if it fails the admin must already hold ADA. */
+    private static void topUpDevKit(String address, int ada) {
+        try {
+            String body = "{\"address\":\"" + address + "\",\"adaAmount\":" + ada + "}";
+            var req = HttpRequest.newBuilder(URI.create(DEVKIT_ADMIN + "/local-cluster/api/addresses/topup"))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+            var resp = HttpClient.newHttpClient().send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() / 100 == 2) Thread.sleep(1500);
+        } catch (Exception ignore) {
+            // best-effort — the admin must already be funded if this fails
+        }
     }
 }
