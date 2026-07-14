@@ -59,8 +59,7 @@ public final class ProveCommand implements Callable<Integer> {
     Path outDir;
 
     @Option(names = "--account", defaultValue = "0",
-            description = "CIP-1852 account index (m/1852'/1815'/N'). Circuit v2 fixes the account "
-                    + "at 0' — only 0 is accepted. Default: ${DEFAULT-VALUE}.")
+            description = "CIP-1852 account index (m/1852'/1815'/N'). Default: ${DEFAULT-VALUE}.")
     int account;
 
     @Option(names = "--role", defaultValue = "0",
@@ -70,6 +69,11 @@ public final class ProveCommand implements Callable<Integer> {
 
     @Option(names = "--index", defaultValue = "0", description = "Address index (.../role/N). Default: ${DEFAULT-VALUE}.")
     int index;
+
+    @Option(names = "--recipient", required = true,
+            description = "Recipient address (bech32) the refund must go to — bound into the proof "
+                    + "(v3). Its payment key hash becomes the second public input.")
+    String recipient;
 
     @Option(names = "--mainnet", description = "Show the mainnet address for the target (default: testnet).")
     boolean mainnet;
@@ -85,14 +89,16 @@ public final class ProveCommand implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        // The circuit derives at account 0' (hardened; role/index are witness inputs since v2).
-        if (account != 0) {
-            System.err.println("--account " + account + " is not supported: circuit v2 fixes the "
-                    + "account at 0' (role and index are free). Re-run with --account 0.");
+        // v3: account/role/index are all secret witnesses; the recipient is bound as a public input.
+        if (account < 0 || role < 0 || index < 0) {
+            System.err.println("--account, --role and --index must be non-negative soft indices (< 2^31).");
             return 2;
         }
-        if (role < 0 || index < 0) {
-            System.err.println("--role and --index must be non-negative soft indices (< 2^31).");
+        final byte[] recipientPkh;
+        try {
+            recipientPkh = Flows.paymentKeyHashOf(recipient);
+        } catch (RuntimeException e) {
+            System.err.println(e.getMessage());
             return 2;
         }
         var bundle = new Bundle(keysDir);
@@ -163,10 +169,11 @@ public final class ProveCommand implements Callable<Integer> {
         mnemonic = null; // drop the reference; nothing secret is persisted
 
         System.out.println("Proving ownership of:");
-        System.out.println("  address : " + wallet.address());
-        System.out.println("  pkh     : " + WalletDerivation.hex(wallet.pkh()));
-        System.out.printf ("  path    : m/1852'/1815'/%d'/%d/%d (path stays private — only the pkh is a public input)%n",
+        System.out.println("  address   : " + wallet.address());
+        System.out.println("  pkh       : " + WalletDerivation.hex(wallet.pkh()));
+        System.out.printf ("  path      : m/1852'/1815'/%d'/%d/%d (secret — only the pkh + recipient are public)%n",
                 account, role, index);
+        System.out.println("  recipient : " + recipient.trim());
 
         System.out.println("Loading proving key (mmap) ...");
         long tl = System.nanoTime();
@@ -204,8 +211,8 @@ public final class ProveCommand implements Callable<Integer> {
                         () -> {
                             System.out.println("Computing witness ...");
                             long tw = System.nanoTime();
-                            var w = svc.witnessFlat(wallet.rootKL(), wallet.rootKR(),
-                                    wallet.rootChainCode(), wallet.role(), wallet.index(), wallet.pkh());
+                            var w = svc.witnessFlat(wallet.rootKL(), wallet.rootKR(), wallet.rootChainCode(),
+                                    wallet.account(), wallet.role(), wallet.index(), wallet.pkh(), recipientPkh);
                             System.out.printf("  witness: %.1fs%n", secs(tw));
                             return w;
                         },
@@ -223,7 +230,7 @@ public final class ProveCommand implements Callable<Integer> {
 
             Files.createDirectories(outDir);
             ProofIO.writeProof(outDir, proof);
-            ProofIO.writePublicInputs(outDir, wallet.pkh(), wallet.address(), fp);
+            ProofIO.writePublicInputs(outDir, wallet.pkh(), wallet.address(), recipientPkh, recipient.trim(), fp);
 
             if (selfVerify) {
                 System.out.print("Self-check (off-chain pairing) ... ");

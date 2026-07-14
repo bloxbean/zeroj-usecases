@@ -31,6 +31,8 @@ public final class ProveView {
     private final Consumer<Path> onProved;
 
     private final PasswordField mnemonic = new PasswordField();
+    private final TextField recipientField = new TextField();
+    private final TextField accountField = new TextField("0");
     private final TextField roleField = new TextField("0");
     private final TextField indexField = new TextField("0");
     private final CheckBox mainnet = new CheckBox("Mainnet address (default: testnet)");
@@ -52,10 +54,13 @@ public final class ProveView {
         title.getStyleClass().add("title");
 
         mnemonic.setPromptText("wallet mnemonic (hidden, never stored or sent)");
+        recipientField.setPromptText("recipient address (bech32) the refund goes to");
+        accountField.setPrefColumnCount(4);
         roleField.setPrefColumnCount(4);
         indexField.setPrefColumnCount(6);
 
-        var path = new HBox(8, fieldLabel("Role"), roleField, fieldLabel("Index"), indexField);
+        var path = new HBox(8, fieldLabel("Account"), accountField,
+                fieldLabel("Role"), roleField, fieldLabel("Index"), indexField);
         path.setAlignment(Pos.CENTER_LEFT);
 
         bar.setMaxWidth(Double.MAX_VALUE);
@@ -68,8 +73,8 @@ public final class ProveView {
         boolean haveKeys = Flows.hasKeys(bundleDir);
         prove.setDisable(!haveKeys);
         status.setText(haveKeys
-                ? "role 0 = external payment address, 1 = change. The path stays private — only the "
-                    + "payment key hash is public."
+                ? "The recipient is bound into the proof — the refund can only go there. The wallet "
+                    + "path stays private; only the pkh and recipient are public."
                 : "No key bundle found — download or generate keys first.");
         prove.setOnAction(e -> startProve());
 
@@ -79,7 +84,10 @@ public final class ProveView {
 
         var buttons = new HBox(10, prove, verifyNow, back);
 
-        var box = new VBox(12, title, fieldLabel("Mnemonic"), mnemonic, path, mainnet, bar, status, buttons);
+        var box = new VBox(12, title,
+                fieldLabel("Mnemonic"), mnemonic,
+                fieldLabel("Recipient address"), recipientField,
+                path, mainnet, bar, status, buttons);
         box.setAlignment(Pos.TOP_LEFT);
         return box;
     }
@@ -91,15 +99,19 @@ public final class ProveView {
     }
 
     private void startProve() {
-        final int role, index;
+        final int account, role, index;
         try {
+            account = Integer.parseInt(accountField.getText().trim());
             role = Integer.parseInt(roleField.getText().trim());
             index = Integer.parseInt(indexField.getText().trim());
         } catch (NumberFormatException ex) {
-            status.setText("Role and index must be whole numbers.");
+            status.setText("Account, role and index must be whole numbers.");
             return;
         }
-        if (role < 0 || index < 0) { status.setText("Role and index must be 0 or greater."); return; }
+        if (account < 0 || role < 0 || index < 0) { status.setText("Account, role and index must be 0 or greater."); return; }
+
+        final String recipient = recipientField.getText() == null ? "" : recipientField.getText().trim();
+        if (recipient.isEmpty()) { status.setText("Enter the recipient address the refund should go to."); return; }
 
         String m = mnemonic.getText();
         if (m == null || m.isBlank()) { status.setText("Enter your wallet mnemonic."); return; }
@@ -110,7 +122,7 @@ public final class ProveView {
         task = new Task<>() {
             @Override
             protected Flows.ProveResult call() throws Exception {
-                return Flows.prove(bundleDir, mnemonicChars, 0, role, index, net, proofDir, this::updateMessage);
+                return Flows.prove(bundleDir, mnemonicChars, account, role, index, recipient, net, proofDir, this::updateMessage);
             }
         };
         bar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
@@ -121,7 +133,7 @@ public final class ProveView {
             var r = task.getValue();
             status.setText("Proof generated and self-checked VALID.\n"
                     + "Address: " + r.address() + "\n"
-                    + "Payment key hash: " + r.pkhHex() + "\n"
+                    + "Recipient: " + r.recipient() + "\n"
                     + "Saved to: " + r.proofDir().toAbsolutePath());
             verifyNow.setDisable(false);
         });

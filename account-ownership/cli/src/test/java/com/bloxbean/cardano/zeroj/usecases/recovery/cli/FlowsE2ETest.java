@@ -31,21 +31,35 @@ class FlowsE2ETest {
         assertTrue(Flows.hasKeys(keys), "bundle generated");
         assertNotNull(Flows.keyFingerprint(keys), "bundle has a fingerprint");
 
+        // v3: the recipient (payout address) is bound into the proof
+        String recipient = "addr_test1vqqt0pru382hy9vjlsxv3ye02z50sfvt8xunscg5pgden7cetfzyu";
+
         char[] mnemonic = TEST_MNEMONIC.toCharArray();
         Flows.ProveResult result = Flows.prove(keys, mnemonic, 0, /*role*/ 0, /*index*/ 0,
-                /*mainnet*/ false, proofs, System.out::println);
+                recipient, /*mainnet*/ false, proofs, System.out::println);
 
         assertNotNull(result.address(), "derived address");
         assertEquals(56, result.pkhHex().length(), "28-byte pkh in hex");
+        assertEquals(recipient, result.recipient(), "recipient echoed");
         assertTrue(Flows.hasProof(proofs), "proof written");
         assertEquals('\0', mnemonic[0], "prove zeroed the mnemonic");
 
         assertTrue(Flows.verifyOffChain(keys, proofs), "off-chain verification must pass");
 
+        // Hardening: the off-chain check recomputes the public inputs from the address + recipient,
+        // so verifying against a DIFFERENT recipient (or a wrong address) must fail, while the exact
+        // pair still passes.
+        assertTrue(Flows.verifyOffChain(keys, proofs, result.address(), recipient),
+                "correct expected address + recipient verifies");
+        assertFalse(Flows.verifyOffChain(keys, proofs, null, result.address()),
+                "a wrong expected recipient must not verify");
+        assertFalse(Flows.verifyOffChain(keys, proofs, recipient, recipient),
+                "a wrong expected address must not verify");
+
         // a different role must derive a different address (path is a real input)
         char[] m2 = TEST_MNEMONIC.toCharArray();
         Path proofs2 = dir.resolve("proofs-role1");
-        var r2 = Flows.prove(keys, m2, 0, /*role*/ 1, /*index*/ 0, false, proofs2, s -> {});
+        var r2 = Flows.prove(keys, m2, 0, /*role*/ 1, /*index*/ 0, recipient, false, proofs2, s -> {});
         assertNotEquals(result.address(), r2.address(), "role 1 is a different address");
         assertTrue(Flows.verifyOffChain(keys, proofs2), "role-1 proof verifies too");
     }

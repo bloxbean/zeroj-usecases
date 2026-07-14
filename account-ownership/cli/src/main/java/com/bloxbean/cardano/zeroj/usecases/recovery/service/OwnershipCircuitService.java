@@ -100,17 +100,32 @@ public class OwnershipCircuitService {
         });
     }
 
-    /** The witness for "root key ({@code kL,kR,cc}) derives via m/1852'/1815'/0'/role/index to {@code pkh}". */
+    /**
+     * The witness for "root key ({@code kL,kR,cc}) derives via m/1852'/1815'/account'/role/index to
+     * {@code pkh}", with the payout {@code recipient} bound as a second public input (v3).
+     *
+     * @param recipientPkh the 28-byte payment key hash of the payout address (bound tag)
+     */
     public BigInteger[] witness(byte[] rootKL, byte[] rootKR, byte[] rootChainCode,
-                                int role, int index, byte[] pkh) {
+                                int account, int role, int index, byte[] pkh, byte[] recipientPkh) {
         Map<String, List<BigInteger>> in = new HashMap<>();
         putBytes(in, "rootKL", rootKL);
         putBytes(in, "rootKR", rootKR);
         putBytes(in, "rootChainCode", rootChainCode);
+        putBytes(in, "account", le4(account));
         putBytes(in, "role", le4(role));
         putBytes(in, "index", le4(index));
-        putBytes(in, "pkh", pkh);
+        // v4: the recipient bytes are a secret witness; the two public inputs are the big-endian
+        // packing of the pkh and recipient hashes (must match the validator's byteStringToInteger).
+        putBytes(in, "recipientBytes", recipientPkh);
+        in.put("pkh", List.of(packBE(pkh)));
+        in.put("recipient", List.of(packBE(recipientPkh)));
         return graph().calculateWitness(in, CurveId.BLS12_381);
+    }
+
+    /** Big-endian byte packing to one field element — the prover-side match of the circuit's pack. */
+    public static BigInteger packBE(byte[] bytes) {
+        return new BigInteger(1, bytes);
     }
 
     /** A soft derivation index as the circuit's 4 little-endian bytes. */
@@ -126,13 +141,13 @@ public class OwnershipCircuitService {
      * resident during the prove. A later {@code witness()} in the same process recompiles.
      */
     public FlatScalars witnessFlat(byte[] rootKL, byte[] rootKR, byte[] rootChainCode,
-                                   int role, int index, byte[] pkh) {
+                                   int account, int role, int index, byte[] pkh, byte[] recipientPkh) {
         // Measured (ADR-0034 phase 2): the BOXED witness wins here — this circuit is bit-heavy,
         // so most wires alias the shared ONE/ZERO BigIntegers (~0.4 GB extra beside the 5.7 GB
         // graph), while flat storage always costs the full 32 B/wire (1.4 GB) and pushed the
         // witness-generation peak past the 7 GB floor. Pack to flat AFTER the graph is released;
         // packConsuming drops the boxed elements as they convert.
-        BigInteger[] w = witness(rootKL, rootKR, rootChainCode, role, index, pkh);
+        BigInteger[] w = witness(rootKL, rootKR, rootChainCode, account, role, index, pkh, recipientPkh);
         // Both compiled references go here (ADR-0033 M2): Groth16Pipeline already extracted the
         // packed matrices it needs, so nothing of the compile survives into the H/MSM phase.
         circuit = null;

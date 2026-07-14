@@ -62,13 +62,19 @@ public final class ProofIO {
     }
 
     public static void writePublicInputs(Path dir, byte[] pkh, String address,
+                                         byte[] recipientPkh, String recipientAddress,
                                          String fingerprint) throws IOException {
         ObjectNode root = NF.objectNode();
         root.put("pkh", WalletDerivation.hex(pkh));
         root.put("address", address);
+        root.put("recipient", recipientAddress);
+        root.put("recipientPkh", WalletDerivation.hex(recipientPkh));
         root.put("fingerprint", fingerprint);
+        // circuit public inputs (v4), in order: packed pkh then packed recipient — each 28-byte hash
+        // packed big-endian into one field element (matches the circuit + the on-chain validator).
         ArrayNode pub = root.putArray("publicInputs");
-        for (byte b : pkh) pub.add(Integer.toString(b & 0xff));
+        pub.add(new BigInteger(1, pkh).toString());
+        pub.add(new BigInteger(1, recipientPkh).toString());
         MAPPER.writerWithDefaultPrettyPrinter().writeValue(dir.resolve(PUBLIC_FILE).toFile(), root);
     }
 
@@ -115,6 +121,24 @@ public final class ProofIO {
     /** The payment key hash bytes from {@code public-inputs.json}. */
     public static byte[] readPkh(Path file) throws IOException {
         return ProofIOHex.unhex(MAPPER.readTree(file.toFile()).get("pkh").asText());
+    }
+
+    /** The recipient payment key hash bytes (v3), or {@code null} for an older v2 proof. */
+    public static byte[] readRecipientPkh(Path file) throws IOException {
+        var n = MAPPER.readTree(file.toFile()).get("recipientPkh");
+        return n == null ? null : ProofIOHex.unhex(n.asText());
+    }
+
+    /** The recipient bech32 address, or {@code null} if absent. */
+    public static String readRecipient(Path file) throws IOException {
+        var n = MAPPER.readTree(file.toFile()).get("recipient");
+        return n == null ? null : n.asText();
+    }
+
+    /** The proven address (bech32), or {@code null} if absent. */
+    public static String readAddress(Path file) throws IOException {
+        var n = MAPPER.readTree(file.toFile()).get("address");
+        return n == null ? null : n.asText();
     }
 
     // ---- helpers ----

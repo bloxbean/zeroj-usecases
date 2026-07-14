@@ -11,6 +11,7 @@ import com.bloxbean.cardano.zeroj.usecases.recovery.service.ProofCompressor;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
+import java.math.BigInteger;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -60,6 +61,16 @@ public final class VerifyCommand implements Callable<Integer> {
             description = "Blockfrost project id/key (or set env BLOCKFROST_PROJECT_ID); not needed for devnet.")
     String bfKey;
 
+    @Option(names = "--expect-address",
+            description = "Verify the proof is for THIS address (bech32). Default: the address recorded in "
+                    + "public-inputs.json. Pass a value you know independently for real assurance.")
+    String expectAddress;
+
+    @Option(names = "--expect-recipient",
+            description = "Verify the proof is bound to THIS recipient (bech32). Default: the recipient in "
+                    + "public-inputs.json.")
+    String expectRecipient;
+
     @Override
     public Integer call() throws Exception {
         var bundle = new Bundle(keysDir);
@@ -88,7 +99,20 @@ public final class VerifyCommand implements Callable<Integer> {
         System.out.println("Off-chain verification (pairing check) ...");
         long t = System.nanoTime();
         var pts = ProofIO.readProof(proofFile);
-        var pub = ProofIO.readPublicInputs(pubFile);
+        final BigInteger[] pub;
+        final Flows.VerifyTargets targets;
+        try {
+            // Recompute the public inputs from the address + recipient (default: the file's fields;
+            // or --expect-* overrides). Ties the result to those values, not the stored array.
+            pub = Flows.resolvePublicInputs(pubFile, expectAddress, expectRecipient);
+            targets = Flows.resolveTargets(pubFile, expectAddress, expectRecipient);
+        } catch (RuntimeException ex) {
+            System.err.println("  " + ex.getMessage());
+            return 1;
+        }
+        System.out.println("  checking the proof is for address " + targets.address()
+                + " → recipient " + targets.recipient()
+                + (targets.overridden() ? "  (your expected values)" : ""));
         boolean ok;
         if (VkIO.exists(keysDir)) {                      // fast path: tiny vk.json, no 23 GB load
             ok = OffchainVerifier.verify(VkIO.readVk(keysDir), pts, pub);
@@ -106,7 +130,16 @@ public final class VerifyCommand implements Callable<Integer> {
     }
 
     private int verifyOnChain(Bundle bundle, Path proofFile, Path pubFile) throws Exception {
-        byte[] pkh = ProofIO.readPkh(pubFile);
+        final Flows.VerifyTargets targets;
+        try {
+            targets = Flows.resolveTargets(pubFile, expectAddress, expectRecipient);
+        } catch (RuntimeException ex) {
+            System.err.println(ex.getMessage());
+            return 2;
+        }
+        byte[] pkh = targets.pkh();
+        byte[] recipientPkh = targets.recipientPkh();
+        String recipient = targets.recipient();
         var compressed = ProofIO.readCompressedProof(proofFile);
 
         // --network sets the endpoint automatically; --bf-url overrides. Key from --bf-key or env.
@@ -158,9 +191,10 @@ public final class VerifyCommand implements Callable<Integer> {
         }
         var onChain = new OnChainOwnershipService(new BFBackendService(url, key == null ? "" : key), payer, vk, net);
         System.out.println("  gate script address: " + onChain.scriptAddress());
-        System.out.println("  locking gate + unlocking with proof ...");
+        System.out.println("  locking gate + unlocking with proof (refund → " + recipient + ") ...");
         long t = System.nanoTime();
-        String txHash = onChain.verifyOwnershipOnChain(compressed, pkh);
+        String txHash = onChain.verifyOwnershipOnChain(compressed, pkh, recipientPkh, recipient,
+                OnChainOwnershipService.DEMO_REFUND_LOVELACE);
         System.out.printf("  VERIFIED ON-CHAIN (%.1fs): tx=%s%n", (System.nanoTime() - t) / 1e9, txHash);
         return txHash != null ? 0 : 1;
     }

@@ -70,6 +70,9 @@ dependencies {
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    // Julc VM test harness (ContractTest / ScriptContextTestBuilder) — runs the compiled validator
+    // locally in the UPLC evaluator, no node. Same julc version as the rest of the deps (Maven Central).
+    testImplementation "com.bloxbean.cardano:julc-testkit:${julcVersion}"
 }
 
 def cliJvmArgs = [
@@ -99,6 +102,7 @@ test {
     systemProperty 'zeroj.allowInsecureTrustedSetup', 'true'
     // forward the heavy-e2e gate to the forked test JVM: `-Daor.e2e=true` enables FlowsE2ETest
     systemProperty 'aor.e2e', System.getProperty('aor.e2e', 'false')
+    systemProperty 'circuit.measure', System.getProperty('circuit.measure', 'false')
 }
 
 // ---- Distribution: self-contained fat jar + run scripts + docs, zipped for GitHub releases ----

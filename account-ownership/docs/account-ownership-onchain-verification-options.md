@@ -1,8 +1,15 @@
 # Account-Ownership Proofs On-Chain: Replay Protection, Nullifiers & Safe Refund Design
 
 *Design report — generic wallet-hack refund use case — trusted operator "ABC".*
-*Analysis only; no code changed. Reviews the current on-chain contract and lays out options to use
-the proof safely (with detailed steps, pros/cons, and a recommendation).*
+*Analysis only; no code changed. Reviews the contract and lays out options to use the proof safely
+(with detailed steps, pros/cons, and a recommendation).*
+
+> **Update — decision taken.** Since this analysis, **Option C (recipient binding as a circuit
+> public input)** was implemented: the circuit takes the recipient's payment key hash as a second
+> public input and the on-chain validator enforces the payout goes there. This report is kept as the
+> **decision record** — the sections below describe the pre-binding starting point and the options
+> weighed. For the **current** circuit, prove, and validator flow see
+> [`verification-and-validator-flow.md`](verification-and-validator-flow.md).
 
 ---
 

@@ -2,9 +2,11 @@
 
 Prove — in zero knowledge — that you know the HD-wallet **root key** behind a Cardano address, and
 verify that proof **off-chain** or **on-chain**. The circuit re-derives the CIP-1852 path
-(`m/1852'/1815'/0'/role/index`) from your secret root key and checks it reaches the address's
-payment key hash. Only the payment key hash is public — the proof reveals nothing about your seed,
-and since circuit v2 the derivation path (`role`, `index`) is a secret witness too.
+(`m/1852'/1815'/account'/role/index`) from your secret root key, checks it reaches the address's
+payment key hash, and **binds the proof to a payout recipient you choose**. Only the payment key
+hash and the recipient are public — the proof reveals nothing about your seed, and the full
+derivation path (`account`, `role`, `index`) is a secret witness. Binding the recipient means a
+copied proof cannot be redirected: the funds can only go to the address you named.
 
 Built on [ZeroJ](https://github.com/bloxbean/zeroj) (Groth16 over BLS12-381, Java 25). Design
 rationale: `docs/adr/0001-account-ownership-proof-cli.md`.
@@ -33,8 +35,8 @@ unzip account-ownership-recovery-cli-*.zip && cd account-ownership-recovery-cli-
 # 1. one-time LOCAL trusted setup — dev/testing only (~6 min, ~10 GB free disk; 16 GB RAM is enough)
 bin/account-ownership-recovery-cli setup --i-understand-insecure
 
-# 2. prove — prompts for your mnemonic (hidden); ~1.5 min
-bin/account-ownership-recovery-cli prove --role 0 --index 0
+# 2. prove — prompts for your mnemonic (hidden); ~1.5 min. --recipient = the address the refund goes to.
+bin/account-ownership-recovery-cli prove --recipient <bech32-address> --account 0 --role 0 --index 0
 
 # 3. verify off-chain (<1 s)
 bin/account-ownership-recovery-cli verify
@@ -49,8 +51,9 @@ BLOCKFROST_PROJECT_ID=preprod... bin/account-ownership-recovery-cli verify --onc
 The launcher auto-sizes the heap (~80 % of RAM; override with `AOR_JAVA_OPTS="-Xmx8g"`). For the
 on-chain steps the transaction payer's mnemonic comes from `AOR_ADMIN_MNEMONIC` or a hidden
 prompt; a local [Yaci DevKit](https://github.com/bloxbean/yaci-devkit) devnet needs no Blockfrost
-key. `--role 0 --index 0` is the default first address; any soft path works (`--role 1` = change
-addresses) — the path stays private, only the pkh is in the proof.
+key. `--account 0 --role 0 --index 0` is the default first address; any path works (`--role 1` =
+change addresses, `--account 1` = a second account) — the full path stays private; only the pkh and
+the chosen `--recipient` are in the proof.
 
 ### Option 2 — Docker (no Java install)
 
@@ -62,9 +65,9 @@ mkdir -p keys proofs
 docker run --rm -e JAVA_OPTS="-Xmx8g" -v "$PWD/keys:/work/keys" \
   ghcr.io/bloxbean/account-ownership-recovery-cli:<version> setup --i-understand-insecure
 
-# 2. prove (-it for the hidden mnemonic prompt)
+# 2. prove (-it for the hidden mnemonic prompt); --recipient = the address the refund goes to
 docker run --rm -it -e JAVA_OPTS="-Xmx8g" -v "$PWD/keys:/work/keys" -v "$PWD/proofs:/work/proofs" \
-  ghcr.io/bloxbean/account-ownership-recovery-cli:<version> prove --role 0 --index 0
+  ghcr.io/bloxbean/account-ownership-recovery-cli:<version> prove --recipient <bech32-address> --account 0 --role 0 --index 0
 
 # 3. verify off-chain
 docker run --rm -v "$PWD/keys:/work/keys" -v "$PWD/proofs:/work/proofs" \
@@ -103,7 +106,7 @@ anyway). Grab Option 1 for real proving.
 | `export-r1cs` | coordinator, once | export the circuit `.r1cs` for an **external** snarkjs ceremony |
 | `import`      | coordinator, once | import a finalized ceremony `.zkey` → key bundle (no snarkjs) |
 | `setup`       | anyone, testing   | generate a **local, dev-only** key bundle (single-party) |
-| `prove`       | user, each proof  | generate a proof from your mnemonic (`--role`, `--index`; account fixed at `0'`) |
+| `prove`       | user, each proof  | generate a proof from your mnemonic, bound to `--recipient` (`--account`/`--role`/`--index` pick the address; all stay private) |
 | `verify`      | user, each proof  | check a proof off-chain (default) or on-chain |
 | `info`        | anyone            | inspect a key bundle |
 
@@ -198,12 +201,19 @@ the light ones (`verify`/`info`) with the default heap — no manual `-Xmx`.
 ## Security notes
 
 - Mnemonic: hidden prompt only; the derived root key stays in memory and is never persisted or sent.
-- The derivation path (`--role`, `--index`) is a **secret** circuit input since v2 — it is not
-  written to `public-inputs.json` and cannot be read from the proof; only the payment key hash is
-  public. The CIP-1852 account is fixed at `0'` in circuit v2.
+- The full derivation path (`--account`, `--role`, `--index`) is a **secret** circuit input — it is
+  not written to `public-inputs.json` and cannot be read from the proof. Only the payment key hash
+  and the chosen recipient are public (each packed into one field element).
+- The proof is **bound to the recipient**: it authorises a payout only to the `--recipient` address.
+  A copied proof cannot be redirected, and the on-chain validator enforces that the payout goes to
+  that recipient for the datum's refund amount.
+- `verify` recomputes the public inputs from the address + recipient (not the file's `publicInputs`
+  array), so an edited `public-inputs.json` is caught. Pass `--expect-address`/`--expect-recipient`
+  (bech32) to check the proof against values you know independently — the meaningful assurance when
+  the proof came from someone else.
 - `setup` (local) keys are development-trust only — whoever ran the setup can forge proofs. Production
   bundles must come from the ceremony `import` path.
 - Bundle integrity: `SHA256SUMS` (checked with `info --verify-integrity`) and a circuit fingerprint
   that pins the exact circuit the keys belong to.
-- The on-chain demo validator checks the proof against the datum-pinned pkh; a production validator
-  must also bind the spending transaction context (replay protection).
+- Spend-once safety in production comes from the voucher being a per-account UTxO (consumed once);
+  a deployment that reuses vouchers should add an explicit nullifier.

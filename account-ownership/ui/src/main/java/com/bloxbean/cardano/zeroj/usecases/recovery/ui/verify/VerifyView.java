@@ -39,6 +39,11 @@ public final class VerifyView {
     private final Button verify = new Button("Verify off-chain");
     private final Button verifyOnChain = new Button("Verify on-chain");
 
+    // Verify targets — common to off-chain and on-chain. Prefilled from public-inputs.json; the
+    // proof is checked against exactly these (edit to confirm against an address you know).
+    private final TextField addressField = new TextField();
+    private final TextField recipientField = new TextField();
+
     private final ComboBox<String> networkBox =
             new ComboBox<>(FXCollections.observableArrayList("devnet", "preview", "preprod", "mainnet"));
     private final PasswordField adminMnemonic = new PasswordField();
@@ -77,15 +82,34 @@ public final class VerifyView {
         verify.setOnAction(e -> startOffChain());
         verifyOnChain.setOnAction(e -> startOnChain());
 
+        // Verify-target fields, prefilled from the proof folder. Both verify buttons check against
+        // these exact values, so a mismatched (or edited) address/recipient makes verification fail.
+        addressField.setPromptText("address the proof is for (bech32)");
+        recipientField.setPromptText("recipient the payout must go to (bech32)");
+        if (Flows.hasProof(proofDir)) {
+            try {
+                String a = Flows.proofAddress(proofDir);
+                String r = Flows.proofRecipient(proofDir);
+                if (a != null) addressField.setText(a);
+                if (r != null) recipientField.setText(r);
+            } catch (Exception ignore) { /* best-effort prefill */ }
+        }
+        var targetsHint = new Label("The proof is verified against these. Prefilled from the proof — "
+                + "edit to confirm it's for an address and recipient you expect.");
+        targetsHint.setWrapText(true);
+        targetsHint.getStyleClass().add("hint");
+        var targets = new VBox(6, fieldLabel("Address (proven)"), addressField,
+                fieldLabel("Recipient"), recipientField, targetsHint);
+
         // ---- on-chain inputs ----
         networkBox.setValue("devnet");
         adminMnemonic.setPromptText("funding wallet mnemonic (NOT the proven wallet)");
         bfKeyField.setPromptText("Blockfrost project id (needed off devnet)");
         bfUrlField.setPromptText("endpoint override (optional; e.g. DevKit on host)");
 
-        var demo = new Label("⚠ Demo only. The packaged validator just checks the proof verifies — it "
-                + "does NOT bind the transaction, so a published proof is replayable. This is for "
-                + "demonstrating on-chain verification, not a production refund flow.");
+        var demo = new Label("⚠ Demo flow. The validator verifies the proof AND enforces the payout "
+                + "goes to the recipient — but here a funding wallet locks and unlocks a gate UTxO to "
+                + "demonstrate on-chain verification, not a production refund orchestration.");
         demo.setWrapText(true);
         demo.getStyleClass().add("warn");
 
@@ -110,7 +134,7 @@ public final class VerifyView {
 
         // Result (status + copyable tx hash / validator) sits at the TOP, under the title, so it is
         // always visible after a verify — never hidden below the on-chain form.
-        var box = new VBox(12, title, info, bar, result, onchainResult, verify,
+        var box = new VBox(12, title, info, targets, bar, result, onchainResult, verify,
                 new Separator(),
                 section("Verify on-chain"), demo, onchainHint,
                 netRow,
@@ -148,9 +172,11 @@ public final class VerifyView {
     }
 
     private void startOffChain() {
+        final String address = addressField.getText();
+        final String recipient = recipientField.getText();
         var task = new Task<Boolean>() {
             @Override protected Boolean call() throws Exception {
-                return Flows.verifyOffChain(bundleDir, proofDir);
+                return Flows.verifyOffChain(bundleDir, proofDir, address, recipient);
             }
         };
         bar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
@@ -161,8 +187,8 @@ public final class VerifyView {
         task.setOnSucceeded(e -> {
             bar.setProgress(0); buttons(false);
             boolean ok = Boolean.TRUE.equals(task.getValue());
-            result.setText(ok ? "✓ VALID — the proof verifies against this key bundle."
-                              : "✗ INVALID — the proof did not verify.");
+            result.setText(ok ? "✓ VALID — the proof is for " + address + " → recipient " + recipient + "."
+                              : "✗ INVALID — the proof did not verify for that address/recipient.");
             resultStyle(ok ? "success" : "danger");
         });
         task.setOnFailed(e -> fail(task, "Verification error"));
@@ -177,10 +203,13 @@ public final class VerifyView {
         final String network = networkBox.getValue();
         final String bfKey = bfKeyField.getText();
         final String bfUrl = bfUrlField.getText();
+        final String address = addressField.getText();
+        final String recipient = recipientField.getText();
 
         var task = new Task<Flows.OnChainResult>() {
             @Override protected Flows.OnChainResult call() throws Exception {
-                return Flows.verifyOnChain(bundleDir, proofDir, mnemonicChars, network, bfKey, bfUrl, this::updateMessage);
+                return Flows.verifyOnChain(bundleDir, proofDir, mnemonicChars, network, bfKey, bfUrl,
+                        address, recipient, this::updateMessage);
             }
         };
         bar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);

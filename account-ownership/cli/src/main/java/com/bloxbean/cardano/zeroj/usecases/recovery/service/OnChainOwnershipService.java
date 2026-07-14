@@ -33,6 +33,9 @@ import java.util.Optional;
  */
 public class OnChainOwnershipService {
 
+    /** Demo refund the recipient is paid on unlock (2 ADA); the datum encodes this as the minimum. */
+    public static final long DEMO_REFUND_LOVELACE = 2_000_000L;
+
     private final BackendService backendService;
     private final Account adminAccount;
     private final SnarkjsToCardano.VkCompressed vk;
@@ -63,14 +66,20 @@ public class OnChainOwnershipService {
     public String scriptAddress() { initialize(); return scriptAddr; }
 
     /**
-     * Lock the ownership gate (datum = the 28 pkh bytes, in circuit public-input order), then
-     * verify by unlocking with the derivation proof. Returns the unlock tx hash.
+     * Lock the ownership gate (datum = {@code OwnershipDatum(pkh, refundAmount)}), then verify by
+     * unlocking with the recipient-bound derivation proof — the unlock pays the bound recipient at
+     * least {@code refundLovelace}, which the validator enforces. Returns the unlock tx hash.
      */
-    public String verifyOwnershipOnChain(SnarkjsToCardano.ProofCompressed c, byte[] pkh) throws Exception {
+    public String verifyOwnershipOnChain(SnarkjsToCardano.ProofCompressed c, byte[] pkh,
+                                         byte[] recipientPkh, String recipientAddress,
+                                         long refundLovelace) throws Exception {
         initialize();
-        PlutusData[] pub = new PlutusData[pkh.length];
-        for (int i = 0; i < pkh.length; i++) pub[i] = BigIntPlutusData.of(BigInteger.valueOf(pkh[i] & 0xff));
-        var datum = ListPlutusData.of(pub);
+        // Datum = OwnershipDatum(pkh, refundAmount): the pkh the proof must attest + the minimum
+        // lovelace the recipient is owed. ConstrData (alt 0), matching the on-chain record.
+        var datum = ConstrPlutusData.builder().alternative(0)
+                .data(ListPlutusData.of(new BytesPlutusData(pkh),
+                        BigIntPlutusData.of(BigInteger.valueOf(refundLovelace))))
+                .build();
 
         // 10 ADA locked / 2 back: this validator's execution fee (28 public-input scalar-muls +
         // pairings) is far larger than the commitment gate's — leave headroom so change stays
@@ -107,12 +116,16 @@ public class OnChainOwnershipService {
         Utxo collateralUtxo = findFreshAdaCollateral(adminAccount.baseAddress(), lock.getValue());
         var collateralInput = new TransactionInput(collateralUtxo.getTxHash(), collateralUtxo.getOutputIndex());
 
+        // Redeemer = OwnershipRedeemer(piA, piB, piC, recipient): the proof + the recipient it was
+        // bound to (public inputs 28..55). ConstrData (alt 0), matching the on-chain record.
         var redeemer = ConstrPlutusData.builder().alternative(0)
                 .data(ListPlutusData.of(new BytesPlutusData(c.piA()), new BytesPlutusData(c.piB()),
-                        new BytesPlutusData(c.piC()))).build();
+                        new BytesPlutusData(c.piC()), new BytesPlutusData(recipientPkh))).build();
 
+        // Pay the bound recipient at least the datum's refund amount — the validator enforces this,
+        // so the tx submitter cannot redirect or short-change the funds. Change returns to admin.
         var unlockTx = new ScriptTx().collectFrom(scriptUtxo, redeemer)
-                .payToAddress(adminAccount.baseAddress(), Amount.ada(2))
+                .payToAddress(recipientAddress, Amount.lovelace(BigInteger.valueOf(refundLovelace)))
                 .attachSpendingValidator(script);
         var unlock = new QuickTxBuilder(backendService).compose(unlockTx)
                 .withTxEvaluator(LocalJulcEvaluator.create(backendService))

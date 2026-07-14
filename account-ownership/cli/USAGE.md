@@ -79,20 +79,24 @@ could forge proofs. Requires the `--i-understand-insecure` acknowledgement.
 ## `prove` — generate a proof
 
 ```bash
-setup-cli prove [--keys keys] [--out proofs] [--role 0] [--index 0] [--mainnet] \
-    [--backend blst|java] [--no-self-verify]
+setup-cli prove --recipient <bech32-address> [--keys keys] [--out proofs] \
+    [--account 0] [--role 0] [--index 0] [--mainnet] [--backend blst|java] [--no-self-verify]
 ```
 
 Checks the circuit fingerprint (compiling only if `keys/r1cs.bin` is absent), prompts for your
 **mnemonic (hidden)**, derives the root key + target address
-(`m/1852'/1815'/0'/<role>/<index>`), mmap-loads the proving key, proves, writes
+(`m/1852'/1815'/<account>'/<role>/<index>`), mmap-loads the proving key, proves, writes
 `proofs/proof.json` + `proofs/public-inputs.json`, and self-checks off-chain.
 
-**Path (`--role`, `--index`):** pick any address of the account — `--role 0` (default) is the
-external payment chain, `--role 1` the internal/change chain; `--index` is the address number.
-Since circuit v2 the path is a **secret witness**: only the payment key hash is a public input,
-and the path is not written to `public-inputs.json`. The CIP-1852 account is fixed at `0'`
-(`--account` other than 0 is rejected).
+**Recipient (`--recipient`, required):** the bech32 address the refund must go to. The CLI decodes
+it to its 28-byte payment key hash and binds it into the proof, so the proof authorises a payout
+**only** to that address — a copied proof cannot be redirected. It is recorded in
+`public-inputs.json` and enforced on-chain by the validator.
+
+**Path (`--account`, `--role`, `--index`):** pick any address — `--account 0 --role 0 --index 0`
+(defaults) is the first external address; `--role 1` is the internal/change chain, `--account 1` a
+second account. The **full path is a secret witness**: only the payment key hash and the recipient
+are public inputs, and the path is not written to `public-inputs.json`.
 
 `--backend` picks the prover. The default is **`java`** (pure-Java multi-core): same speed as
 blst at this circuit size since ADR-0033/0034, no native lib, and safe on small-memory machines.
@@ -110,6 +114,9 @@ prompt.
 # off-chain (default): pure-Java pairing check against vk.json — sub-second, no network
 setup-cli verify [--keys keys] [--proof proofs]
 
+# verify the proof is for a SPECIFIC address / recipient you know (bech32)
+setup-cli verify --expect-address addr_test1... --expect-recipient addr_test1...
+
 # on-chain, Yaci DevKit (default: --network devnet) — auto-funds the admin account
 setup-cli verify --onchain
 
@@ -117,6 +124,15 @@ setup-cli verify --onchain
 setup-cli verify --onchain --network preprod --bf-key preprod...
 BLOCKFROST_PROJECT_ID=preprod...  setup-cli verify --onchain --network preprod
 ```
+
+**What `verify` checks against (`--expect-address`, `--expect-recipient`):** the public inputs are
+**recomputed** from the proven address and the recipient — not blindly trusted from the file's
+`publicInputs` array. By default those come from `public-inputs.json`, and the stored array must
+match (a hand-edited `pkh`, `recipient`, or `publicInputs` is rejected as inconsistent). Pass
+`--expect-address`/`--expect-recipient` (bech32) to check the proof against values **you** know
+independently — the real assurance, since a file's own labels are only as trustworthy as whoever
+produced it. Both off-chain and on-chain honour these, and `verify` prints the address → recipient
+it validated against.
 
 **Backend (`--network`):** `devnet | preview | preprod | mainnet` selects **both** the Cardano
 network **and** the default Blockfrost URL:
@@ -147,7 +163,7 @@ recomputes `SHA256SUMS` over the whole bundle (~10 GB sparse / ~24 GB dense — 
 ```bash
 AOR_JAVA_OPTS="-Xmx8g" setup-cli setup --i-understand-insecure    # once, ~6-7 min (8g = measured floor)
 setup-cli info
-setup-cli prove
+setup-cli prove --recipient <bech32-address>                      # bind the payout address
 setup-cli verify
 setup-cli verify --onchain
 ```
