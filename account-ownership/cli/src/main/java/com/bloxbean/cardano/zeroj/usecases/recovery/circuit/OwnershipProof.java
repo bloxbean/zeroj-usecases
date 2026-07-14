@@ -39,7 +39,7 @@ import com.bloxbean.cardano.zeroj.circuit.lib.zk.ZkCip1852;
  *       The full path stays private.</li>
  * </ul>
  *
- * <p>Concise thanks to {@link ZkCip1852}; the underlying circuit is ~19M constraints. Provable
+ * <p>{@link ZkCip1852}; the underlying circuit is ~19M constraints. Provable
  * end-to-end in ~1 min per proof on a 16 GB machine (ADR-0033/0034/0035) and verified on-chain by
  * the account-ownership validator.</p>
  */
