@@ -11,9 +11,11 @@ name: release (account-ownership desktop UI)
 # inside the app's fat jar, so the base JDK needs no OpenJFX.
 #
 # Assets:
-#   AccountOwnershipProof-<v>.dmg          (macOS, Apple Silicon)
-#   AccountOwnershipProof-<v>.deb          (Linux, aarch64 + x86_64)
-#   AccountOwnershipProof-<v>.msi          (Windows, x86_64 — built with WiX Toolset)
+# Files are renamed to include os/arch/version; the app itself stays "AccountOwnershipProof".
+#   account-ownership-proof-ui-macos_arm64_<v>.dmg      (macOS, Apple Silicon)
+#   account-ownership-proof-ui-linux_arm64_<v>.deb      (Linux, aarch64)
+#   account-ownership-proof-ui-linux_x86_64_<v>.deb     (Linux, x86_64)
+#   account-ownership-proof-ui-windows_x86_64_<v>.msi   (Windows, x86_64 — built with WiX Toolset)
 
 on:
   push:
@@ -63,6 +65,22 @@ jobs:
       - name: Build native installer (${{ matrix.platform }})
         shell: bash
         run: cd account-ownership && ./gradlew :ui:jpackageInstaller -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
+
+      # jpackage names the installer after the app (AccountOwnershipProof) with no os/arch, which is
+      # ambiguous on the Releases page. Rename to account-ownership-proof-ui-<os>_<arch>_<version>.<ext>,
+      # keeping the native extension (directly runnable) and the app name unchanged. Each runner
+      # produces exactly one installer, so the loop renames that one.
+      - name: Rename installer with os/arch/version
+        shell: bash
+        run: |
+          cd account-ownership/ui/build/dist
+          osarch="${{ matrix.platform }}"; osarch="${osarch//-/_}"
+          ver="${{ steps.ver.outputs.version }}"
+          shopt -s nullglob
+          for f in *.dmg *.pkg *.msi *.exe *.deb; do
+            mv -v "$f" "account-ownership-proof-ui-${osarch}_${ver}.${f##*.}"
+          done
+          ls -la
 
       - name: Upload workflow artifact (preview + release)
         uses: actions/upload-artifact@v4

@@ -14,6 +14,7 @@ name: release (account-ownership-recovery-cli)
 #                                                         recommended distribution (fastest prover)
 #   account-ownership-recovery-cli-<v>-macos-arm64.zip    GraalVM native binary
 #   account-ownership-recovery-cli-<v>-linux-arm64.zip    GraalVM native binary
+#   account-ownership-recovery-cli-<v>-linux-x86_64.zip   GraalVM native binary
 #   account-ownership-recovery-cli-<v>-windows-x86_64.zip GraalVM native binary — proving always
 #                                                         uses the pure-Java backend on Windows
 #                                                         (the optional blst DLL is not packaged)
@@ -76,6 +77,8 @@ jobs:
             platform: macos-arm64
           - os: ubuntu-22.04-arm    # aarch64
             platform: linux-arm64
+          - os: ubuntu-22.04        # x86_64
+            platform: linux-x86_64
           - os: windows-latest      # x86_64; prove runs the pure-Java backend (no blst DLL)
             platform: windows-x86_64
     runs-on: ${{ matrix.os }}
