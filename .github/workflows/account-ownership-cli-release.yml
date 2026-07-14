@@ -52,19 +52,19 @@ jobs:
           echo "Release version: $V"
 
       - name: Build fat-jar distZip (deps from Maven Central)
-        run: cd account-ownership-recovery-cli && ./gradlew distZip -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
+        run: cd account-ownership && ./gradlew :cli:distZip -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
 
       - name: Upload workflow artifact (preview + release)
         uses: actions/upload-artifact@v4
         with:
           name: account-ownership-recovery-cli-${{ steps.ver.outputs.version }}-jar
-          path: account-ownership-recovery-cli/build/dist/*.zip
+          path: account-ownership/cli/build/dist/*.zip
 
       - name: Attach to the GitHub Release (tag builds only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: account-ownership-recovery-cli/build/dist/*.zip
+          files: account-ownership/cli/build/dist/*.zip
           fail_on_unmatched_files: true
 
   native:
@@ -103,17 +103,17 @@ jobs:
 
       - name: Build native binary zip (${{ matrix.platform }})
         shell: bash
-        run: cd account-ownership-recovery-cli && ./gradlew nativeDistZip -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
+        run: cd account-ownership && ./gradlew :cli:nativeDistZip -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
 
       - name: Upload workflow artifact (preview + release)
         uses: actions/upload-artifact@v4
         with:
           name: account-ownership-recovery-cli-${{ steps.ver.outputs.version }}-${{ matrix.platform }}
-          path: account-ownership-recovery-cli/build/dist/*-${{ matrix.platform }}.zip
+          path: account-ownership/cli/build/dist/*-${{ matrix.platform }}.zip
 
       - name: Attach to the GitHub Release (tag builds only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: account-ownership-recovery-cli/build/dist/*-${{ matrix.platform }}.zip
+          files: account-ownership/cli/build/dist/*-${{ matrix.platform }}.zip
           fail_on_unmatched_files: true

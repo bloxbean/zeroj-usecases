@@ -1,0 +1,13 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        maven { url = uri("https://repo.spring.io/milestone") }
+    }
+}
+
+// ADR-0002: the account-ownership app is a two-module build — the CLI (service layer + picocli)
+// and the JavaFX desktop UI, which depends on :cli. One wrapper, one version (repo-root
+// version.properties).
+rootProject.name = 'account-ownership'
+include 'cli'
+include 'ui'

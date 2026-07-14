@@ -1,0 +1,88 @@
+name: release (account-ownership desktop UI)
+
+# Builds the Account-Ownership desktop app as a native installer per OS, each with a bundled
+# open-source JRE (jlink + jpackage), and attaches them to the GitHub Release.
+#
+#   preview : Actions ▸ Run workflow      → uploads the installers as workflow ARTIFACTS
+#   release : push a repo tag  v<version>  → uploads the installers to the RELEASE for that tag
+#
+# jpackage cannot cross-compile, so one runner per OS. The JDK is an OpenJDK build (Temurin,
+# GPLv2+CE) — never Oracle JDK — so the bundled runtime is freely redistributable. JavaFX ships
+# inside the app's fat jar, so the base JDK needs no OpenJFX.
+#
+# Assets:
+#   AccountOwnershipProof-<v>.dmg          (macOS, Apple Silicon)
+#   AccountOwnershipProof-<v>.deb          (Linux, aarch64 + x86_64)
+#   AccountOwnershipProof-<v>.msi          (Windows, x86_64 — built with WiX Toolset)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14            # Apple Silicon
+            platform: macos-arm64
+          - os: ubuntu-22.04-arm    # aarch64
+            platform: linux-arm64
+          - os: ubuntu-22.04        # x86_64
+            platform: linux-x86_64
+          - os: windows-latest      # x86_64
+            platform: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up OpenJDK 25 (Temurin — GPLv2+CE, redistributable runtime)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '25'
+
+      - name: Resolve version (tag > version.properties)
+        id: ver
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then V="${GITHUB_REF_NAME#v}"
+          else V=$(grep -m1 '^version' version.properties | cut -d= -f2); fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Version: $V"
+
+      - name: Install WiX Toolset (Windows installer tooling)
+        if: runner.os == 'Windows'
+        run: choco install wixtoolset --no-progress
+
+      - name: Build native installer (${{ matrix.platform }})
+        shell: bash
+        run: cd account-ownership && ./gradlew :ui:jpackageInstaller -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
+
+      - name: Upload workflow artifact (preview + release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: account-ownership-ui-${{ steps.ver.outputs.version }}-${{ matrix.platform }}
+          path: |
+            account-ownership/ui/build/dist/*.dmg
+            account-ownership/ui/build/dist/*.pkg
+            account-ownership/ui/build/dist/*.msi
+            account-ownership/ui/build/dist/*.exe
+            account-ownership/ui/build/dist/*.deb
+          if-no-files-found: error
+
+      - name: Attach to the GitHub Release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            account-ownership/ui/build/dist/*.dmg
+            account-ownership/ui/build/dist/*.msi
+            account-ownership/ui/build/dist/*.exe
+            account-ownership/ui/build/dist/*.deb
+          fail_on_unmatched_files: false

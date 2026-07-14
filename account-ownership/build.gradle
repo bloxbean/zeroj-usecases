@@ -1,0 +1,17 @@
+// account-ownership — multi-project root (ADR-0002). Two modules: :cli and :ui.
+// Version + external dep versions come from the repo-wide version.properties (walking up to the
+// zeroj-usecases root); -PreleaseVersion overrides for tagged builds.
+def repoVersions = {
+    def props = new Properties()
+    for (def dir = rootDir; dir != null; dir = dir.parentFile) {
+        def vf = new File(dir, 'version.properties')
+        if (vf.isFile()) { vf.withInputStream { props.load(it) }; break }
+    }
+    props
+}()
+
+allprojects {
+    group = 'com.bloxbean.cardano'
+    version = project.findProperty('releaseVersion') ?: repoVersions.getProperty('version') ?: '0.1.0-SNAPSHOT'
+    ext.repoVersions = repoVersions
+}
