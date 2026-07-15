@@ -4,12 +4,15 @@
 *Analysis only; no code changed. Reviews the contract and lays out options to use the proof safely
 (with detailed steps, pros/cons, and a recommendation).*
 
-> **Update — decision taken.** Since this analysis, **Option C (recipient binding as a circuit
-> public input)** was implemented: the circuit takes the recipient's payment key hash as a second
-> public input and the on-chain validator enforces the payout goes there. This report is kept as the
-> **decision record** — the sections below describe the pre-binding starting point and the options
-> weighed. For the **current** circuit, prove, and validator flow see
-> [`verification-and-validator-flow.md`](verification-and-validator-flow.md).
+> **Update — decision taken & implemented.** Since this analysis, **Option C (recipient binding as a
+> circuit public input)** was chosen and shipped: the circuit takes the recipient's payment key hash
+> as a second public input — both the pkh and the recipient are **packed** into one field element
+> each, so **2 public inputs (~2.8×10⁹ CPU steps, ~0.45 ADA on-chain)** — `account`/`role`/`index`
+> are all secret, and the on-chain validator **verifies the proof and enforces the payout goes to the
+> bound recipient for the datum's amount**. This report is kept as the **decision record** — the
+> sections below are the threat model and the options weighed to get there; the pkh-only "starting
+> point" they describe has since been superseded. For the **current** circuit, prove, and validator
+> flow see [`verification-and-validator-flow.md`](verification-and-validator-flow.md).
 
 ---
 
@@ -39,16 +42,20 @@ change, no mempool exposure, simplest and safest), backed by **per-account refun
 on-chain verification as an optional user self-check. If a **trustless, fully on-chain** claim is
 required, use **Option B — commit-reveal** (binds the recipient without a circuit change) or invest
 in **Option C — recipient binding as a circuit public input** (the cryptographic gold standard, but
-requires a new trusted setup).
+requires a new trusted setup). *(Option C is what was ultimately built — see the banner above.)*
 
 ---
 
-## 2. What we have today (contract & flow review)
+## 2. Starting point (before recipient binding)
 
-### 2.1 The circuit's public interface
-- **Public input:** the 28-byte payment key hash only (`numPublic = 28`, fingerprint
-  `c19075365-w43743286-p28`). Since circuit v2, `role`/`index` are *secret* witnesses, so the proof
-  does not even reveal which address index it is.
+*This section is the pkh-only baseline the analysis started from. Recipient binding (Option C) has
+since been implemented — see the banner and the flow doc; the specifics below are historical.*
+
+### 2.1 The circuit's public interface (baseline)
+- **Public input:** the payment key hash only. The derivation path was already a secret witness, so
+  the proof did not reveal which address index it is. *(The implemented design adds a second public
+  input — the recipient — makes `account` secret too, and packs both hashes into one field element
+  each; see the flow doc.)*
 - **The proof reveals nothing about the seed** (zero-knowledge). It is therefore **safe to publish**;
   the pkh is already public (it is the address). There is no privacy loss in putting a proof on-chain
   — the risk is purely **authorization / binding**, not confidentiality.
@@ -61,15 +68,17 @@ validate = Groth16BLS12381Lib.verify(datum, piA, piB, piC, vkAlpha, vkBeta, vkGa
 ```
 It checks **only** that the proof verifies against the pkh. It does **not** inspect the
 `ScriptContext`: it does not bind the signer, the outputs/recipient, a nullifier, or any
-authorization field. The class docstring says as much ("Demo scope: production validators must
-additionally bind `ScriptContext`").
+authorization field. *(This has since been done: the validator now takes `datum = (pkh,
+refundAmount)` and `redeemer = (proof, recipient)`, verifies the proof for `[pkh, recipient]`, and
+inspects the `ScriptContext` to enforce that an output pays the bound recipient at least
+`refundAmount`. See the flow doc.)*
 
 ### 2.3 The current on-chain "verification" flow (CLI `verify --onchain`)
 A **self-check**, not a refund: a funding/admin account **locks** a gate UTxO at the validator
-address with `datum = pkh`, then immediately **spends** it, supplying the proof as the redeemer. If
-the spend succeeds, the proof verified on-chain (~0.95 ADA, one lock + one unlock tx). Nothing about
-this flow disburses value or resists replay — it exists to prove the on-chain verifier accepts the
-proof.
+address, then immediately **spends** it, supplying the proof as the redeemer. If the spend succeeds,
+the proof verified on-chain (~0.45 ADA with the packed design, one lock + one unlock tx). The
+self-check exists to prove the on-chain verifier accepts the proof; the implemented validator also
+enforces the payout to the recipient (§2.2 note).
 
 ### 2.4 The binding pattern that already exists: `Groth16BLS12381TxOutRefBindingVerifier`
 This production-oriented example binds the statement to the spend by requiring the proof's **first
@@ -279,8 +288,10 @@ Combine the voucher (T2/T4) with recipient binding from A, B, C, or E (T1/T3) fo
 - **Privacy:** the proof is zero-knowledge and the pkh is already public → **publishing proofs leaks
   nothing new**. (With Option C the recipient becomes public — that is the payout address, expected.)
 - **On-chain cost/scale:** Groth16 BLS12-381 verify uses the Plutus V3 pairing builtins; cost is
-  O(#public inputs) (~0.95 ADA today at 28 inputs). Recipient binding adds a handful of inputs —
-  negligible. Verify effort is independent of the 19M-constraint circuit size.
+  O(#public inputs). The shipped design **packs** the pkh and recipient into one field element each —
+  **2 public inputs, ~2.8×10⁹ CPU steps (~0.45 ADA)**. (A byte-per-input encoding would be 56 inputs /
+  ~13.4×10⁹ steps and exceed the per-tx limit — hence the packing; see the flow doc §7.) Verify effort
+  is independent of the 19M-constraint circuit size.
 - **Upgradeability & emergency exit:** the validator is immutable once deployed. Include an
   ABC-multisig administrative path (e.g., sweep unclaimed vouchers after the deadline) and get the
   validator audited before mainnet.
@@ -296,9 +307,16 @@ Combine the voucher (T2/T4) with recipient binding from A, B, C, or E (T1/T3) fo
 
 ---
 
-## 8. Recommendation
+## 8. Recommendation (and what was chosen)
 
-**Primary (ship this): Option A + §6 vouchers.**
+> **What shipped: Option C** — recipient binding as a circuit public input (packed to 2 inputs), with
+> the validator verifying the proof and enforcing the payout to the bound recipient. The analysis
+> below weighed all the options; **A** was recommended for a purely operator-run refund, but **C** was
+> chosen because it makes the claim a single, trustless transaction and the ownership proof reusable
+> for any future on-chain action. Per-account vouchers (§6) remain the nullifier of choice. The
+> original recommendation is kept below for the reasoning.
+
+**Primary (as recommended for an operator-run refund): Option A + §6 vouchers.**
 ABC is the refund operator, so lean into that: users prove **locally** (the desktop app / CLI
 already does this), submit `{proof, recipient}` through an **authenticated ABC portal**, the
 backend **verifies off-chain** with the pure-Java verifier we already have, and disburses from
@@ -320,18 +338,19 @@ the only real cost is a production multi-party ceremony.
 **Do not** deploy a bare nullifier (Option D) without one of A/B/C/E — it makes front-running strictly
 worse (T3).
 
-### Concrete changes implied for the current contract (when you act on this)
-1. Replace the demo `OwnershipProofValidator` with a claim validator that inspects `ScriptContext`:
-   enforce **payout to the bound recipient**, **voucher consumption** (nullifier), and **deadline**.
-2. Add the recipient-binding mechanism of the chosen option (off-chain gate / commit hash /
-   coordinator sig / circuit public input).
-3. Add the affected-account allow-list (Merkle root or per-account vouchers).
-4. Keep verification itself as-is — `Groth16BLS12381Lib.verify` is fine; it is the **surrounding
-   authorization** that must change.
+### Concrete changes implied for the current contract — status
+1. ✅ **Done** — the validator inspects `ScriptContext` and enforces **payout to the bound recipient**
+   for the datum's amount. Deliberately **no deadline** (kept deadline-free so funds are never
+   time-locked); **voucher consumption** is the intended per-account nullifier (§6).
+2. ✅ **Done** — recipient binding via a **circuit public input** (Option C).
+3. ⬜ **Pending** — the affected-account allow-list (per-account vouchers, §6, is the plan).
+4. ✅ Unchanged — `Groth16BLS12381Lib.verify` is used as-is; only the **surrounding authorization**
+   changed.
 
 ---
 
-*Prepared from the current code: `OwnershipProofValidator` (demo, pkh-only, no context binding),
-`Groth16BLS12381TxOutRefBindingVerifier` (public-input binding template), `Groth16BLS12381Lib.verify`
-(the on-chain verify primitive), and the CLI `verify --onchain` self-check flow. Circuit v2 public
-input = 28-byte pkh; role/index secret; fingerprint `c19075365-w43743286-p28`.*
+*Prepared from the code as it was before recipient binding: `OwnershipProofValidator` (then demo,
+pkh-only), `Groth16BLS12381TxOutRefBindingVerifier` (the public-input binding template that inspired
+Option C), and `Groth16BLS12381Lib.verify`. The implemented design — recipient bound as a second
+public input, both hashes packed to 2 public inputs, validator enforcing the payout — is documented
+in [`verification-and-validator-flow.md`](verification-and-validator-flow.md).*
