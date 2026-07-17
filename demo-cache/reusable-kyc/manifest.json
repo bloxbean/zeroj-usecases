@@ -1,0 +1,8 @@
+{
+  "usecase": "reusable-kyc",
+  "zerojVersion": "0.1.0-pre9",
+  "generatedDate": "2026-07-16",
+  "devOnly": true,
+  "trustedSetup": "none — BBS signatures require no trusted setup (no Groth16 setup artifacts to cache)",
+  "artifacts": []
+}
