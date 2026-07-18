@@ -16,6 +16,7 @@ Usecases:
   airdrop
   dpp
   selective-disclosure
+  reusable-kyc
 
 Options:
   --run          Run the happy-path curl flow after the UI is healthy.
@@ -120,6 +121,13 @@ case "${USECASE}" in
     VOLUME="selective-disclosure-data"
     PORT="${SELECTIVE_DISCLOSURE_PORT:-8091}"
     HEALTH="/api/predicate/status"
+    ;;
+  kyc|reusable-kyc)
+    PROFILE="reusable-kyc"
+    SERVICE="reusable-kyc"
+    VOLUME="reusable-kyc-data"
+    PORT="${REUSABLE_KYC_PORT:-8092}"
+    HEALTH="/api/kyc/status"
     ;;
   *)
     echo "Unknown usecase: ${USECASE}" >&2
@@ -268,6 +276,26 @@ run_flow() {
       post_json "/api/predicate/lock" '{"gate":"doctor","adaAmount":5}'
       post_json "/api/predicate/prove-doctor" '{"name":"Bob"}'
       post_json "/api/predicate/unlock-doctor" '{"name":"Bob"}'
+      ;;
+    reusable-kyc)
+      # issue once, reveal only country+kycLevel, then claim on-chain (ledger verifies the BBS proof)
+      post_json "/api/kyc/issue" '{"givenName":"Alice Example","dob":"1990-05-01","country":"USA","kycLevel":"verified","docHash":"9f86d081884c7d659a2feaa0c55ad015a"}'
+      # the verifier issues the challenge; the holder binds the presentation to it (single-use)
+      challenge_json="$(post_json "/api/kyc/challenge" '{}')"
+      challenge="$(printf '%s' "${challenge_json}" | sed -n 's/.*"challenge":"\([^"]*\)".*/\1/p')"
+      if [ -z "${challenge}" ]; then
+        echo "Could not get a challenge from the verifier." >&2
+        return 1
+      fi
+      post_json "/api/kyc/present" "{\"reveal\":[\"country\",\"kycLevel\"],\"challenge\":\"${challenge}\"}"
+      recipient_json="$(post_json "/api/kyc/recipient" '{}')"
+      recipient="$(printf '%s' "${recipient_json}" | sed -n 's/.*"address":"\([^"]*\)".*/\1/p')"
+      if [ -z "${recipient}" ]; then
+        echo "Could not create a recipient wallet." >&2
+        return 1
+      fi
+      # no nonce here: the on-chain header is derived from the voucher UTxO + recipient
+      post_json "/api/kyc/claim" "{\"recipientAddress\":\"${recipient}\"}"
       ;;
   esac
 }

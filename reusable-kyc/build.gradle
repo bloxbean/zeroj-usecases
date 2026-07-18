@@ -1,0 +1,103 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.0-M3'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.bloxbean.cardano'
+// Release version: repo-wide version.properties (single source), overridable with -PreleaseVersion.
+version = project.findProperty('releaseVersion') ?: {
+    for (def dir = projectDir; dir != null; dir = dir.parentFile) {
+        def vf = new File(dir, 'version.properties')
+        if (vf.isFile()) { def p = new Properties(); vf.withInputStream { p.load(it) }; return p.getProperty('version') }
+    }
+    return '0.1.0-SNAPSHOT'
+}()
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+springBoot {
+    mainClass = 'com.bloxbean.cardano.zeroj.usecases.reusablekyc.ReusableKycApplication'
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven {
+        url = uri("https://central.sonatype.com/repository/maven-snapshots")
+        content { snapshotsOnly() }
+    }
+    maven {
+        url = uri("https://repo.spring.io/milestone")
+    }
+}
+
+def usecaseVersionsScript = {
+    def dir = projectDir
+    while (dir != null) {
+        def candidate = new File(dir, 'gradle/usecase-versions.gradle')
+        if (candidate.isFile()) {
+            return candidate
+        }
+        dir = dir.parentFile
+    }
+    throw new GradleException('Could not find gradle/usecase-versions.gradle')
+}()
+apply from: usecaseVersionsScript
+
+dependencies {
+    // Spring Boot
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
+    // ZeroJ — BBS selective disclosure + BLS12-381 primitives + on-chain
+    implementation "com.bloxbean.cardano:zeroj-bbs:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-bls12381:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-api:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-codec:${zerojVersion}"
+    implementation "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
+    annotationProcessor "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
+
+    // Julc — on-chain (Plutus V3) validator compilation
+    implementation "com.bloxbean.cardano:julc-stdlib:${julcVersion}"
+    annotationProcessor "com.bloxbean.cardano:julc-annotation-processor:${julcVersion}"
+
+    // Cardano Client Lib — tx building, UTXO queries
+    implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
+    implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
+    implementation "com.bloxbean.cardano:julc-cardano-client-lib:${julcVersion}"
+    runtimeOnly "com.bloxbean.cardano:julc-vm-java:${julcVersion}"
+
+    // Test
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation "com.bloxbean.cardano:julc-testkit:${julcVersion}"
+    testRuntimeOnly "com.bloxbean.cardano:julc-vm-java:${julcVersion}"
+}
+
+// Fork to avoid Java 25 NPE with Spring Boot AP + CCL types; native access for blst/FFM.
+compileJava {
+    options.fork = true
+    options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED']
+}
+compileTestJava {
+    options.compilerArgs.add('-proc:full')
+    options.fork = true
+    options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED']
+}
+bootRun {
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+}
+
+test {
+    useJUnitPlatform()
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    // Live Yaci DevKit claim E2E is opt-in: -Dkyc.e2e=true (needs DevKit on :8080 + faucet :10000)
+    systemProperty 'kyc.e2e', System.getProperty('kyc.e2e', 'false')
+    testLogging {
+        events "passed", "failed", "skipped"
+        showStandardStreams = true
+    }
+}

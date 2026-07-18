@@ -150,6 +150,23 @@ services:
     volumes:
       - selective-disclosure-data:/app/data
 
+  reusable-kyc:
+    profiles: ["reusable-kyc", "spring"]
+    <<: *host-provider
+    build:
+      <<: *spring-build
+      args:
+        USECASE_DIR: reusable-kyc
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre7}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
+    environment:
+      <<: *spring-env
+      SERVER_PORT: 8080
+    ports:
+      - "${REUSABLE_KYC_PORT:-8092}:8080"
+    volumes:
+      - reusable-kyc-data:/app/data
+
 volumes:
   proof-of-reserves-data:
   identity-kyc-data:
@@ -158,3 +175,4 @@ volumes:
   airdrop-data:
   dpp-data:
   selective-disclosure-data:
+  reusable-kyc-data:

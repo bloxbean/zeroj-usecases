@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reusable KYC — BBS Selective Disclosure</title>
+<style>
+  :root { --bg:#0f1115; --card:#171a21; --line:#262b36; --fg:#e6e9ef; --mut:#9aa4b2;
+          --ok:#3fb950; --bad:#f85149; --acc:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:880px; margin:0 auto; padding:28px 20px 60px; }
+  h1 { font-size:24px; margin:0 0 4px; }
+  .sub { color:var(--mut); margin:0 0 22px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px; margin-bottom:16px; }
+  .card h2 { font-size:15px; margin:0 0 12px; letter-spacing:.02em; }
+  .step { color:var(--acc); font-weight:600; margin-right:6px; }
+  label { display:block; font-size:12px; color:var(--mut); margin:8px 0 4px; }
+  input[type=text] { width:100%; padding:8px 10px; background:#0d1017; color:var(--fg);
+                     border:1px solid var(--line); border-radius:6px; font-size:13px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  button { background:var(--acc); color:#06121f; border:0; border-radius:6px; padding:9px 14px;
+           font-weight:600; cursor:pointer; font-size:13px; margin-top:12px; }
+  button.sec { background:#2b3240; color:var(--fg); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .reveal { display:flex; flex-wrap:wrap; gap:14px; margin:6px 0 2px; }
+  .reveal label { display:flex; align-items:center; gap:6px; color:var(--fg); font-size:13px; margin:0; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+  td { padding:6px 8px; border-bottom:1px solid var(--line); }
+  td:first-child { color:var(--mut); width:38%; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+  .pill.ok { background:rgba(63,185,80,.15); color:var(--ok); }
+  .pill.bad { background:rgba(248,81,73,.15); color:var(--bad); }
+  .pill.hid { background:#2b3240; color:var(--mut); }
+  .out { margin-top:12px; font-size:13px; }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; word-break:break-all; }
+  .note { color:var(--mut); font-size:12px; margin-top:10px; }
+  .err { color:var(--bad); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Reusable KYC — BBS Selective Disclosure</h1>
+  <p class="sub">Do KYC <b>once</b>. Reveal only what each service needs. Claim on-chain — the Cardano
+     ledger verifies the BBS proof <b>natively</b>.</p>
+
+  <div class="card">
+    <h2><span class="step">1</span> Issuer — sign the credential</h2>
+    <p class="note" style="margin-top:0">A KYC provider verifies the subject once (out of band) and
+       signs all five attributes with BBS. The holder stores it.</p>
+    <div class="grid">
+      <div><label>Given name</label><input type="text" id="givenName" value="Alice Example"></div>
+      <div><label>Date of birth</label><input type="text" id="dob" value="1990-05-01"></div>
+      <div><label>Country</label><input type="text" id="country" value="USA"></div>
+      <div><label>KYC level</label><input type="text" id="kycLevel" value="verified"></div>
+    </div>
+    <label>Document hash</label>
+    <input type="text" id="docHash" value="9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08">
+    <button id="issueBtn">Issue credential</button>
+    <div class="out" id="issueOut"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="step">2</span> Holder — reveal only a subset</h2>
+    <p class="note" style="margin-top:0">Pick what the verifier gets to see. The BBS proof still shows
+       the issuer signed <i>all</i> attributes — the rest stay hidden.</p>
+    <div class="reveal" id="reveal"></div>
+    <button id="presentBtn" class="sec">Present &amp; verify off-chain</button>
+    <div class="out" id="presentOut"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="step">3</span> Claim on-chain (Yaci DevKit)</h2>
+    <p class="note" style="margin-top:0">A voucher is locked at the claim validator; spending it
+       requires a BBS presentation the <b>ledger itself verifies</b>, disclosing
+       <span class="mono" id="onchainDisc">country, kycLevel</span>, paying the recipient.</p>
+    <label>Recipient address (gets the refund)</label>
+    <input type="text" id="recipient" placeholder="addr_test1...">
+    <button id="walletBtn" class="sec">Generate a wallet</button>
+    <button id="claimBtn">Claim on-chain</button>
+    <div class="out" id="claimOut"></div>
+  </div>
+
+  <div class="card">
+    <h2>Status</h2>
+    <table id="statusTbl"></table>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const api = async (path, body) => {
+  const r = await fetch('/api/kyc' + path, body ? {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  } : {});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || 'request failed');
+  return j;
+};
+const esc = s => String(s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+
+const ATTRS = ['givenName','dob','country','kycLevel','docHash'];
+const DEFAULT_REVEAL = ['country','kycLevel'];
+
+function renderReveal() {
+  $('reveal').innerHTML = ATTRS.map(a =>
+    `<label><input type="checkbox" value="${a}" ${DEFAULT_REVEAL.includes(a)?'checked':''}> ${a}</label>`
+  ).join('');
+}
+
+async function refreshStatus() {
+  try {
+    const s = await api('/status');
+    $('statusTbl').innerHTML = `
+      <tr><td>Issuer</td><td>${esc(s.issuer)}</td></tr>
+      <tr><td>Credential issued</td><td>${s.credentialIssued ? '<span class="pill ok">yes</span>' : '<span class="pill hid">no</span>'}</td></tr>
+      <tr><td>On-chain disclosure</td><td class="mono">${esc((s.onchainDisclosure||[]).join(', '))}</td></tr>
+      <tr><td>Claim validator</td><td class="mono">${esc(s.validatorAddress)}</td></tr>
+      <tr><td>Funder</td><td class="mono">${esc(s.funder)}</td></tr>`;
+    $('onchainDisc').textContent = (s.onchainDisclosure||[]).join(', ');
+  } catch (e) { $('statusTbl').innerHTML = `<tr><td class="err">${esc(e.message)}</td></tr>`; }
+}
+
+$('issueBtn').onclick = async () => {
+  $('issueOut').innerHTML = 'Issuing…';
+  try {
+    const r = await api('/issue', {
+      givenName:$('givenName').value, dob:$('dob').value, country:$('country').value,
+      kycLevel:$('kycLevel').value, docHash:$('docHash').value });
+    $('issueOut').innerHTML = `<span class="pill ok">signed</span> Credential is in the holder's wallet — `
+      + `<span class="mono">${ATTRS.join(' · ')}</span>`;
+    refreshStatus();
+  } catch (e) { $('issueOut').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+};
+
+$('presentBtn').onclick = async () => {
+  const reveal = [...document.querySelectorAll('#reveal input:checked')].map(i => i.value);
+  $('presentOut').innerHTML = 'Requesting a challenge from the verifier…';
+  try {
+    // The verifier picks the challenge — the holder binds the presentation to it, which is what
+    // makes it single-use. A captured presentation won't verify against the next challenge.
+    const c = await api('/challenge', {});
+    $('presentOut').innerHTML = 'Deriving presentation…';
+    const r = await api('/present', { reveal, challenge: c.challenge });
+    const rows = Object.entries(r.disclosed).map(([k,v]) =>
+      `<tr><td>${esc(k)}</td><td>${esc(v)} <span class="pill ok">revealed</span></td></tr>`).join('');
+    const hid = r.hidden.map(h => `<tr><td>${esc(h)}</td><td><span class="pill hid">hidden — never sent</span></td></tr>`).join('');
+    const chal = `<tr><td>challenge</td><td class="mono">${esc(r.challenge.slice(0,16))}… `
+      + `<span class="pill">${c.bytes}-byte, single-use</span></td></tr>`;
+    $('presentOut').innerHTML =
+      `<span class="pill ${r.valid?'ok':'bad'}">${r.valid?'VALID':'INVALID'}</span> `
+      + `verifier checked the BBS proof under the issuer's key<table>${rows}${hid}${chal}</table>`;
+    refreshStatus();
+  } catch (e) { $('presentOut').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+};
+
+$('walletBtn').onclick = async () => {
+  try { $('recipient').value = (await api('/recipient', {})).address; }
+  catch (e) { $('claimOut').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+};
+
+$('claimBtn').onclick = async () => {
+  if (!$('recipient').value.trim()) { $('claimOut').innerHTML = '<span class="err">Enter a recipient address.</span>'; return; }
+  $('claimBtn').disabled = true;
+  $('claimOut').innerHTML = 'Locking voucher and claiming… (two transactions)';
+  try {
+    const r = await api('/claim', { recipientAddress:$('recipient').value.trim() });
+    $('claimOut').innerHTML =
+      `<span class="pill ok">verified ON-CHAIN</span> the ledger ran the BBS proof verifier`
+      + `<table>
+           <tr><td>Claim tx</td><td class="mono">${esc(r.txHash)}</td></tr>
+           <tr><td>Refund</td><td>${(r.refundLovelace/1e6)} ADA → <span class="mono">${esc(r.recipient)}</span></td></tr>
+           <tr><td>Validator</td><td class="mono">${esc(r.validatorAddress)}</td></tr>
+         </table>`;
+  } catch (e) { $('claimOut').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  finally { $('claimBtn').disabled = false; }
+};
+
+renderReveal();
+refreshStatus();
+</script>
+</body>
+</html>

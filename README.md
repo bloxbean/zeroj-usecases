@@ -44,6 +44,7 @@ API, starts the app, opens the UI, and can run a happy-path curl flow with
 ./demo.sh airdrop --run
 ./demo.sh dpp --run
 ./demo.sh selective-disclosure --run
+./demo.sh reusable-kyc --run
 ```
 
 Stop a demo without stopping Yaci:
@@ -63,6 +64,7 @@ zeroj-usecases/
   personhood-airdrop/             Spring Boot E2E
   digital-product-passport/       Spring Boot E2E, CircuitSpec reference
   selective-disclosure/           Spring Boot E2E
+  reusable-kyc/                   Spring Boot E2E, BBS selective disclosure
 
   examples/
     minimal-circuits/
@@ -84,6 +86,7 @@ zeroj-usecases/
 | [personhood-airdrop](personhood-airdrop/SYBIL_AIRDROP_TUTORIAL.md) | One claim per person per epoch | 8083 | Symbolic annotations |
 | [digital-product-passport](digital-product-passport/README.md) | Product compliance without exposing supply-chain data | 8088 | `CircuitSpec` |
 | [selective-disclosure](selective-disclosure/SELECTIVE_DISCLOSURE_TUTORIAL.md) | Multiple predicates from one signed credential | 8091 | Symbolic annotations |
+| [reusable-kyc](reusable-kyc/README.md) | KYC once, reveal only the attributes each service needs — **BBS proof verified natively on-chain** | 8092 | BBS (no circuit) |
 
 Some apps have native Spring ports that overlap, such as 8085. The Docker demo
 maps them to distinct host ports so multiple profiles can exist without port
