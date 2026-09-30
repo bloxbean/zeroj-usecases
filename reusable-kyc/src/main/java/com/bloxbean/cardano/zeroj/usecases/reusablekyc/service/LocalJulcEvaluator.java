@@ -6,8 +6,12 @@ import com.bloxbean.cardano.client.backend.api.DefaultScriptSupplier;
 import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier;
 import com.bloxbean.cardano.julc.clientlib.eval.JulcTransactionEvaluator;
 
-/** Evaluates script ExUnits locally with the Julc VM (no node evaluation endpoint needed). */
+/**
+ * Evaluates script ExUnits locally with the Julc VM. The VM's cost model matches the
+ * ledger exactly (julc issue #60), so no safety margin is applied.
+ */
 final class LocalJulcEvaluator {
+
     private LocalJulcEvaluator() {}
 
     static JulcTransactionEvaluator create(BackendService backendService) {

@@ -9,7 +9,7 @@ import com.bloxbean.cardano.julc.stdlib.Builtins;
 import com.bloxbean.cardano.julc.stdlib.annotation.Entrypoint;
 import com.bloxbean.cardano.julc.stdlib.annotation.Param;
 import com.bloxbean.cardano.julc.stdlib.annotation.SpendingValidator;
-import com.bloxbean.cardano.zeroj.onchain.julc.bbs.lib.BbsProofVerify;
+import org.zeroj.onchain.julc.bbs.lib.BbsProofVerify;
 
 import java.math.BigInteger;
 
@@ -100,10 +100,9 @@ public class BbsKycClaimValidator {
         if (ctx.scriptInfo() instanceof ScriptInfo.SpendingScript spending) {
             TxOutRef ref = spending.txOutRef();
             return Builtins.blake2b_256(
-                    Builtins.appendByteString(
-                            Builtins.appendByteString(
-                                    ref.txId().hash(),
-                                    Builtins.integerToByteString(true, 8L, ref.index())),
+                    Builtins.concat(
+                            ref.txId().hash(),
+                            Builtins.integerToByteString(true, 8L, ref.index()),
                             recipientPkh));
         }
         return Builtins.emptyByteString();   // not a spending script — cannot match a real header

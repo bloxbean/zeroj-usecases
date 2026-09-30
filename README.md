@@ -185,13 +185,17 @@ Use this when you want to develop a module locally:
 
 ```bash
 cd proof-of-reserves
-./gradlew clean build -x test
-java --enable-native-access=ALL-UNNAMED -jar build/libs/proof-of-reserves-0.1.0-SNAPSHOT.jar
+./gradlew clean bootJar
+java --enable-native-access=ALL-UNNAMED \
+  -Dzeroj.allowInsecureTrustedSetup=true \
+  -jar build/libs/proof-of-reserves-*.jar
 ```
 
 The same pattern works for every top-level Spring Boot module. Some modules
 take several minutes on first boot because they generate or validate
-development trusted setup artifacts.
+development trusted setup artifacts. The system property explicitly permits
+the single-party development setup used by these demos; do not enable it for
+production setup material.
 
 ## Minimal Circuit Examples
 

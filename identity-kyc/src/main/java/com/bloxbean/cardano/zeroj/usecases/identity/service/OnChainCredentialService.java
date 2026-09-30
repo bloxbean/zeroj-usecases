@@ -12,7 +12,7 @@ import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
 import com.bloxbean.cardano.client.quicktx.ScriptTx;
 import com.bloxbean.cardano.client.quicktx.Tx;
 import com.bloxbean.cardano.client.util.HexUtil;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.usecases.identity.onchain.CredentialGatedValidator;
 import com.bloxbean.cardano.julc.clientlib.JulcScriptLoader;
 import org.slf4j.Logger;
@@ -31,16 +31,19 @@ public class OnChainCredentialService {
     private final BackendService backendService;
     private final Account adminAccount;
     private final CredentialService credentialService;
+    private final IssuerService issuerService;
 
     private PlutusScript script;
     private String scriptAddr;
     private boolean initialized;
 
     public OnChainCredentialService(BackendService backendService, Account adminAccount,
-                                     CredentialService credentialService) {
+                                     CredentialService credentialService,
+                                     IssuerService issuerService) {
         this.backendService = backendService;
         this.adminAccount = adminAccount;
         this.credentialService = credentialService;
+        this.issuerService = issuerService;
     }
 
     public synchronized void initialize() throws Exception {
@@ -48,13 +51,18 @@ public class OnChainCredentialService {
 
         log.info("Compiling credential-gated validator...");
         var vk = ProofCompressor.compressVk(credentialService.getSetupResult());
+        var issuerPk = issuerService.getIssuerPublicKey();
 
         script = JulcScriptLoader.load(CredentialGatedValidator.class,
                 new BytesPlutusData(vk.alpha()),
                 new BytesPlutusData(vk.beta()),
                 new BytesPlutusData(vk.gamma()),
                 new BytesPlutusData(vk.delta()),
-                vkIcData(vk.ic()));
+                vkIcData(vk.ic()),
+                BigIntPlutusData.of(issuerPk.affineU()),
+                BigIntPlutusData.of(issuerPk.affineV()),
+                BigIntPlutusData.of(BigInteger.valueOf(issuerService.getMinAge())),
+                BigIntPlutusData.of(issuerService.getCountryRoot()));
 
         scriptAddr = AddressProvider.getEntAddress(script, Networks.testnet()).toBech32();
         log.info("Credential-gated script: {}", scriptAddr.substring(0, 40) + "...");
@@ -128,7 +136,7 @@ public class OnChainCredentialService {
 
         var result = new QuickTxBuilder(backendService)
                 .compose(unlockTx)
-                .withTxEvaluator(LocalJulcEvaluator.create(backendService))
+//                .withTxEvaluator(LocalJulcEvaluator.create(backendService))
                 .withSigner(SignerProviders.signerFrom(adminAccount))
                 .feePayer(adminAccount.baseAddress())
                 .collateralPayer(adminAccount.baseAddress())

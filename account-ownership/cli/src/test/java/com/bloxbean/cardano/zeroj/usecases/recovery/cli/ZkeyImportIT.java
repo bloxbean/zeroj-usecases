@@ -1,13 +1,13 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.cli;
 
-import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
-import com.bloxbean.cardano.zeroj.bls12381.field.MontFr381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16PkStore;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.R1csExporter;
-import com.bloxbean.cardano.zeroj.crypto.groth16.ZkeyPkStoreImporter;
-import com.bloxbean.cardano.zeroj.cryptoblst.BlstProverBackend;
+import org.zeroj.api.R1CSConstraint;
+import org.zeroj.bls12381.field.MontFr381;
+import org.zeroj.crypto.groth16.Groth16PkStore;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
+import org.zeroj.crypto.groth16.Groth16ProverBLS381;
+import org.zeroj.crypto.groth16.R1csExporter;
+import org.zeroj.crypto.groth16.ZkeyPkStoreImporter;
+import org.zeroj.cryptoblst.BlstProverBackend;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 

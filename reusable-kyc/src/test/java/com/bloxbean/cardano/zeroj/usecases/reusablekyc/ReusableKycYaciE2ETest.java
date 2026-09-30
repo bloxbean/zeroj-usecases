@@ -4,13 +4,13 @@ import com.bloxbean.cardano.client.account.Account;
 import com.bloxbean.cardano.client.address.Address;
 import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService;
 import com.bloxbean.cardano.client.common.model.Networks;
-import com.bloxbean.cardano.zeroj.bbs.BbsCiphersuite;
-import com.bloxbean.cardano.zeroj.bbs.BbsPresentation;
-import com.bloxbean.cardano.zeroj.bbs.internal.BbsCodec;
-import com.bloxbean.cardano.zeroj.bbs.internal.CfrgBbsCore;
-import com.bloxbean.cardano.zeroj.bls12381.Bls12381Codecs;
-import com.bloxbean.cardano.zeroj.bls12381.spi.Bls12381Provider;
-import com.bloxbean.cardano.zeroj.bls12381.spi.Bls12381Providers;
+import org.zeroj.bbs.BbsCiphersuite;
+import org.zeroj.bbs.BbsPresentation;
+import org.zeroj.bbs.internal.BbsCodec;
+import org.zeroj.bbs.internal.CfrgBbsCore;
+import org.zeroj.bls12381.Bls12381Codecs;
+import org.zeroj.bls12381.spi.Bls12381Provider;
+import org.zeroj.bls12381.spi.Bls12381Providers;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.credential.KycCredential;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.service.HolderService;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.service.IssuerService;
@@ -50,7 +50,7 @@ class ReusableKycYaciE2ETest {
 
     private static byte[] u(String s) { return s.getBytes(StandardCharsets.UTF_8); }
     private static byte[] a(String s) { return s.getBytes(StandardCharsets.US_ASCII); }
-    private static byte[] g1c(com.bloxbean.cardano.zeroj.bls12381.ec.G1Point p) { return Bls12381Codecs.g1ToCompressed(p); }
+    private static byte[] g1c(org.zeroj.bls12381.ec.G1Point p) { return Bls12381Codecs.g1ToCompressed(p); }
 
     @Test
     @EnabledIfSystemProperty(named = "kyc.e2e", matches = "true")

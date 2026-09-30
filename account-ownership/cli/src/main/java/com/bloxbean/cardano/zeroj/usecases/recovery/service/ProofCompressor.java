@@ -1,15 +1,15 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.service;
 
-import com.bloxbean.cardano.zeroj.bls12381.Bls12381Codecs;
-import com.bloxbean.cardano.zeroj.bls12381.ec.G1Point;
-import com.bloxbean.cardano.zeroj.bls12381.ec.G2Point;
-import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG1BLS381;
-import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG2BLS381;
-import com.bloxbean.cardano.zeroj.bls12381.field.Fp;
-import com.bloxbean.cardano.zeroj.bls12381.field.Fp2;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
-import com.bloxbean.cardano.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
+import org.zeroj.bls12381.Bls12381Codecs;
+import org.zeroj.bls12381.ec.G1Point;
+import org.zeroj.bls12381.ec.G2Point;
+import org.zeroj.bls12381.ec.JacobianG1BLS381;
+import org.zeroj.bls12381.ec.JacobianG2BLS381;
+import org.zeroj.bls12381.field.Fp;
+import org.zeroj.bls12381.field.Fp2;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
+import org.zeroj.crypto.setup.Groth16SetupBLS381;
+import org.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
 
 import java.util.ArrayList;
 import java.util.List;

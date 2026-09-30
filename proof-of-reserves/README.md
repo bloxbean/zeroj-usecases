@@ -23,8 +23,10 @@ curl -X POST http://localhost:10000/local-cluster/api/addresses/topup \
   -H "Content-Type: application/json" \
   -d '{"address":"addr_test1qryvgass5dsrf2kxl3vgfz76uhp83kv5lagzcp29tcana68ca5aqa6swlq6llfamln09tal7n5kvt4275ckwedpt4v7q48uhex","adaAmount":10000}'
 
-./gradlew clean build -x test
-java --enable-native-access=ALL-UNNAMED -jar build/libs/proof-of-reserves-0.1.0-SNAPSHOT.jar
+./gradlew clean bootJar
+java --enable-native-access=ALL-UNNAMED \
+  -Dzeroj.allowInsecureTrustedSetup=true \
+  -jar build/libs/proof-of-reserves-*.jar
 ```
 
 Open **http://localhost:8089**

@@ -53,12 +53,12 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
 
     // ZeroJ — BBS selective disclosure + BLS12-381 primitives + on-chain
-    implementation "com.bloxbean.cardano:zeroj-bbs:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-bls12381:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-api:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-codec:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
-    annotationProcessor "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
+    implementation "org.zeroj:zeroj-bbs:${zerojVersion}"
+    implementation "org.zeroj:zeroj-bls12381:${zerojVersion}"
+    implementation "org.zeroj:zeroj-api:${zerojVersion}"
+    implementation "org.zeroj:zeroj-codec:${zerojVersion}"
+    implementation "org.zeroj:zeroj-onchain-julc:${zerojVersion}"
+    annotationProcessor "org.zeroj:zeroj-onchain-julc:${zerojVersion}"
 
     // Julc — on-chain (Plutus V3) validator compilation
     implementation "com.bloxbean.cardano:julc-stdlib:${julcVersion}"

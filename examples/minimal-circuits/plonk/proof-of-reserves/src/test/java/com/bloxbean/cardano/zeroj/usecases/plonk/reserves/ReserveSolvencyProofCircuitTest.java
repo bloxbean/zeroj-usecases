@@ -1,6 +1,6 @@
 package com.bloxbean.cardano.zeroj.usecases.plonk.reserves;
 
-import com.bloxbean.cardano.zeroj.api.CurveId;
+import org.zeroj.api.CurveId;
 import com.bloxbean.cardano.zeroj.usecases.plonk.reserves.circuit.ReserveSolvencyProofCircuit;
 import org.junit.jupiter.api.Test;
 

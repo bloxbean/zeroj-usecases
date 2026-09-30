@@ -1,7 +1,7 @@
 package com.bloxbean.cardano.zeroj.usecases.selective.circuit;
 
-import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash;
-import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
+import org.zeroj.circuit.lib.poseidon.PoseidonHash;
+import org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 
 import java.math.BigInteger;
 
@@ -65,7 +65,7 @@ public final class CredentialSchema {
      */
     public static BigInteger nameHash(String name) {
         BigInteger raw = new BigInteger(1, name.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        BigInteger reduced = raw.mod(com.bloxbean.cardano.zeroj.circuit.FieldConfig.BLS12_381.prime());
+        BigInteger reduced = raw.mod(org.zeroj.circuit.FieldConfig.BLS12_381.prime());
         return PoseidonHash.hash(PoseidonParamsBLS12_381T3.INSTANCE, reduced, BigInteger.ZERO);
     }
 }

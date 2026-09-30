@@ -1,7 +1,7 @@
 package com.bloxbean.cardano.zeroj.usecases.reusablekyc.credential;
 
-import com.bloxbean.cardano.zeroj.bbs.BbsPublicKey;
-import com.bloxbean.cardano.zeroj.bbs.BbsSignature;
+import org.zeroj.bbs.BbsPublicKey;
+import org.zeroj.bbs.BbsSignature;
 
 /**
  * A credential the holder stores after issuance: the cleartext attributes, the issuer's BBS

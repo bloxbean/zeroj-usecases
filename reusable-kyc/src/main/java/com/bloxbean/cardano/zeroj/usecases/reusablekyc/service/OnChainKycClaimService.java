@@ -62,13 +62,12 @@ public class OnChainKycClaimService {
 
     public OnChainKycClaimService(BackendService backendService, Account funder,
                                   BbsParams params, Network network) {
-        this(backendService, funder, params, network, false);
+        this(backendService, funder, params, network, true);
     }
 
     /**
-     * @param evaluateLocally evaluate script ExUnits with the local Julc VM instead of the backend.
-     *                        Useful when the backend has no evaluation endpoint, but its cost model
-     *                        can under-estimate the node's on large scripts.
+     * @param evaluateLocally {@code true} to evaluate script ExUnits with the local Julc VM and its
+     *                        safety margin; {@code false} to delegate evaluation to the backend.
      */
     public OnChainKycClaimService(BackendService backendService, Account funder,
                                   BbsParams params, Network network, boolean evaluateLocally) {
@@ -187,9 +186,8 @@ public class OnChainKycClaimService {
         var claimTx = new ScriptTx().collectFrom(voucher, redeemer)
                 .payToAddress(recipientAddress, Amount.lovelace(BigInteger.valueOf(refundLovelace)))
                 .attachSpendingValidator(script);
-        // ExUnits: prefer the node's own evaluator (Yaci DevKit evaluates via its API). The local Julc
-        // evaluator's cost model drifts a few thousand steps under the node's on a script this size,
-        // which the ledger rejects as an overspend — so only fall back to it if the backend can't evaluate.
+        // Local Julc evaluation is the default; its ExUnits match the ledger exactly.
+        // Callers can pass evaluateLocally=false to use the backend/node evaluator instead.
         var builder = new QuickTxBuilder(backendService).compose(claimTx);
         if (evaluateLocally) {
             builder = builder.withTxEvaluator(LocalJulcEvaluator.create(backendService));

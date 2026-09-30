@@ -1,17 +1,17 @@
 package com.bloxbean.cardano.zeroj.usecases.identity.service;
 
-import com.bloxbean.cardano.zeroj.api.CurveId;
-import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
-import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
-import com.bloxbean.cardano.zeroj.circuit.FieldConfig;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.EdDSAJubjub;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.InCircuitEdDSAJubjub;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.JubjubPoint;
-import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
+import org.zeroj.api.CurveId;
+import org.zeroj.api.R1CSConstraint;
+import org.zeroj.circuit.CircuitBuilder;
+import org.zeroj.circuit.FieldConfig;
+import org.zeroj.circuit.lib.jubjub.EdDSAJubjub;
+import org.zeroj.circuit.lib.jubjub.InCircuitEdDSAJubjub;
+import org.zeroj.circuit.lib.jubjub.JubjubPoint;
+import org.zeroj.circuit.r1cs.R1CSConstraintSystem;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
+import org.zeroj.crypto.groth16.Groth16ProverBLS381;
+import org.zeroj.crypto.setup.Groth16SetupBLS381;
+import org.zeroj.crypto.setup.PowersOfTauBLS381;
 import com.bloxbean.cardano.zeroj.usecases.identity.circuit.CredentialProofCircuit;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -103,7 +103,7 @@ public class CredentialService {
         BigInteger eligible = age.compareTo(minAge) >= 0 ? BigInteger.ONE : BigInteger.ZERO;
 
         // Compute the challenge-reduction witnesses required by
-        // InCircuitEdDSAJubjub.verify.
+        // ZkEdDSAJubjub.verifyWithRegisteredKey.
         var kReduction = InCircuitEdDSAJubjub.witnessComputeKReduction(
                 sig.r(), issuerPk, computePoseidon(age, country));
 
@@ -144,8 +144,8 @@ public class CredentialService {
     public BigInteger computePoseidon(BigInteger a, BigInteger b) {
         String key = a.toString(16) + ":" + b.toString(16);
         return cache.computeIfAbsent(key, k ->
-                com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
-                        com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
+                org.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
+                        org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
                         a, b));
     }
 

@@ -5,9 +5,9 @@ import com.bloxbean.cardano.client.plutus.spec.BytesPlutusData;
 import com.bloxbean.cardano.client.plutus.spec.ConstrPlutusData;
 import com.bloxbean.cardano.client.plutus.spec.ListPlutusData;
 import com.bloxbean.cardano.client.plutus.spec.PlutusData;
-import com.bloxbean.cardano.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano;
-import com.bloxbean.cardano.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano.MultiInputProofCompressed;
-import com.bloxbean.cardano.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano.VkCompressed;
+import org.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano;
+import org.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano.MultiInputProofCompressed;
+import org.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano.VkCompressed;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;

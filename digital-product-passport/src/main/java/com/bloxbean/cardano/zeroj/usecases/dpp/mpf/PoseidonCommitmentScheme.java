@@ -128,7 +128,7 @@ public class PoseidonCommitmentScheme implements CommitmentScheme {
         }
         // Longer than DIGEST_LENGTH — hash to reduce
         BigInteger val = new BigInteger(1, in).mod(
-                com.bloxbean.cardano.zeroj.circuit.FieldConfig.BLS12_381.prime());
+                org.zeroj.circuit.FieldConfig.BLS12_381.prime());
         byte[] raw = val.toByteArray();
         byte[] result = new byte[DIGEST_LENGTH];
         int srcStart = Math.max(0, raw.length - DIGEST_LENGTH);

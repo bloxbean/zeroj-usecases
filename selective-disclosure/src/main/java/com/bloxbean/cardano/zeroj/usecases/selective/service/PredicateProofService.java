@@ -1,17 +1,19 @@
 package com.bloxbean.cardano.zeroj.usecases.selective.service;
 
-import com.bloxbean.cardano.zeroj.api.CurveId;
-import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
-import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.EdDSAJubjub;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.InCircuitEdDSAJubjub;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.JubjubPoint;
-import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupCache;
-import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
+import org.zeroj.api.CurveId;
+import org.zeroj.api.R1CSConstraint;
+import org.zeroj.circuit.CircuitBuilder;
+import org.zeroj.circuit.lib.jubjub.EdDSAJubjub;
+import org.zeroj.circuit.lib.jubjub.InCircuitEdDSAJubjub;
+import org.zeroj.circuit.lib.jubjub.JubjubPoint;
+import org.zeroj.circuit.r1cs.R1CSConstraintSystem;
+import org.zeroj.circuit.r1cs.R1CSSerializer;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
+import org.zeroj.crypto.groth16.Groth16ProvingKeyBLS381;
+import org.zeroj.crypto.groth16.Groth16ProverBLS381;
+import org.zeroj.crypto.setup.Groth16SetupBLS381;
+import org.zeroj.crypto.setup.Groth16SetupCache;
+import org.zeroj.crypto.setup.PowersOfTauBLS381;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import com.bloxbean.cardano.zeroj.usecases.selective.circuit.AdultResidentProof;
@@ -26,7 +28,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -55,29 +60,32 @@ public class PredicateProofService {
         var cacheDir = Path.of("./data");
         try { Files.createDirectories(cacheDir); } catch (Exception ignore) {}
 
-        com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS[] srsHolder =
-                new com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS[1];
+        org.zeroj.crypto.plonk.PtauImporterBLS381.SRS[] srsHolder =
+                new org.zeroj.crypto.plonk.PtauImporterBLS381.SRS[1];
 
         adultResident = compile("adult-resident",
                 AdultResidentProofCircuit.build(RichCredentialIssuerService.COUNTRY_TREE_DEPTH),
-                srsHolder, cacheDir.resolve("setup-adult.bin"));
+                srsHolder, cacheDir, "setup-adult");
         seniorDoctor = compile("senior-doctor", SeniorDoctorProofCircuit.build(),
-                srsHolder, cacheDir.resolve("setup-doctor.bin"));
+                srsHolder, cacheDir, "setup-doctor");
 
         log.info("All predicate circuits compiled. Ready for proofs.");
     }
 
-    private com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS generateDevSrs() {
+    private org.zeroj.crypto.plonk.PtauImporterBLS381.SRS generateDevSrs() {
         log.info("Running in-memory dev Powers of Tau (power={})...", potPower);
         return PowersOfTauBLS381.generate(potPower);
     }
 
     private CompiledPredicate compile(String name, CircuitBuilder circuit,
-                                      com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS[] srsHolder,
-                                      Path setupCache) {
+                                      org.zeroj.crypto.plonk.PtauImporterBLS381.SRS[] srsHolder,
+                                      Path cacheDir, String cachePrefix) {
         var r1cs = circuit.compileR1CS(CurveId.BLS12_381);
+        String circuitDigest = circuitDigest(r1cs);
+        Path setupCache = cacheDir.resolve(cachePrefix + "-" + circuitDigest + ".bin");
         log.info("  {} — {} constraints, {} wires, {} public",
                 name, r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs());
+        log.info("  {} — setup-cache key {}...", name, circuitDigest.substring(0, 16));
         var constraints = r1cs.constraints();
 
         Groth16SetupBLS381.SetupResult setup = null;
@@ -110,7 +118,21 @@ public class PredicateProofService {
     private static boolean matchesCurrentCircuit(Groth16SetupBLS381.SetupResult setup, R1CSConstraintSystem r1cs) {
         var pk = setup.provingKey();
         return pk.numPublic() == r1cs.numPublicInputs()
-                && pk.pointsA().length == r1cs.numWires();
+                && Groth16ProvingKeyBLS381.count(pk.pointsA()) == r1cs.numWires();
+    }
+
+    /**
+     * Keys Phase-2 material by the complete circuit relation, not only its dimensions.
+     * Two circuits can have identical row/wire counts while imposing different constraints.
+     */
+    private static String circuitDigest(R1CSConstraintSystem system) {
+        try {
+            byte[] serialized = R1CSSerializer.serialize(system);
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(serialized);
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required but unavailable", e);
+        }
     }
 
     public ProofBundle proveAdultResident(JubjubPoint pk, EdDSAJubjub.Signature sig,

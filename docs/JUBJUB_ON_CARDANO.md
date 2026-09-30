@@ -1,8 +1,11 @@
 # Jubjub + BLS12-381 Poseidon on Cardano — What Becomes Possible
 
-> Status: Exploratory writeup, 2026-04-18. Scope: what the ADR-0015 Poseidon
-> work already unlocked, what the upcoming ADR-0016 Jubjub work will unlock,
-> and how each zeroj usecase can exploit them.
+> Status: Historical design note, refreshed 2026-07-28. Jubjub arithmetic,
+> Pedersen commitments, and EdDSA-Jubjub verification are now implemented
+> in ZeroJ. The usecases in this repository exercise registered-key
+> verification. This is not a production-readiness approval: the complete
+> protocol and the dedicated-host signing profile still require their
+> documented external/platform review gates.
 
 ## 1. Why this matters for Cardano
 
@@ -19,14 +22,14 @@ non-standard hybrid that worked internally but was incompatible with every
 published reference implementation. Third parties could not reproduce a
 hash, verify a commitment, or re-derive a nullifier from chain data.
 
-After ADR-0015 → ADR-0016 (planned):
+After ADR-0015 and the subsequent Jubjub hardening work:
 
 - **Poseidon over BLS12-381 scalar field**, paper-canonical (✅ shipped;
   paper-spec Sage cross-checked; byte-reproducible from chain data by any
   conforming implementation).
 - **Jubjub** — a twisted-Edwards elliptic curve whose base field *is* the
-  BLS12-381 scalar field, so its operations are cheap to prove inside a
-  BLS12-381 SNARK (🔜 ADR-0016).
+  BLS12-381 scalar field, with off-circuit arithmetic and hardened
+  in-circuit gadgets now available.
 
 Together these two primitives complete the minimum cryptographic alphabet
 for privacy-preserving applications on Cardano.
@@ -58,17 +61,16 @@ variant pinned at those curve parameters.
 | Nullifier derivation | Poseidon(secret, context) | private-voting, nft-ownership |
 | Commitment schemes | Poseidon(secret, value) | identity-kyc credential hash |
 
-### Unlocked by ADR-0016 (upcoming)
+### Jubjub building blocks and design opportunities
 
-| Primitive | Building block | Why it matters on Cardano |
+| Primitive | Status | Why it matters on Cardano |
 |---|---|---|
-| **Jubjub point arithmetic in-circuit** | add, double, scalar-mul | Foundation for every later item |
-| **Pedersen commitment** | `g^v · h^r` on Jubjub | Hiding + binding + homomorphic; enables confidential amounts without range-proof cost of Poseidon commitment |
-| **EdDSA signature verification in-circuit** | Ed25519-like over Jubjub | Asymmetric-signed credentials (W3C VC, DID, Atala PRISM interop); bank/issuer signs, holder proves knowledge |
-| **Schnorr signatures in-circuit** | Jubjub-Schnorr | Anonymous wallet signatures; threshold schemes |
-| **Jubjub Merkle trees** | Using Pedersen or Poseidon leaves | Alternative to Poseidon Merkle — better for very large trees due to homomorphic parent derivation |
-| **Group signatures / anonymous credentials** | Jubjub + Pedersen | BBS+-style or similar |
-| **Deterministic vote encryption** | ElGamal on Jubjub | Homomorphic tallying; threshold decryption |
+| **Jubjub point arithmetic in-circuit** | Implemented | Foundation for Jubjub-backed circuit protocols |
+| **Pedersen commitment** | Implemented | Hiding, binding, and homomorphic commitments |
+| **EdDSA-Jubjub verification in-circuit** | Implemented | An issuer signs while a holder proves possession and predicates privately |
+| **Schnorr signatures in-circuit** | Design opportunity | Anonymous or threshold authorization protocols |
+| **Jubjub/Poseidon Merkle constructions** | Poseidon trees implemented; Jubjub-specific construction is protocol-dependent | Membership and revocation registries |
+| **Anonymous credentials / encryption** | Design opportunity requiring its own specification and review | Richer privacy protocols |
 
 All of these produce a Groth16 / PlonK proof that ZeroJ's existing Plutus V3
 verifier (`zeroj-onchain-julc/Groth16BLS12381Verifier`) accepts on-chain.
@@ -79,21 +81,18 @@ is internalized in the SNARK.
 
 ### 4.1 identity-kyc — **highest-impact target** for Jubjub
 
-**Today (Poseidon-signed, symmetric):**
-- Credential = `Poseidon(issuerSecret, Poseidon(age, country))`.
-- Holder and issuer share `issuerSecret`. Either party can forge new
-  credentials. Key must be secretly transmitted to every holder — not a
-  real VC model.
-- No interop with W3C VC / DID wallets / Atala PRISM.
-
-**With Jubjub EdDSA (ADR-0016 M5):**
-- Issuer signs credential with `sign(issuer_sk, Poseidon(age, country))` —
-  asymmetric.
+**Current implementation:**
+- Issuer signs the canonical field element
+  `Poseidon(age, country)` with EdDSA-Jubjub — asymmetric.
 - Holder proves in ZK: "I know a credential + signature verifying under
-  the issuer's public key, such that age ≥ 18 and country ∈ EU", without
+  the registered issuer's public key, such that age ≥ 18 and country is
+  in the configured set", without
   revealing claim values or the signature.
-- **Interoperable with W3C VC** (EdDSA-Ed25519 is RFC 8032; the Jubjub
-  variant is the natural in-SNARK analog).
+- The Plutus script pins the issuer key and policy values rather than
+  trusting caller-selected public inputs.
+- Jubjub EdDSA is a suite-specific in-SNARK signature, not RFC 8032
+  Ed25519. A W3C VC integration needs an explicit envelope/profile rather
+  than an interoperability claim based only on the word “EdDSA.”
 - Issuer rotation, revocation, multi-issuer all become tractable.
 - Direct path to Atala PRISM / CIP-30 credential presentation.
 
@@ -229,27 +228,30 @@ commitment proved in-circuit.
 
 ## 6. Security note on BabyJubJub vs Jubjub
 
-ADR-0014 (WIP) mentions the earlier zeroj BabyJubJub code was removed
-because of missing subgroup checks and EdDSA malleability. **These
-concerns apply equally to Jubjub and must be handled by the ADR-0016
-implementation.** The current ADR-0016 plan:
+The hardened design uses cofactorless EdDSA verification and canonical
+`S < l` handling. Affine prover inputs are constructed through
+curve-checking gadgets. Two verifier entry points make the key-trust model
+explicit:
 
-- `JubjubPoint.isInSubgroup()` method; every input from untrusted source
-  must pass this check before being used in scalar-mul.
-- EdDSA verification pins the canonical encoding of S < l (no S + l
-  malleability).
-- Cofactor handling: all primitives use cofactor-cleared points.
+- `verifyStrict` proves subgroup membership in-circuit for a
+  prover-supplied key.
+- `verifyWithRegisteredKey` is cheaper, but only sound as an authorization
+  protocol when the public key is bound by a registry or script
+  parameter. The affected usecases pin both coordinates on-chain.
 
-## 7. Milestone summary (ADR-0016)
+The demos issue startup fixtures through
+`signCompatibilityOffline`. Do not turn that path into a
+network-reachable signing service. The fixed-limb dedicated-host signer
+remains unavailable through its validated factory until its external and
+platform-specific release gates are satisfied.
 
-| Milestone | Deliverable | Status |
+## 7. Implementation summary
+
+| Area | Deliverable | Status |
 |---|---|---|
-| M1 | Off-circuit `JubjubPoint` + ops + subgroup check | 🔜 |
-| M2 | In-circuit point add + fixed-base scalar-mul | 🔜 |
-| M3 | Variable-base scalar-mul | 🔜 |
-| M4 | Pedersen commitment + `BLS12_381_T5` Poseidon preset + Jubjub Merkle | 🔜 |
-| M5 | EdDSA-Jubjub verification in-circuit | 🔜 |
-| M6 | External cross-verification (zkcrypto/jubjub test vectors) | 🔜 |
-| Usecase | Migrate identity-kyc to EdDSA-Jubjub-signed credentials | 🔜 |
-
-End-to-end yaci-devkit verification required at the end.
+| Arithmetic | Off-circuit and in-circuit Jubjub operations | Implemented; external review gate remains |
+| Commitments | Jubjub Pedersen commitment | Implemented; deployment restrictions apply to secret generation |
+| Signatures | Cofactorless EdDSA-Jubjub verification | Implemented; external review gate remains |
+| Signing | Fixed-limb dedicated-host candidate | Implemented internally; validated factory remains fail-closed pending platform gates |
+| Usecases | Identity KYC, personhood airdrop, selective disclosure | Migrated to registered-key verification and explicit offline fixture signing |
+| Integration | Yaci DevKit transactions | Revalidated as part of the migration; see each usecase tutorial |

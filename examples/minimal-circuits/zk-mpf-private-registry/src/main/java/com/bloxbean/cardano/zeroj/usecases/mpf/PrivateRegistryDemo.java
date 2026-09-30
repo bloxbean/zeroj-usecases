@@ -1,14 +1,12 @@
 package com.bloxbean.cardano.zeroj.usecases.mpf;
 
-import com.bloxbean.cardano.vds.mpf.MpfTrie;
-import com.bloxbean.cardano.zeroj.api.CurveId;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZkInputMap;
-import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
-import com.bloxbean.cardano.zeroj.mpf.poseidon.PoseidonMpfCodec;
-import com.bloxbean.cardano.zeroj.mpf.poseidon.PoseidonMpfHash;
-import com.bloxbean.cardano.zeroj.mpf.poseidon.PoseidonMpfTrie;
-import com.bloxbean.cardano.zeroj.mpf.poseidon.PoseidonMpfValueCommitment;
-import com.bloxbean.cardano.zeroj.mpf.poseidon.PoseidonMpfWitness;
+import org.zeroj.api.CurveId;
+import org.zeroj.circuit.annotation.ZkInputMap;
+import org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
+import org.zeroj.merkle.mpf.poseidon.ccl.PoseidonMpfTrie;
+import org.zeroj.merkle.mpf.poseidon.profile.PoseidonMpfHash;
+import org.zeroj.merkle.mpf.poseidon.profile.PoseidonMpfValueCommitment;
+import org.zeroj.merkle.mpf.poseidon.witness.PoseidonMpfBranchWitness;
 import com.bloxbean.cardano.zeroj.usecases.mpf.circuit.PrivateRegistryMembershipCircuit;
 
 import java.math.BigInteger;
@@ -16,23 +14,19 @@ import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 
 public class PrivateRegistryDemo {
-    private static final int MAX_FORK_PREFIX_CHUNKS = 2;
+    private static final int MAX_STEPS = 8;
 
     public static void main(String[] args) {
         byte[] memberKey = bytes("member:alice");
         byte[] memberValue = bytes("tier=premium;active=true");
 
-        MpfTrie registry = PoseidonMpfTrie.inMemory();
+        PoseidonMpfTrie registry = PoseidonMpfTrie.inMemory();
         registry.put(memberKey, memberValue);
         registry.put(bytes("member:bob"), bytes("tier=standard;active=true"));
 
         byte[] proof = registry.getProofWire(memberKey).orElseThrow();
-        int maxSteps = Math.max(1, PoseidonMpfCodec.decode(proof).size());
-        PoseidonMpfWitness witness = PoseidonMpfCodec.toWitness(
-                memberKey,
-                proof,
-                maxSteps,
-                MAX_FORK_PREFIX_CHUNKS);
+        PoseidonMpfBranchWitness witness = PoseidonMpfBranchWitness.inclusion(
+                registry.getRootHash(), memberKey, memberValue, proof, MAX_STEPS);
 
         int[] keyPath = witness.keyPath().stream().mapToInt(BigInteger::intValueExact).toArray();
         BigInteger registryRoot = PoseidonMpfHash.fieldFromDigestBytes(registry.getRootHash());
@@ -46,8 +40,8 @@ public class PrivateRegistryDemo {
                 .put("value_commitment", PoseidonMpfValueCommitment.field(memberValue));
         witness.putInto(inputs);
 
-        var circuit = PrivateRegistryMembershipCircuit.build(maxSteps, MAX_FORK_PREFIX_CHUNKS);
-        var schema = PrivateRegistryMembershipCircuit.schema(maxSteps, MAX_FORK_PREFIX_CHUNKS);
+        var circuit = PrivateRegistryMembershipCircuit.build(MAX_STEPS);
+        var schema = PrivateRegistryMembershipCircuit.schema(MAX_STEPS);
         var witnessValues = circuit.calculateWitness(inputs.toWitnessMap(), CurveId.BLS12_381);
 
         System.out.println("Circuit: " + schema.name());

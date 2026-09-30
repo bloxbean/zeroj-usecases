@@ -12,7 +12,7 @@ import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
 import com.bloxbean.cardano.client.quicktx.ScriptTx;
 import com.bloxbean.cardano.client.transaction.spec.Asset;
 import com.bloxbean.cardano.client.util.HexUtil;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.usecases.voting.onchain.VoteListValidator;
 import com.bloxbean.cardano.zeroj.usecases.voting.onchain.VoteZkMintingPolicy;
 import com.bloxbean.cardano.julc.clientlib.JulcScriptLoader;
@@ -178,7 +178,7 @@ public class OnChainVoteService {
 
         var result = new QuickTxBuilder(backendService)
                 .compose(tx)
-                .withTxEvaluator(LocalJulcEvaluator.create(backendService))
+//                .withTxEvaluator(LocalJulcEvaluator.create(backendService))
                 .withSigner(SignerProviders.signerFrom(adminAccount))
                 .feePayer(adminAccount.baseAddress())
                 .collateralPayer(adminAccount.baseAddress())

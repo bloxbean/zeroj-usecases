@@ -3,8 +3,10 @@
 Shows how to build a **one-per-human faucet** on Cardano using ZK proofs:
 each personhood credential can claim ADA once per epoch. The ZK circuit
 proves "I hold an issuer-signed personhood credential" + publishes a
-deterministic nullifier; Cardano's NFT asset-name uniqueness (per policy
-ID) prevents any second claim for the same (credential, epoch) pair.
+deterministic nullifier; the policy/name asset identity creates a claim
+receipt. The demo service rejects a repeated
+nullifier; a production protocol still needs stateful on-chain uniqueness
+enforcement.
 
 ## 1. Why this is different from an "age/country KYC" gate
 
@@ -15,7 +17,10 @@ This demo adds a **rate limit per credential**: the holder proves
 possession *and* binds the proof to (credential × epoch) via a
 deterministic nullifier. Attempting to claim twice with the same
 credential in the same epoch produces the same nullifier → the mint
-would try to mint an NFT that already exists → tx fails.
+would use the same NFT name, which the service recognizes as already
+claimed. Cardano itself does not globally forbid minting more units under
+the same policy/name, so the service check is not a production
+double-claim guarantee.
 
 This is the ZK building block underneath: Semaphore signals, Tornado
 Cash withdrawals, Worldcoin claim tokens, every airdrop that wants
@@ -47,7 +52,7 @@ sybil resistance.
 | `PersonhoodIssuerService` | Holds the issuer's Jubjub keypair; signs one credential per enrolled person |
 | `PersonhoodAirdropProof` | In-SNARK: EdDSA verify + `nullifier == Poseidon(personhoodId, epoch)` + binds recipient |
 | `AirdropProofService` | Compiles circuit, runs Powers-of-Tau + Phase-2 setup, generates claim proofs |
-| `FaucetMintingPolicy` (Plutus V3) | Parameterized by Groth16 vk; gates 1 NFT mint per claim, asset name = nullifier |
+| `FaucetMintingPolicy` (Plutus V3) | Parameterized by Groth16 vk, registered issuer key, and epoch; gates 1 NFT mint per transaction, asset name = nullifier |
 | `OnChainAirdropService` | Submits the proof as a `mintAsset` tx; maintains off-chain used-nullifier cache |
 
 ## 3. End-to-end flow
@@ -63,9 +68,11 @@ JubjubPoint pk = JubjubPoint.SUBGROUP_GENERATOR.scalarMul(sk);
 ### 3.2 Credential issuance (per person)
 
 ```java
-BigInteger personhoodId = newUnique256Bits(); // issuer tracks real-human uniqueness
+BigInteger personhoodId = newUniqueFieldElement(); // issuer tracks real-human uniqueness
 BigInteger msg = Poseidon(personhoodId, 0);    // BLS12-381 scalar
-EdDSAJubjub.Signature sig = EdDSAJubjub.sign(sk, msg);
+JubjubMessage typed = JubjubMessage.fromCanonicalFieldBytes(BE32(msg));
+EdDSAJubjub.Signature sig =
+        EdDSAJubjub.signCompatibilityOffline(keypair, typed);
 // Deliver (personhoodId, sig) privately to the person
 ```
 
@@ -77,7 +84,8 @@ input  (secret):  personhoodId, sigRU, sigRV, sigS, kModL, kQuotient
 
 circuit:
     claimsMsg = Poseidon(personhoodId, 0)
-    InCircuitEdDSAJubjub.verify(pk, claimsMsg, sigR, sigS)  // asymmetric sig check
+    ZkEdDSAJubjub.verifyWithRegisteredKey(
+        pkU, pkV, claimsMsg, sigRU, sigRV, sigS, kModL, kQuotient)
     assert nullifier == Poseidon(personhoodId, epoch)       // sybil binding
     recipient bound as public input (tx-shape commitment)
     eligible = 1
@@ -86,7 +94,8 @@ circuit:
 Plutus V3 minting policy verifies the Groth16 proof over BLS12-381 with 6
 public inputs and mints 1 NFT whose asset name = nullifier bytes. A second
 claim with the same personhoodId in the same epoch produces the same
-nullifier → mint of existing NFT name = tx build fails.
+nullifier. The demo service rejects that duplicate before building the
+transaction.
 
 ## 4. API
 
@@ -130,9 +139,11 @@ cd zeroj-usecases/personhood-airdrop
 ./gradlew bootRun
 ```
 
-First boot runs Powers of Tau (~3 min) + Groth16 Phase-2 setup (~4 min)
-for the 20k-constraint circuit. Subsequent boots load the cached setup
-from `./data/` in <1s.
+The circuit currently has 10,467 constraints and uses a power-14
+development SRS. First-boot setup time is machine-dependent. Subsequent
+boots load a setup whose filename is keyed by SHA-256 of the complete
+serialized R1CS, so a changed circuit relation cannot reuse a
+same-shaped setup accidentally.
 
 ### Minimal demo script
 
@@ -174,17 +185,15 @@ linkability across epochs.
   Standard credential-system risk; mitigate via revocation lists (not
   demonstrated here).
 - **Double-claim enforcement is off-chain in this demo.** The faucet
-  minting policy verifies the Groth16 proof and requires `eligible == 1`,
-  but it does **not** currently enforce either (a) that the minted NFT
-  asset name equals the nullifier bytes, or (b) that the datum-carrying
-  output is at a specific index. The real double-claim gate is the
-  service's in-memory `claimedNullifiersHex` set plus Cardano's own
-  "this asset name already exists in one of our UTxOs" check during
-  tx build. Consequences:
+  minting policy verifies the Groth16 proof, pins the issuer and epoch,
+  requires `eligible == 1`, and requires the minted asset name to equal
+  the nullifier bytes. It does not maintain on-chain state proving that
+  this nullifier has never been minted before. The real duplicate gate is
+  the service's in-memory `claimedNullifiersHex` set. Consequences:
   - If the service restarts, the in-memory set is lost. The ledger's
-    UTxO set still holds the previously-minted NFT under the policy,
-    so a second mint of the same asset name is still rejected at tx
-    build — but this requires the builder to see the prior UTxO.
+    UTxO set still contains the receipt NFT, but Cardano permits a minting
+    policy to mint another unit with the same asset name. A restart can
+    therefore reopen a claim unless the service reconstructs its set.
   - Concurrent claim requests for the same credential may race past
     the in-memory check; resolution depends on mempool ordering.
   - A production deployment should tighten the minting policy to
@@ -196,8 +205,12 @@ linkability across epochs.
   systems do biometric / social-graph checks; that's orthogonal to
   what's verified on Cardano.
 - **Static epoch**: `currentEpoch` is read from `application.yml`, not
-  from the chain. Bump it manually or wire it to the live Cardano
-  epoch before a long-running deployment.
+  from the chain. It is pinned into the policy ID, so changing it deploys
+  a new policy. Wire it to the live Cardano epoch before a long-running
+  deployment.
+- **Issuer signing scope**: startup fixtures use
+  `signCompatibilityOffline`. Do not expose that demo signer as a
+  network-reachable issuance endpoint.
 
 ## 8. Where to go next
 

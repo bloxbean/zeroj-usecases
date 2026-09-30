@@ -19,9 +19,9 @@ zk:
   # Country Merkle tree depth (4 = 16 countries max)
   country-tree-depth: 4
   # Powers of Tau domain size. 2^pot-power must exceed circuit constraint count.
-  # EdDSA-Jubjub adds ~20k constraints over the old Poseidon-MAC; 2^16 = 65536
-  # safely accommodates 23k constraints + 48k wires.
-  pot-power: 16
+  # The registered-key EdDSA-Jubjub circuit has 11,258 constraints, so
+  # 2^14 = 16,384 is sufficient. This SRS is development/test-only.
+  pot-power: 14
 
 credential:
   # Minimum age for eligibility

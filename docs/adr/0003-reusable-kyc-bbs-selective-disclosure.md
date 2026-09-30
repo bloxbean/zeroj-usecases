@@ -152,11 +152,12 @@ root README's demos table, and a usecase README + user guide.
   `ReusableKycOnchainVmTest`, now `BbsProofVerifyVmTest` in `zeroj-onchain-julc`; see stage 6),
   well within the ~10×10⁹ / 14M per-tx limits (~0.4 ADA). **Native on-chain verification is viable;
   the coordinator-gated fallback is not needed.**
-- **ExUnits must come from the node's evaluator.** The local Julc VM's cost model under-estimates the
-  ledger's by a few thousand steps on a script this large (observed: node reported `cpu: -3339`,
-  `mem: -30` overspend for locally-estimated `steps=2,460,210,557`). Let the backend evaluate
-  (`OnChainKycClaimService` does by default); only use the local evaluator when the backend has no
-  evaluation endpoint, and then add a safety margin.
+- **ExUnits evaluation uses local Julc with padding by default.** The local Julc VM's raw cost model
+  under-estimates the ledger's by a few thousand steps on a script this large (observed: node
+  reported `cpu: -3339`, `mem: -30` overspend for locally-estimated
+  `steps=2,460,210,557`). `OnChainKycClaimService` therefore adds a 25% safety margin, with at least
+  50,000 memory units, before building the transaction. Backends with an evaluation endpoint remain
+  available by constructing the service with `evaluateLocally=false`.
 - **Presentation freshness** — a BBS presentation is valid forever, so replay protection rests
   entirely on the `presentationHeader`. **✅ Resolved:** the verifier issues a 32-byte CSPRNG,
   single-use challenge off-chain, and the on-chain header is *derived* from the voucher ref +

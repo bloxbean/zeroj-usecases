@@ -1,19 +1,18 @@
 package com.bloxbean.cardano.zeroj.usecases.airdrop.circuit;
 
-import com.bloxbean.cardano.zeroj.circuit.annotation.Prove;
-import com.bloxbean.cardano.zeroj.circuit.annotation.Public;
-import com.bloxbean.cardano.zeroj.circuit.annotation.Secret;
-import com.bloxbean.cardano.zeroj.circuit.annotation.UInt;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZKCircuit;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZkBool;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZkContext;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZkField;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZkUInt;
-import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParams;
-import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
-import com.bloxbean.cardano.zeroj.circuit.lib.zk.ZkEdDSAJubjub;
-import com.bloxbean.cardano.zeroj.circuit.lib.zk.ZkJubjubPoint;
-import com.bloxbean.cardano.zeroj.circuit.lib.zk.ZkPoseidon;
+import org.zeroj.circuit.annotation.Prove;
+import org.zeroj.circuit.annotation.Public;
+import org.zeroj.circuit.annotation.Secret;
+import org.zeroj.circuit.annotation.UInt;
+import org.zeroj.circuit.annotation.ZKCircuit;
+import org.zeroj.circuit.annotation.ZkBool;
+import org.zeroj.circuit.annotation.ZkContext;
+import org.zeroj.circuit.annotation.ZkField;
+import org.zeroj.circuit.annotation.ZkUInt;
+import org.zeroj.circuit.lib.poseidon.PoseidonParams;
+import org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
+import org.zeroj.circuit.lib.zk.ZkEdDSAJubjub;
+import org.zeroj.circuit.lib.zk.ZkPoseidon;
 
 @ZKCircuit(name = "personhood-airdrop", version = 1)
 public class PersonhoodAirdropProof {
@@ -37,11 +36,14 @@ public class PersonhoodAirdropProof {
             @Secret @UInt(bits = 4) ZkUInt kQuotient) {
 
         var claimsMsg = ZkPoseidon.hash(zk, POSEIDON, personhoodId, zk.constant(0));
-        var issuerKey = ZkJubjubPoint.fromTrustedAffine(zk, pkU, pkV);
-        var signatureR = ZkJubjubPoint.fromTrustedAffine(zk, sigRU, sigRV);
-        ZkEdDSAJubjub.verify(zk, issuerKey, claimsMsg, signatureR, sigS, kModL, kQuotient);
+        ZkEdDSAJubjub.verifyWithRegisteredKey(
+                zk, pkU, pkV, claimsMsg, sigRU, sigRV, sigS, kModL, kQuotient);
 
-        recipient.mul(zk.constant(1)).assertEqual(recipient);
+        // Bind the public recipient into a non-degenerate R1CS row. A constraint
+        // such as recipient * 1 == recipient is a tautology and leaves the
+        // corresponding Groth16 IC point at infinity, so the proof would not
+        // commit to the recipient at all.
+        recipient.mul(personhoodId);
 
         var computedNullifier = ZkPoseidon.hash(zk, POSEIDON, personhoodId, epoch);
         return eligible.and(computedNullifier.isEqual(nullifier));

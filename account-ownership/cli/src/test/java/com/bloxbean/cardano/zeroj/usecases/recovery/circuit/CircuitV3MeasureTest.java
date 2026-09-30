@@ -1,6 +1,6 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.circuit;
 
-import com.bloxbean.cardano.zeroj.api.CurveId;
+import org.zeroj.api.CurveId;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 

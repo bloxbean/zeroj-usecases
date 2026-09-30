@@ -11,7 +11,7 @@ import com.bloxbean.cardano.julc.stdlib.annotation.MintingValidator;
 import com.bloxbean.cardano.julc.stdlib.annotation.Param;
 import com.bloxbean.cardano.julc.stdlib.lib.OutputLib;
 import com.bloxbean.cardano.julc.stdlib.lib.ValuesLib;
-import com.bloxbean.cardano.zeroj.onchain.julc.groth16.lib.Groth16BLS12381Lib;
+import org.zeroj.onchain.julc.groth16.lib.Groth16BLS12381Lib;
 
 import java.math.BigInteger;
 
@@ -49,6 +49,9 @@ public class FaucetMintingPolicy {
     @Param static byte[] vkGamma;
     @Param static byte[] vkDelta;
     @Param static PlutusData vkIc;
+    @Param static BigInteger issuerPkU;
+    @Param static BigInteger issuerPkV;
+    @Param static BigInteger policyEpoch;
 
     record AirdropProof(byte[] piA, byte[] piB, byte[] piC) {}
 
@@ -81,7 +84,10 @@ public class FaucetMintingPolicy {
         BigInteger pub4 = Builtins.asInteger(Builtins.headList(r4));          // recipient
         BigInteger pub5 = Builtins.asInteger(Builtins.headList(r5));          // eligible
 
-        // 3. eligible must be 1 and token name must bind to the public nullifier.
+        // 3. Bind the registered issuer required by verifyWithRegisteredKey, require
+        //    eligibility, and bind the token name to the public nullifier.
+        boolean registeredIssuer = isRegisteredIssuer(pub0, pub1);
+        boolean registeredEpoch = isRegisteredEpoch(pub2);
         boolean isEligible = pub5.compareTo(BigInteger.ONE) == 0;
         boolean nameCorrect = Builtins.equalsByteString(mintedName, Builtins.integerToByteString(true, 32, pub3));
 
@@ -91,6 +97,15 @@ public class FaucetMintingPolicy {
                 proof.piA(), proof.piB(), proof.piC(),
                 vkAlpha, vkBeta, vkGamma, vkDelta, vkIc);
 
-        return exactlyOne && nameCorrect && isEligible && proofValid;
+        return registeredIssuer && registeredEpoch
+                && exactlyOne && nameCorrect && isEligible && proofValid;
+    }
+
+    static boolean isRegisteredIssuer(BigInteger publicKeyU, BigInteger publicKeyV) {
+        return publicKeyU.equals(issuerPkU) && publicKeyV.equals(issuerPkV);
+    }
+
+    static boolean isRegisteredEpoch(BigInteger epoch) {
+        return epoch.equals(policyEpoch);
     }
 }

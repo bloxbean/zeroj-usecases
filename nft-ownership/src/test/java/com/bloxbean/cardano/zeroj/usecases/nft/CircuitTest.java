@@ -1,15 +1,15 @@
 package com.bloxbean.cardano.zeroj.usecases.nft;
 
-import com.bloxbean.cardano.zeroj.api.CurveId;
-import com.bloxbean.cardano.zeroj.bls12381.ec.G1Point;
-import com.bloxbean.cardano.zeroj.bls12381.ec.G2Point;
-import com.bloxbean.cardano.zeroj.bls12381.field.Fp;
-import com.bloxbean.cardano.zeroj.bls12381.field.Fp2;
-import com.bloxbean.cardano.zeroj.bls12381.pairing.BLS12381Pairing;
-import com.bloxbean.cardano.zeroj.circuit.FieldConfig;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
+import org.zeroj.api.CurveId;
+import org.zeroj.bls12381.ec.G1Point;
+import org.zeroj.bls12381.ec.G2Point;
+import org.zeroj.bls12381.field.Fp;
+import org.zeroj.bls12381.field.Fp2;
+import org.zeroj.bls12381.pairing.BLS12381Pairing;
+import org.zeroj.circuit.FieldConfig;
+import org.zeroj.crypto.groth16.Groth16ProverBLS381;
+import org.zeroj.crypto.setup.Groth16SetupBLS381;
+import org.zeroj.crypto.setup.PowersOfTauBLS381;
 import com.bloxbean.cardano.zeroj.usecases.nft.circuit.NFTOwnershipProofCircuit;
 import org.junit.jupiter.api.Test;
 
@@ -142,17 +142,17 @@ class CircuitTest {
     // --- Poseidon helper (BLS12-381 Fr, standards-compatible per ADR-0015) ---
 
     private BigInteger poseidon(BigInteger a, BigInteger b) {
-        return com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
-                com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
+        return org.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
+                org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
                 a, b);
     }
 
-    private static G1Point toG1(com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG1BLS381.AffineG1 p) {
+    private static G1Point toG1(org.zeroj.bls12381.ec.JacobianG1BLS381.AffineG1 p) {
         if (p.isInfinity()) return G1Point.INFINITY;
         return new G1Point(Fp.of(p.xBigInt()), Fp.of(p.yBigInt()));
     }
 
-    private static G2Point toG2(com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG2BLS381.AffineG2 p) {
+    private static G2Point toG2(org.zeroj.bls12381.ec.JacobianG2BLS381.AffineG2 p) {
         if (p.isInfinity()) return G2Point.INFINITY;
         return new G2Point(
                 Fp2.of(Fp.of(p.x().reBigInt()), Fp.of(p.x().imBigInt())),

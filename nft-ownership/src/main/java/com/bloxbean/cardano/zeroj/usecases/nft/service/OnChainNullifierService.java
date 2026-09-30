@@ -17,7 +17,7 @@ import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
 import com.bloxbean.cardano.client.quicktx.ScriptTx;
 import com.bloxbean.cardano.client.transaction.spec.Asset;
 import com.bloxbean.cardano.client.util.HexUtil;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.usecases.nft.onchain.NullifierListValidator;
 import com.bloxbean.cardano.zeroj.usecases.nft.onchain.ZkProofMintingPolicy;
 import com.bloxbean.cardano.julc.clientlib.JulcScriptLoader;

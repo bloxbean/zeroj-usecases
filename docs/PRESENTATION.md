@@ -147,9 +147,9 @@ Voter → Prove: "I'm in voter Merkle tree + vote ∈ {0,1}"
 
 ### Architecture
 ```
-Issuer → Issue Poseidon-signed credential: hash(secret, hash(age, country))
-User   → Generate ZK proof: credential valid + age check + country Merkle
-       → On-chain: spending validator verifies Groth16 proof
+Issuer → Sign Poseidon(age, country) with an EdDSA-Jubjub issuer key
+User   → Generate ZK proof: registered-key signature + age check + country Merkle
+       → On-chain: validator pins issuer/policy parameters and verifies Groth16
        → Verifier sees: "eligible: YES" — nothing else
 ```
 
@@ -377,7 +377,8 @@ zeroj-usecases/
 
 ## Future Work
 
-- **ADR-0014**: Add BabyJubJub + EdDSA for W3C Verifiable Credential compatible identity proofs
+- **Credential envelopes**: Define a reviewed DID/VC profile around the
+  suite-specific EdDSA-Jubjub credential rather than claiming Ed25519 interoperability
 - **Private Token Transfer**: Privacy pool (deposit/withdraw) — Cardano's first mixer
 - **Recursive proofs**: Aggregate multiple proofs into one (for DPP supply chains, large reserve proofs)
 - **MPF in-circuit verification**: `SignalMpf` circuit gadget for full Poseidon MPF proof verification inside ZK

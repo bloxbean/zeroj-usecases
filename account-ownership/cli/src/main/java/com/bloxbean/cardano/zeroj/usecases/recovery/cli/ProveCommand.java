@@ -1,12 +1,12 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.cli;
 
 import com.bloxbean.cardano.client.common.model.Networks;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Keys;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16PkStore;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Pipeline;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.ProverBackend;
-import com.bloxbean.cardano.zeroj.cryptoblst.BlstProverBackend;
+import org.zeroj.crypto.groth16.Groth16Keys;
+import org.zeroj.crypto.groth16.Groth16PkStore;
+import org.zeroj.crypto.groth16.Groth16Pipeline;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
+import org.zeroj.crypto.groth16.ProverBackend;
+import org.zeroj.cryptoblst.BlstProverBackend;
 import com.bloxbean.cardano.zeroj.usecases.recovery.service.OwnershipCircuitService;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;

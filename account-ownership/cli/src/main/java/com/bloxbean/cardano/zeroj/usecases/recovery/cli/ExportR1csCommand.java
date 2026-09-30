@@ -1,6 +1,6 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.cli;
 
-import com.bloxbean.cardano.zeroj.crypto.groth16.R1csExporter;
+import org.zeroj.crypto.groth16.R1csExporter;
 import com.bloxbean.cardano.zeroj.usecases.recovery.service.OwnershipCircuitService;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;

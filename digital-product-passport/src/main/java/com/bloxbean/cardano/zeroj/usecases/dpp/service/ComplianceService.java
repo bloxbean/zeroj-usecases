@@ -169,7 +169,7 @@ public class ComplianceService {
     public record ClaimResult(
             String claimType,
             boolean compliant,
-            com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381 proof,
+            org.zeroj.crypto.groth16.Groth16ProofBLS381 proof,
             long provingTimeMs,
             Map<String, Object> details
     ) {}

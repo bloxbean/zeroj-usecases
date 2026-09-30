@@ -1,6 +1,6 @@
 package com.bloxbean.cardano.zeroj.usecases.plonk.reserves;
 
-import com.bloxbean.cardano.zeroj.api.VerificationResult;
+import org.zeroj.api.VerificationResult;
 import com.bloxbean.cardano.zeroj.usecases.plonk.reserves.service.PlonkReserveProofService;
 import org.junit.jupiter.api.Test;
 
