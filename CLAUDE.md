@@ -12,9 +12,9 @@ GroupId: `com.bloxbean.cardano`
 | Build | Gradle | 9.2+ |
 | Frontend | Svelte 5 + Vite | Latest |
 | Frontend packaging | Build to `src/main/resources/static/`, served by Spring Boot |
-| ZK Proofs | zeroj (local SNAPSHOT from `../zeroj`) | 0.1.0-SNAPSHOT |
-| On-chain scripts | Julc | 0.1.0-pre10 |
-| Cardano client | cardano-client-lib | 0.8.0-pre3 |
+| ZK Proofs | zeroj (`org.zeroj`, Maven Central) | 0.1.0-pre12 |
+| On-chain scripts | Julc (`org.julclang`) | 0.1.0-pre18 |
+| Cardano client | cardano-client-lib | 0.8.0-pre5 |
 | Cardano networks | Yaci DevKit (local) + Preprod (testnet) |
 | Wallet (Yaci) | Hardcoded mnemonic for testing |
 | Wallet (Preprod) | MeshJS connect-wallet in browser |

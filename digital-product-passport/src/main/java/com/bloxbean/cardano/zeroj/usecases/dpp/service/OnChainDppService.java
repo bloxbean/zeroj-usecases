@@ -14,7 +14,7 @@ import com.bloxbean.cardano.client.transaction.spec.Asset;
 import com.bloxbean.cardano.client.util.HexUtil;
 import org.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.usecases.dpp.onchain.DppMintingPolicy;
-import com.bloxbean.cardano.julc.clientlib.JulcScriptLoader;
+import org.julclang.clientlib.JulcScriptLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;

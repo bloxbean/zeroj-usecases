@@ -101,7 +101,7 @@ For the Docker demo path:
 - Yaci DevKit running on the host
 
 Docker demos use the released ZeroJ version configured by `ZEROJ_VERSION`
-(`0.1.0-pre7` by default). A sibling ZeroJ checkout is optional and only needed
+(`0.1.0-pre12` by default). A sibling ZeroJ checkout is optional and only needed
 when you explicitly opt into publishing a local ZeroJ build during Docker image
 builds.
 
@@ -263,8 +263,13 @@ cd ../zeroj
 ./gradlew publishToMavenLocal
 
 cd ../zeroj-usecases
-gradle buildAllUsecasesNoTests -PzerojVersion=0.1.0-pre7
+gradle buildAllUsecasesNoTests -PzerojVersion=<local-zeroj-version>
 ```
+
+`<local-zeroj-version>` is the version the ZeroJ build published (a `-SNAPSHOT` version is
+published as `<version>-<commit>-SNAPSHOT`). Every build resolves `mavenLocal()` first, so a
+local publish of a released version number shadows the Maven Central artifact until it is
+removed from `~/.m2/repository/org/zeroj`.
 
 For Docker builds, use `PUBLISH_LOCAL_ZEROJ=true` and point
 `ZEROJ_SOURCE_CONTEXT` at the local checkout as shown in the Docker section.

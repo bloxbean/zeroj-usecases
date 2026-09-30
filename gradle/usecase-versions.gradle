@@ -14,7 +14,7 @@ def versions = {
 }()
 
 ext {
-    zerojVersion = project.findProperty('zerojVersion') ?: System.getenv('ZEROJ_VERSION') ?: versions.getProperty('zerojVersion') ?: '0.1.0-pre7'
-    julcVersion = project.findProperty('julcVersion') ?: System.getenv('JULC_VERSION') ?: versions.getProperty('julcVersion') ?: '0.1.0-pre14'
-    cclVersion = project.findProperty('cclVersion') ?: System.getenv('CCL_VERSION') ?: versions.getProperty('cclVersion') ?: '0.8.0-pre5-dev1'
+    zerojVersion = project.findProperty('zerojVersion') ?: System.getenv('ZEROJ_VERSION') ?: versions.getProperty('zerojVersion') ?: '0.1.0-pre12'
+    julcVersion = project.findProperty('julcVersion') ?: System.getenv('JULC_VERSION') ?: versions.getProperty('julcVersion') ?: '0.1.0-pre18'
+    cclVersion = project.findProperty('cclVersion') ?: System.getenv('CCL_VERSION') ?: versions.getProperty('cclVersion') ?: '0.8.0-pre5'
 }

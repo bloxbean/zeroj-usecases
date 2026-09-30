@@ -61,20 +61,20 @@ dependencies {
     annotationProcessor "org.zeroj:zeroj-onchain-julc:${zerojVersion}"
 
     // Julc — on-chain (Plutus V3) validator compilation
-    implementation "com.bloxbean.cardano:julc-stdlib:${julcVersion}"
-    annotationProcessor "com.bloxbean.cardano:julc-annotation-processor:${julcVersion}"
+    implementation "org.julclang:julc-stdlib:${julcVersion}"
+    annotationProcessor "org.julclang:julc-annotation-processor:${julcVersion}"
 
     // Cardano Client Lib — tx building, UTXO queries
     implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
     implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
-    implementation "com.bloxbean.cardano:julc-cardano-client-lib:${julcVersion}"
-    runtimeOnly "com.bloxbean.cardano:julc-vm-java:${julcVersion}"
+    implementation "org.julclang:julc-cardano-client-lib:${julcVersion}"
+    runtimeOnly "org.julclang:julc-vm-java:${julcVersion}"
 
     // Test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-    testImplementation "com.bloxbean.cardano:julc-testkit:${julcVersion}"
-    testRuntimeOnly "com.bloxbean.cardano:julc-vm-java:${julcVersion}"
+    testImplementation "org.julclang:julc-testkit:${julcVersion}"
+    testRuntimeOnly "org.julclang:julc-vm-java:${julcVersion}"
 }
 
 // Fork to avoid Java 25 NPE with Spring Boot AP + CCL types; native access for blst/FFM.

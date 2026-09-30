@@ -14,7 +14,7 @@ import com.bloxbean.cardano.client.quicktx.Tx;
 import com.bloxbean.cardano.client.util.HexUtil;
 import org.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.usecases.identity.onchain.CredentialGatedValidator;
-import com.bloxbean.cardano.julc.clientlib.JulcScriptLoader;
+import org.julclang.clientlib.JulcScriptLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -136,7 +136,7 @@ public class OnChainCredentialService {
 
         var result = new QuickTxBuilder(backendService)
                 .compose(unlockTx)
-//                .withTxEvaluator(LocalJulcEvaluator.create(backendService))
+                .withTxEvaluator(LocalJulcEvaluator.create(backendService))
                 .withSigner(SignerProviders.signerFrom(adminAccount))
                 .feePayer(adminAccount.baseAddress())
                 .collateralPayer(adminAccount.baseAddress())

@@ -1,9 +1,9 @@
 package com.bloxbean.cardano.zeroj.usecases.plonk.reserves;
 
-import com.bloxbean.cardano.julc.core.Program;
-import com.bloxbean.cardano.julc.core.PlutusData;
-import com.bloxbean.cardano.julc.testkit.ContractTest;
-import com.bloxbean.cardano.julc.testkit.TestDataBuilder;
+import org.julclang.core.Program;
+import org.julclang.core.PlutusData;
+import org.julclang.testkit.ContractTest;
+import org.julclang.testkit.TestDataBuilder;
 import org.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano;
 import org.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano.MultiInputProofCompressed;
 import org.zeroj.onchain.julc.plonk.codec.PlonKProverToCardano.VkCompressed;

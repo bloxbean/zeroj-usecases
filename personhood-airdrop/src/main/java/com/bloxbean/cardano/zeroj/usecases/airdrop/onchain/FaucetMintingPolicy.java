@@ -1,16 +1,16 @@
 package com.bloxbean.cardano.zeroj.usecases.airdrop.onchain;
 
-import com.bloxbean.cardano.julc.core.PlutusData;
-import com.bloxbean.cardano.julc.ledger.ScriptContext;
-import com.bloxbean.cardano.julc.ledger.ScriptInfo;
-import com.bloxbean.cardano.julc.ledger.TxInfo;
-import com.bloxbean.cardano.julc.ledger.TxOut;
-import com.bloxbean.cardano.julc.stdlib.Builtins;
-import com.bloxbean.cardano.julc.stdlib.annotation.Entrypoint;
-import com.bloxbean.cardano.julc.stdlib.annotation.MintingValidator;
-import com.bloxbean.cardano.julc.stdlib.annotation.Param;
-import com.bloxbean.cardano.julc.stdlib.lib.OutputLib;
-import com.bloxbean.cardano.julc.stdlib.lib.ValuesLib;
+import org.julclang.core.PlutusData;
+import org.julclang.ledger.ScriptContext;
+import org.julclang.ledger.ScriptInfo;
+import org.julclang.ledger.TxInfo;
+import org.julclang.ledger.TxOut;
+import org.julclang.stdlib.Builtins;
+import org.julclang.stdlib.annotation.Entrypoint;
+import org.julclang.stdlib.annotation.MintingValidator;
+import org.julclang.stdlib.annotation.Param;
+import org.julclang.stdlib.lib.OutputLib;
+import org.julclang.stdlib.lib.ValuesLib;
 import org.zeroj.onchain.julc.groth16.lib.Groth16BLS12381Lib;
 
 import java.math.BigInteger;
@@ -92,7 +92,7 @@ public class FaucetMintingPolicy {
         boolean nameCorrect = Builtins.equalsByteString(mintedName, Builtins.integerToByteString(true, 32, pub3));
 
         // 4. Groth16 BLS12-381 pairing check with 6 public inputs.
-        PlutusData publicInputs = Groth16BLS12381Lib.publicInputs(pub0, pub1, pub2, pub3, pub4, pub5);
+        PlutusData publicInputs = Groth16BLS12381Lib.publicInputs6(pub0, pub1, pub2, pub3, pub4, pub5);
         boolean proofValid = Groth16BLS12381Lib.verify(publicInputs,
                 proof.piA(), proof.piB(), proof.piC(),
                 vkAlpha, vkBeta, vkGamma, vkDelta, vkIc);

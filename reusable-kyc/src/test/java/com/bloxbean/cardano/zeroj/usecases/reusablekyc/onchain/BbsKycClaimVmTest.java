@@ -1,14 +1,14 @@
 package com.bloxbean.cardano.zeroj.usecases.reusablekyc.onchain;
 
-import com.bloxbean.cardano.julc.core.PlutusData;
-import com.bloxbean.cardano.julc.core.Program;
-import com.bloxbean.cardano.julc.ledger.PubKeyHash;
-import com.bloxbean.cardano.julc.ledger.TxId;
-import com.bloxbean.cardano.julc.ledger.TxOut;
-import com.bloxbean.cardano.julc.ledger.TxOutRef;
-import com.bloxbean.cardano.julc.ledger.Value;
-import com.bloxbean.cardano.julc.testkit.ContractTest;
-import com.bloxbean.cardano.julc.testkit.TestDataBuilder;
+import org.julclang.core.PlutusData;
+import org.julclang.core.Program;
+import org.julclang.ledger.PubKeyHash;
+import org.julclang.ledger.TxId;
+import org.julclang.ledger.TxOut;
+import org.julclang.ledger.TxOutRef;
+import org.julclang.ledger.Value;
+import org.julclang.testkit.ContractTest;
+import org.julclang.testkit.TestDataBuilder;
 import org.zeroj.bbs.BbsCiphersuite;
 import org.zeroj.bbs.BbsPresentation;
 import org.zeroj.bbs.internal.BbsCodec;

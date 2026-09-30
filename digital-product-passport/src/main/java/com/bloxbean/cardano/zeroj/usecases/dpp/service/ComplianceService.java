@@ -95,10 +95,12 @@ public class ComplianceService {
         BigInteger country = BigInteger.valueOf(countryCode);
         BigInteger prodId = new BigInteger(1, productId.getBytes());
         BigInteger countryRoot = productService.getEuCountryRoot();
+        // The auditor's commitment to this product's origin (same scheme as the threshold claims)
+        BigInteger auditorHash = circuitService.computeAuditorHash(AUDITOR_SECRET, prodId, country);
 
         long start = System.currentTimeMillis();
         var result = circuitService.proveCountryMembership(country, prodId, countryRoot,
-                proof.siblings(), proof.pathBits());
+                AUDITOR_SECRET, auditorHash, proof.siblings(), proof.pathBits());
         long elapsed = System.currentTimeMillis() - start;
 
         log.info("Country proof for {}: {} in EU → COMPLIANT ({}ms)", productId, countryCode, elapsed);
@@ -116,10 +118,16 @@ public class ComplianceService {
 
         // Build inspection data
         Map<String, List<BigInteger>> inputs = new HashMap<>();
+        List<BigInteger> keys = new ArrayList<>();
+        List<BigInteger> timestamps = new ArrayList<>();
         for (int i = 0; i < numInspections; i++) {
+            BigInteger timestamp = BigInteger.valueOf(1000 + i * 100);
+            BigInteger inspectorKey = inspKeys.get(i % inspKeys.size());
+            keys.add(inspectorKey);
+            timestamps.add(timestamp);
             inputs.put("passed_" + i, List.of(BigInteger.ONE));
-            inputs.put("timestamp_" + i, List.of(BigInteger.valueOf(1000 + i * 100)));
-            inputs.put("inspectorKey_" + i, List.of(inspKeys.get(i % inspKeys.size())));
+            inputs.put("timestamp_" + i, List.of(timestamp));
+            inputs.put("inspectorKey_" + i, List.of(inspectorKey));
 
             var inspProof = productService.getInspectorProof(inspKeys.get(i % inspKeys.size()));
             for (int j = 0; j < inspProof.siblings().length; j++) {
@@ -128,8 +136,11 @@ public class ComplianceService {
             }
         }
 
+        // The auditor's commitment to this product's inspection log
+        BigInteger auditorHash = circuitService.computeInspectionLogHash(AUDITOR_SECRET, prodId, keys, timestamps);
+
         long start = System.currentTimeMillis();
-        var result = circuitService.proveInspections(prodId, inspRoot, inputs);
+        var result = circuitService.proveInspections(prodId, inspRoot, AUDITOR_SECRET, auditorHash, inputs);
         long elapsed = System.currentTimeMillis() - start;
 
         log.info("Inspection proof for {}: {}/{} passed → COMPLIANT ({}ms)",

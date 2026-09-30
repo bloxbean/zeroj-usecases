@@ -34,9 +34,9 @@ repositories {
     maven { url = uri("https://repo.spring.io/milestone") }
 }
 
-def zerojVersion = ver('zerojVersion', '0.1.0-pre7')
-def julcVersion  = ver('julcVersion', '0.1.0-pre14')
-def cclVersion   = ver('cclVersion', '0.8.0-pre5-dev1')
+def zerojVersion = ver('zerojVersion', '0.1.0-pre12')
+def julcVersion  = ver('julcVersion', '0.1.0-pre18')
+def cclVersion   = ver('cclVersion', '0.8.0-pre5')
 
 dependencies {
     // ZeroJ ZK: circuit DSL + gadgets, prover, on-chain julc verifier, blst prover backend.
@@ -55,10 +55,10 @@ dependencies {
     implementation "org.zeroj:zeroj-codec:${zerojVersion}"
 
     // Julc: on-chain validator stdlib + processor + client-lib evaluator.
-    implementation "com.bloxbean.cardano:julc-stdlib:${julcVersion}"
-    annotationProcessor "com.bloxbean.cardano:julc-annotation-processor:${julcVersion}"
-    implementation "com.bloxbean.cardano:julc-cardano-client-lib:${julcVersion}"
-    runtimeOnly "com.bloxbean.cardano:julc-vm-java:${julcVersion}"
+    implementation "org.julclang:julc-stdlib:${julcVersion}"
+    annotationProcessor "org.julclang:julc-annotation-processor:${julcVersion}"
+    implementation "org.julclang:julc-cardano-client-lib:${julcVersion}"
+    runtimeOnly "org.julclang:julc-vm-java:${julcVersion}"
 
     // Cardano client + Blockfrost backend for on-chain verification.
     implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
@@ -72,7 +72,7 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     // Julc VM test harness (ContractTest / ScriptContextTestBuilder) — runs the compiled validator
     // locally in the UPLC evaluator, no node. Same julc version as the rest of the deps (Maven Central).
-    testImplementation "com.bloxbean.cardano:julc-testkit:${julcVersion}"
+    testImplementation "org.julclang:julc-testkit:${julcVersion}"
 }
 
 def cliJvmArgs = [

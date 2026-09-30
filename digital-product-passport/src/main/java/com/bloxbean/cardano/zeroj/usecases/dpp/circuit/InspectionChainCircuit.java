@@ -11,11 +11,15 @@ import org.zeroj.circuit.lib.poseidon.PoseidonParams;
 import org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 
 /**
- * Proves N quality inspections passed in chronological order.
+ * Proves N quality inspections of a product passed in chronological order.
  * <p>
  * Each inspection: an approved inspector verified the product at a specific time.
- * The circuit proves all passed, in order, by approved inspectors — without
- * revealing inspector identities, timestamps, or inspection details.
+ * The auditor publishes a commitment to the product's inspection log,
+ * {@code auditorHash = Poseidon(auditorSecret, Poseidon(productId, log))}, where
+ * {@code log} folds every inspection in order:
+ * {@code log_i = Poseidon(log_{i-1}, Poseidon(Poseidon(inspectorKey_i, 0), timestamp_i))}, {@code log_0 = 0}.
+ * The circuit proves the committed inspections of {@code productId} all passed, in order, by
+ * approved inspectors — without revealing inspector identities, timestamps, or inspection details.
  *
  * @param numCheckpoints number of required inspections (e.g., 3)
  * @param inspectorTreeDepth Merkle tree depth for approved inspectors
@@ -37,11 +41,16 @@ public class InspectionChainCircuit implements CircuitSpec {
         // Public inputs
         Signal productId = c.publicInput("productId");
         Signal inspectorRoot = c.publicInput("inspectorRoot");
+        Signal auditorHash = c.publicInput("auditorHash");
+
+        // Secret: the auditor's secret
+        Signal auditorSecret = c.privateInput("auditorSecret");
 
         // Public output
         Signal allPassed = c.publicOutput("allPassed");
 
         Signal prevTimestamp = c.constant(0);
+        Signal inspectionLog = c.constant(0);
 
         for (int i = 0; i < numCheckpoints; i++) {
             // Secret: each inspection's data
@@ -71,7 +80,16 @@ public class InspectionChainCircuit implements CircuitSpec {
             Signal inspectorHash = SignalPoseidon.hash(c, POSEIDON, inspectorKey, c.constant(0));
             SignalMerkle.verifyProof(c, inspectorHash, c.signal("inspectorRoot"),
                     siblings, pathBits, (sb, a, b) -> SignalPoseidon.hash(sb, POSEIDON, a, b));
+
+            // 4. Fold this inspection into the product's inspection log
+            inspectionLog = SignalPoseidon.hash(c, POSEIDON, inspectionLog,
+                    SignalPoseidon.hash(c, POSEIDON, inspectorHash, timestamp));
         }
+
+        // 5. The auditor attested this inspection log for this product:
+        //    auditorHash == Poseidon(auditorSecret, Poseidon(productId, log))
+        Signal claimsHash = SignalPoseidon.hash(c, POSEIDON, c.signal("productId"), inspectionLog);
+        c.assertEqual(SignalPoseidon.hash(c, POSEIDON, auditorSecret, claimsHash), c.signal("auditorHash"));
 
         c.assertEqual(allPassed, c.constant(1));
     }
@@ -80,7 +98,9 @@ public class InspectionChainCircuit implements CircuitSpec {
         var builder = CircuitBuilder.create("inspection-chain")
                 .publicVar("productId")
                 .publicVar("inspectorRoot")
-                .publicVar("allPassed");
+                .publicVar("auditorHash")
+                .publicVar("allPassed")
+                .secretVar("auditorSecret");
 
         for (int i = 0; i < numCheckpoints; i++) {
             builder = builder

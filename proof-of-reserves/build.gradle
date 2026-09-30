@@ -54,13 +54,13 @@ dependencies {
     implementation "org.zeroj:zeroj-api:${zerojVersion}"
     implementation "org.zeroj:zeroj-codec:${zerojVersion}"
 
-    implementation "com.bloxbean.cardano:julc-stdlib:${julcVersion}"
-    annotationProcessor "com.bloxbean.cardano:julc-annotation-processor:${julcVersion}"
+    implementation "org.julclang:julc-stdlib:${julcVersion}"
+    annotationProcessor "org.julclang:julc-annotation-processor:${julcVersion}"
 
     implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
     implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
-    implementation "com.bloxbean.cardano:julc-cardano-client-lib:${julcVersion}"
-    runtimeOnly "com.bloxbean.cardano:julc-vm-java:${julcVersion}"
+    implementation "org.julclang:julc-cardano-client-lib:${julcVersion}"
+    runtimeOnly "org.julclang:julc-vm-java:${julcVersion}"
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

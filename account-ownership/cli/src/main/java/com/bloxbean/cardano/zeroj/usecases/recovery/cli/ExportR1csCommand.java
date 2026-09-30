@@ -41,8 +41,9 @@ public final class ExportR1csCommand implements Callable<Integer> {
                   snarkjs zkey contribute circuit_0000.zkey circuit_0001.zkey --name="c1" -v   (one per contributor)
                   snarkjs zkey beacon     circuit_0001.zkey circuit_final.zkey <beaconHashHex> 10
                   snarkjs zkey verify     %s <pot25_final.ptau> circuit_final.zkey
-                Then bring the finalized key back in:
-                  account-ownership-recovery-cli import --zkey circuit_final.zkey
+                Publish the finalized key's SHA-256 with the ceremony record (shasum -a 256 circuit_final.zkey).
+                Then bring the finalized key back in, pinned to that published hash:
+                  account-ownership-recovery-cli import --zkey circuit_final.zkey --sha256 <published-sha256>
                 """.formatted(f, f));
         return 0;
     }

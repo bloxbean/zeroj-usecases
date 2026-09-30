@@ -54,17 +54,17 @@ dependencies {
     annotationProcessor "org.zeroj:zeroj-circuit-annotation-processor:${zerojVersion}"
     annotationProcessor "org.zeroj:zeroj-onchain-julc:${zerojVersion}"
 
-    implementation "com.bloxbean.cardano:julc-stdlib:${julcVersion}"
-    implementation "com.bloxbean.cardano:julc-cardano-client-lib:${julcVersion}"
-    runtimeOnly "com.bloxbean.cardano:julc-vm-java:${julcVersion}"
-    annotationProcessor "com.bloxbean.cardano:julc-annotation-processor:${julcVersion}"
+    implementation "org.julclang:julc-stdlib:${julcVersion}"
+    implementation "org.julclang:julc-cardano-client-lib:${julcVersion}"
+    runtimeOnly "org.julclang:julc-vm-java:${julcVersion}"
+    annotationProcessor "org.julclang:julc-annotation-processor:${julcVersion}"
 
     implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
     implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
 
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
-    testImplementation "com.bloxbean.cardano:julc-testkit:${julcVersion}"
+    testImplementation "org.julclang:julc-testkit:${julcVersion}"
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

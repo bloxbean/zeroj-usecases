@@ -162,21 +162,27 @@ public class DppCircuitService {
     }
 
     public ProofResult proveInspections(BigInteger productId, BigInteger inspectorRoot,
+                                         BigInteger auditorSecret, BigInteger auditorHash,
                                          Map<String, List<BigInteger>> inspectionInputs) {
         var inputs = new HashMap<>(inspectionInputs);
         inputs.put("productId", List.of(productId));
         inputs.put("inspectorRoot", List.of(inspectorRoot));
+        inputs.put("auditorSecret", List.of(auditorSecret));
+        inputs.put("auditorHash", List.of(auditorHash));
         inputs.put("allPassed", List.of(BigInteger.ONE));
         return prove(inspectionChain, inputs);
     }
 
     public ProofResult proveCountryMembership(BigInteger country, BigInteger productId,
                                                 BigInteger countryRoot,
+                                                BigInteger auditorSecret, BigInteger auditorHash,
                                                 BigInteger[] siblings, BigInteger[] pathBits) {
         var inputs = new HashMap<String, List<BigInteger>>();
         inputs.put("country", List.of(country));
+        inputs.put("auditorSecret", List.of(auditorSecret));
         inputs.put("productId", List.of(productId));
         inputs.put("countryRoot", List.of(countryRoot));
+        inputs.put("auditorHash", List.of(auditorHash));
         inputs.put("isMember", List.of(BigInteger.ONE));
         for (int i = 0; i < siblings.length; i++) {
             inputs.put("sibling_" + i, List.of(siblings[i]));
@@ -197,6 +203,25 @@ public class DppCircuitService {
     public BigInteger computeAuditorHash(BigInteger auditorSecret, BigInteger productId, BigInteger measurement) {
         BigInteger claimsHash = PoseidonCompute.poseidon(productId, measurement);
         return PoseidonCompute.poseidon(auditorSecret, claimsHash);
+    }
+
+    /**
+     * The auditor's commitment to a product's inspection log, folded as in
+     * {@link com.bloxbean.cardano.zeroj.usecases.dpp.circuit.InspectionChainCircuit}:
+     * {@code log_i = Poseidon(log_{i-1}, Poseidon(Poseidon(inspectorKey_i, 0), timestamp_i))}, then
+     * {@code Poseidon(auditorSecret, Poseidon(productId, log))}.
+     */
+    public BigInteger computeInspectionLogHash(BigInteger auditorSecret, BigInteger productId,
+                                               List<BigInteger> inspectorKeys, List<BigInteger> timestamps) {
+        if (inspectorKeys.size() != timestamps.size()) {
+            throw new IllegalArgumentException("one timestamp per inspection is required");
+        }
+        BigInteger log = BigInteger.ZERO;
+        for (int i = 0; i < inspectorKeys.size(); i++) {
+            BigInteger inspectorHash = PoseidonCompute.poseidon(inspectorKeys.get(i), BigInteger.ZERO);
+            log = PoseidonCompute.poseidon(log, PoseidonCompute.poseidon(inspectorHash, timestamps.get(i)));
+        }
+        return PoseidonCompute.poseidon(auditorSecret, PoseidonCompute.poseidon(productId, log));
     }
 
     public BigInteger poseidon(BigInteger a, BigInteger b) {

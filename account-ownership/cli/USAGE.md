@@ -46,15 +46,18 @@ snarkjs groth16 setup circuit.r1cs pot25_final.ptau circuit_0000.zkey
 snarkjs zkey contribute circuit_0000.zkey circuit_0001.zkey --name="c1" -v   # one per contributor
 snarkjs zkey beacon     circuit_0001.zkey circuit_final.zkey <beaconHashHex> 10
 snarkjs zkey verify     circuit.r1cs pot25_final.ptau circuit_final.zkey
+shasum -a 256 circuit_final.zkey          # publish this hash with the ceremony record
 
-# 3. import the finalized key (pure Java — no snarkjs)
-setup-cli import --zkey circuit_final.zkey [--keys keys] [--force]
+# 3. import the finalized key (pure Java — no snarkjs), pinned to the published hash
+setup-cli import --zkey circuit_final.zkey --sha256 <published-sha256> [--keys keys] [--force]
 ```
 
 - **`export-r1cs`** (`--out circuit.r1cs`) compiles the circuit and writes the iden3 `.r1cs`, then
   prints the exact snarkjs commands to run.
-- **`import`** (`--zkey <file>`) imports a finalized ceremony key into the bundle. It checks the zkey
-  is for *this* circuit and fails early otherwise. No snarkjs needed.
+- **`import`** (`--zkey <file> --sha256 <hash>`) imports a finalized ceremony key into the bundle. It
+  refuses a zkey whose SHA-256 differs from the published `--sha256`, checks the zkey is for *this*
+  circuit, and fails early otherwise. `--allow-unpinned` skips the hash check for rehearsal
+  ceremonies you ran yourself. No snarkjs needed.
 - The `.ptau` (phase 1) is **universal — reuse** an attested BLS12-381 one (Filecoin, Zcash); you
   don't generate it. A BN254 ptau (e.g. PSE Perpetual Powers of Tau) is the wrong curve.
 - For a multi-party ceremony, each contributor runs `zkey contribute` in turn (snarkjs, or the

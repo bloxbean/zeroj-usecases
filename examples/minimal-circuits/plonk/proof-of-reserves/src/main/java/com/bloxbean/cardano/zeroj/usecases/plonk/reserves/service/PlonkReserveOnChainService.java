@@ -12,7 +12,7 @@ import com.bloxbean.cardano.client.plutus.spec.PlutusScript;
 import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
 import com.bloxbean.cardano.client.quicktx.ScriptTx;
 import com.bloxbean.cardano.client.quicktx.Tx;
-import com.bloxbean.cardano.julc.clientlib.JulcScriptLoader;
+import org.julclang.clientlib.JulcScriptLoader;
 import com.bloxbean.cardano.zeroj.usecases.plonk.reserves.onchain.ReservePlonkVerifier;
 
 import java.math.BigInteger;

@@ -11,9 +11,13 @@ import org.zeroj.cryptoblst.BlstProverBackend;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.math.BigInteger;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -52,13 +56,23 @@ class ZkeyImportIT {
         sh(dir, "zkey", "contribute", "key_0000.zkey", "key_final.zkey", "--name=c1", "-e=c1");
         sh(dir, "zkey", "verify", "circuit.r1cs", "pot_final.ptau", "key_final.zkey");
 
-        // the CLI import path (pure Java) + the circuit dimension check ImportCommand performs
+        // the coordinator publishes the finalized .zkey's SHA-256; the importer is pinned to it
+        Path zkey = dir.resolve("key_final.zkey");
+        String published = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(zkey)));
         Path keys = dir.resolve("keys");
-        var imported = ZkeyPkStoreImporter.importToPkStore(dir.resolve("key_final.zkey"), keys);
+
+        // a .zkey that does not match the published hash is refused, and nothing is written
+        String wrong = published.substring(0, 63) + (published.charAt(63) == '0' ? '1' : '0');
+        assertThrows(IOException.class, () -> ZkeyPkStoreImporter.importToPkStore(zkey, keys, wrong));
+        assertFalse(Files.exists(keys), "a rejected import must not leave a key store behind");
+
+        // the CLI import path (pure Java) + the circuit dimension check ImportCommand performs
+        var imported = ZkeyPkStoreImporter.importToPkStore(zkey, keys, published);
+        assertEquals(published, imported.sourceSha256(), "the imported bytes are the published ones");
         assertEquals(numWires, imported.numWires(), "wire count preserved through the ceremony");
         assertEquals(numPublic, imported.numPublic(), "public count preserved");
 
-        try (var loaded = Groth16PkStore.load(keys)) {
+        try (var loaded = Groth16PkStore.load(keys, imported.manifestSha256())) {
             var cs = ZkeyPkStoreImporter.snarkjsConstraints(cons, numPublic);
             Groth16ProofBLS381 proof = Groth16ProverBLS381.proveWithReaders(
                     loaded.pk(), loaded.readers(), BlstProverBackend.create(), witness, cs, numWires, loaded.domain());

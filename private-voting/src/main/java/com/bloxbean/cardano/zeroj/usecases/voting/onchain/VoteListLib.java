@@ -1,15 +1,15 @@
 package com.bloxbean.cardano.zeroj.usecases.voting.onchain;
 
-import com.bloxbean.cardano.julc.core.PlutusData;
-import com.bloxbean.cardano.julc.core.types.JulcList;
-import com.bloxbean.cardano.julc.ledger.Address;
-import com.bloxbean.cardano.julc.ledger.TxOut;
-import com.bloxbean.cardano.julc.ledger.Value;
-import com.bloxbean.cardano.julc.stdlib.Builtins;
-import com.bloxbean.cardano.julc.stdlib.annotation.OnchainLibrary;
-import com.bloxbean.cardano.julc.stdlib.lib.ByteStringLib;
-import com.bloxbean.cardano.julc.stdlib.lib.OutputLib;
-import com.bloxbean.cardano.julc.stdlib.lib.ValuesLib;
+import org.julclang.core.PlutusData;
+import org.julclang.core.types.JulcList;
+import org.julclang.ledger.Address;
+import org.julclang.ledger.TxOut;
+import org.julclang.ledger.Value;
+import org.julclang.stdlib.Builtins;
+import org.julclang.stdlib.annotation.OnchainLibrary;
+import org.julclang.stdlib.lib.ByteStringLib;
+import org.julclang.stdlib.lib.OutputLib;
+import org.julclang.stdlib.lib.ValuesLib;
 
 import java.math.BigInteger;
 

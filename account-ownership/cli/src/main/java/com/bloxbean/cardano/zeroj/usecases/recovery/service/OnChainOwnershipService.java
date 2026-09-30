@@ -16,7 +16,7 @@ import com.bloxbean.cardano.client.transaction.spec.TransactionInput;
 import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier;
 
 import static com.bloxbean.cardano.client.common.CardanoConstants.LOVELACE;
-import com.bloxbean.cardano.julc.clientlib.JulcScriptLoader;
+import org.julclang.clientlib.JulcScriptLoader;
 import org.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
 import com.bloxbean.cardano.zeroj.usecases.recovery.onchain.OwnershipProofValidator;
 

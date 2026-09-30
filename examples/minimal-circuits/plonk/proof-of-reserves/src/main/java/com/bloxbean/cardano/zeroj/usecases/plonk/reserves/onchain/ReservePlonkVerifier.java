@@ -1,10 +1,10 @@
 package com.bloxbean.cardano.zeroj.usecases.plonk.reserves.onchain;
 
-import com.bloxbean.cardano.julc.core.PlutusData;
-import com.bloxbean.cardano.julc.stdlib.Builtins;
-import com.bloxbean.cardano.julc.stdlib.annotation.Entrypoint;
-import com.bloxbean.cardano.julc.stdlib.annotation.Param;
-import com.bloxbean.cardano.julc.stdlib.annotation.SpendingValidator;
+import org.julclang.core.PlutusData;
+import org.julclang.stdlib.Builtins;
+import org.julclang.stdlib.annotation.Entrypoint;
+import org.julclang.stdlib.annotation.Param;
+import org.julclang.stdlib.annotation.SpendingValidator;
 import org.zeroj.onchain.julc.plonk.lib.PlonkBLS12381Lib;
 
 import java.math.BigInteger;
