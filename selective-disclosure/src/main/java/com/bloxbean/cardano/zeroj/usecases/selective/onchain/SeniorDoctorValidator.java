@@ -1,12 +1,13 @@
 package com.bloxbean.cardano.zeroj.usecases.selective.onchain;
 
-import com.bloxbean.cardano.julc.core.PlutusData;
-import com.bloxbean.cardano.julc.ledger.ScriptContext;
-import com.bloxbean.cardano.julc.stdlib.Builtins;
-import com.bloxbean.cardano.julc.stdlib.annotation.Entrypoint;
-import com.bloxbean.cardano.julc.stdlib.annotation.Param;
-import com.bloxbean.cardano.julc.stdlib.annotation.SpendingValidator;
-import com.bloxbean.cardano.zeroj.onchain.julc.groth16.lib.Groth16BLS12381Lib;
+import org.julclang.core.PlutusData;
+import org.julclang.core.types.JulcList;
+import org.julclang.ledger.ScriptContext;
+import org.julclang.stdlib.Builtins;
+import org.julclang.stdlib.annotation.Entrypoint;
+import org.julclang.stdlib.annotation.Param;
+import org.julclang.stdlib.annotation.SpendingValidator;
+import org.zeroj.onchain.julc.groth16.lib.Groth16BLS12381Lib;
 
 import java.math.BigInteger;
 
@@ -23,6 +24,9 @@ public class SeniorDoctorValidator {
     @Param static byte[] vkGamma;
     @Param static byte[] vkDelta;
     @Param static PlutusData vkIc;
+    @Param static BigInteger issuerPkU;
+    @Param static BigInteger issuerPkV;
+    @Param static BigInteger policyCurrentYear;
 
     record SeniorDoctorProof(byte[] piA, byte[] piB, byte[] piC,
                              byte[] pkU, byte[] pkV,
@@ -38,18 +42,20 @@ public class SeniorDoctorValidator {
         BigInteger pub2 = Builtins.byteStringToInteger(true, proof.currentYear());
         BigInteger pub3 = Builtins.byteStringToInteger(true, proof.eligible());
 
-        PlutusData publicInputs = Builtins.listData(Builtins.mkCons(
-                Builtins.iData(pub0),
-                Builtins.mkCons(
-                        Builtins.iData(pub1),
-                        Builtins.mkCons(
-                                Builtins.iData(pub2),
-                                Builtins.mkCons(
-                                        Builtins.iData(pub3),
-                                        Builtins.mkNilData())))));
+        boolean registeredIssuer = isRegisteredIssuer(pub0, pub1);
+        boolean registeredPolicy = isRegisteredPolicy(pub2);
+        PlutusData publicInputs = JulcList.of(pub0, pub1, pub2, pub3).toPlutusData();
         boolean proofValid = Groth16BLS12381Lib.verify(publicInputs,
                 proof.piA(), proof.piB(), proof.piC(),
                 vkAlpha, vkBeta, vkGamma, vkDelta, vkIc);
-        return isEligible && proofValid;
+        return registeredIssuer && registeredPolicy && isEligible && proofValid;
+    }
+
+    static boolean isRegisteredIssuer(BigInteger publicKeyU, BigInteger publicKeyV) {
+        return publicKeyU.equals(issuerPkU) && publicKeyV.equals(issuerPkV);
+    }
+
+    static boolean isRegisteredPolicy(BigInteger currentYear) {
+        return currentYear.equals(policyCurrentYear);
     }
 }

@@ -1,13 +1,13 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.cli;
 
-import com.bloxbean.cardano.zeroj.bls12381.ec.G1Point;
-import com.bloxbean.cardano.zeroj.bls12381.ec.G2Point;
-import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG1BLS381.AffineG1;
-import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG2BLS381.AffineG2;
-import com.bloxbean.cardano.zeroj.bls12381.field.Fp;
-import com.bloxbean.cardano.zeroj.bls12381.field.Fp2;
-import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
-import com.bloxbean.cardano.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
+import org.zeroj.bls12381.ec.G1Point;
+import org.zeroj.bls12381.ec.G2Point;
+import org.zeroj.bls12381.ec.JacobianG1BLS381.AffineG1;
+import org.zeroj.bls12381.ec.JacobianG2BLS381.AffineG2;
+import org.zeroj.bls12381.field.Fp;
+import org.zeroj.bls12381.field.Fp2;
+import org.zeroj.crypto.setup.Groth16SetupBLS381;
+import org.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
 import com.bloxbean.cardano.zeroj.usecases.recovery.service.ProofCompressor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;

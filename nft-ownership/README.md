@@ -41,18 +41,20 @@ sdk use java 25.0.2-graal
 
 ```bash
 cd nft-ownership
-./gradlew clean build -x test
+./gradlew clean bootJar
 ```
 
 To also rebuild the Svelte frontend:
 ```bash
-./gradlew clean build -x test -PwithFrontend
+./gradlew clean bootJar -PwithFrontend
 ```
 
 ### 2. Run
 
 ```bash
-java --enable-native-access=ALL-UNNAMED -jar build/libs/nft-ownership-0.1.0-SNAPSHOT.jar
+java --enable-native-access=ALL-UNNAMED \
+  -Dzeroj.allowInsecureTrustedSetup=true \
+  -jar build/libs/nft-ownership-*.jar
 ```
 
 Startup takes ~50 seconds:

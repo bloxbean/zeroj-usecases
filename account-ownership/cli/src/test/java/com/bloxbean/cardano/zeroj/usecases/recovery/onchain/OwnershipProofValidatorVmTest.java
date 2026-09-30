@@ -1,20 +1,20 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.onchain;
 
-import com.bloxbean.cardano.julc.core.PlutusData;
-import com.bloxbean.cardano.julc.ledger.PubKeyHash;
-import com.bloxbean.cardano.julc.ledger.TxOut;
-import com.bloxbean.cardano.julc.ledger.TxOutRef;
-import com.bloxbean.cardano.julc.ledger.Value;
-import com.bloxbean.cardano.julc.testkit.ContractTest;
-import com.bloxbean.cardano.julc.testkit.TestDataBuilder;
-import com.bloxbean.cardano.julc.vm.EvalResult;
-import com.bloxbean.cardano.zeroj.api.CurveId;
-import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
-import com.bloxbean.cardano.zeroj.onchain.julc.groth16.codec.ProverToCardano;
-import com.bloxbean.cardano.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
+import org.julclang.core.PlutusData;
+import org.julclang.ledger.PubKeyHash;
+import org.julclang.ledger.TxOut;
+import org.julclang.ledger.TxOutRef;
+import org.julclang.ledger.Value;
+import org.julclang.testkit.ContractTest;
+import org.julclang.testkit.TestDataBuilder;
+import org.julclang.vm.EvalResult;
+import org.zeroj.api.CurveId;
+import org.zeroj.circuit.CircuitBuilder;
+import org.zeroj.crypto.groth16.Groth16ProverBLS381;
+import org.zeroj.crypto.setup.Groth16SetupBLS381;
+import org.zeroj.crypto.setup.PowersOfTauBLS381;
+import org.zeroj.onchain.julc.groth16.codec.ProverToCardano;
+import org.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 

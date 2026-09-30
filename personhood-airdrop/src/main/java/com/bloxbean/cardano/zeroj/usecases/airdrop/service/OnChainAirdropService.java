@@ -12,12 +12,13 @@ import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
 import com.bloxbean.cardano.client.quicktx.ScriptTx;
 import com.bloxbean.cardano.client.transaction.spec.Asset;
 import com.bloxbean.cardano.client.util.HexUtil;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.usecases.airdrop.onchain.FaucetMintingPolicy;
-import com.bloxbean.cardano.julc.clientlib.JulcScriptLoader;
+import org.julclang.clientlib.JulcScriptLoader;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
@@ -46,6 +47,10 @@ public class OnChainAirdropService {
     private final BackendService backendService;
     private final Account adminAccount;
     private final AirdropProofService proofService;
+    private final PersonhoodIssuerService issuerService;
+
+    @Value("${faucet.current-epoch}")
+    private long currentEpoch;
 
     private PlutusScript mintingScript;
     private String policyHex;
@@ -53,10 +58,12 @@ public class OnChainAirdropService {
     private final Set<String> claimedNullifiersHex = new HashSet<>();
 
     public OnChainAirdropService(BackendService backendService, Account adminAccount,
-                                  AirdropProofService proofService) {
+                                  AirdropProofService proofService,
+                                  PersonhoodIssuerService issuerService) {
         this.backendService = backendService;
         this.adminAccount = adminAccount;
         this.proofService = proofService;
+        this.issuerService = issuerService;
     }
 
     @PostConstruct
@@ -64,13 +71,17 @@ public class OnChainAirdropService {
         if (initialized) return;
         log.info("Compiling faucet minting policy (with on-chain Groth16 verification)...");
         var vk = ProofCompressor.compressVk(proofService.getSetupResult());
+        var issuerPk = issuerService.getIssuerPublicKey();
 
         mintingScript = JulcScriptLoader.load(FaucetMintingPolicy.class,
                 new BytesPlutusData(vk.alpha()),
                 new BytesPlutusData(vk.beta()),
                 new BytesPlutusData(vk.gamma()),
                 new BytesPlutusData(vk.delta()),
-                vkIcData(vk.ic()));
+                vkIcData(vk.ic()),
+                BigIntPlutusData.of(issuerPk.affineU()),
+                BigIntPlutusData.of(issuerPk.affineV()),
+                BigIntPlutusData.of(BigInteger.valueOf(currentEpoch)));
 
         policyHex = HexUtil.encodeHexString(mintingScript.getScriptHash());
         initialized = true;

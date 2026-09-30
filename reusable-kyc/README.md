@@ -112,9 +112,10 @@ and spends it with the presentation — **the ledger verifies the BBS proof nati
 well within the per-tx budget) and the refund is paid to the recipient. The test prints the validator
 address and the claim tx hash.
 
-> **ExUnits note:** let the node evaluate the script (the service default). The local Julc VM's cost
-> model under-estimates the ledger's by a few thousand steps on a script this size, which the ledger
-> rejects as an overspend.
+> **ExUnits note:** the service evaluates the claim transaction with the local Julc VM by default.
+> It adds a 25% safety margin (and at least 50,000 memory units) to absorb the small cost-model drift
+> previously observed between Julc and the ledger. Pass `evaluateLocally=false` to
+> `OnChainKycClaimService` to delegate evaluation to the backend/node instead.
 
 ---
 

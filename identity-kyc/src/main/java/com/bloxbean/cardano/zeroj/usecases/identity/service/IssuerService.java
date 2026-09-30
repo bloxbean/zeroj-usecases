@@ -1,8 +1,9 @@
 package com.bloxbean.cardano.zeroj.usecases.identity.service;
 
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.EdDSAJubjub;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.JubjubCurve;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.JubjubPoint;
+import org.zeroj.circuit.lib.jubjub.EdDSAJubjub;
+import org.zeroj.circuit.lib.jubjub.JubjubCurve;
+import org.zeroj.circuit.lib.jubjub.JubjubMessage;
+import org.zeroj.circuit.lib.jubjub.JubjubPoint;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -141,7 +142,8 @@ public class IssuerService {
         BigInteger ageBig = BigInteger.valueOf(age);
         BigInteger countryBig = BigInteger.valueOf(countryCode);
         BigInteger claimsMsg = credentialService.computePoseidon(ageBig, countryBig);
-        EdDSAJubjub.Signature sig = EdDSAJubjub.sign(issuerKeypair.sk(), claimsMsg);
+        EdDSAJubjub.Signature sig = EdDSAJubjub.signCompatibilityOffline(
+                issuerKeypair, canonicalMessage(claimsMsg));
 
         users.add(new UserCredential(name, age, countryCode, sig));
         return sig;
@@ -174,6 +176,18 @@ public class IssuerService {
     }
     public boolean isCountryApproved(int countryCode) {
         return approvedCountries.contains(countryCode);
+    }
+
+    private static JubjubMessage canonicalMessage(BigInteger fieldElement) {
+        byte[] raw = fieldElement.toByteArray();
+        int sourceOffset = raw.length == JubjubMessage.CANONICAL_BYTES + 1 && raw[0] == 0 ? 1 : 0;
+        int length = raw.length - sourceOffset;
+        if (fieldElement.signum() < 0 || length > JubjubMessage.CANONICAL_BYTES) {
+            throw new IllegalArgumentException("claims message is not a canonical Jubjub field element");
+        }
+        byte[] canonical = new byte[JubjubMessage.CANONICAL_BYTES];
+        System.arraycopy(raw, sourceOffset, canonical, canonical.length - length, length);
+        return JubjubMessage.fromCanonicalFieldBytes(canonical);
     }
 
     /**

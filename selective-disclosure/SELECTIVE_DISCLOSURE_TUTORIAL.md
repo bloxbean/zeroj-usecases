@@ -75,7 +75,9 @@ JubjubPoint pk = JubjubPoint.SUBGROUP_GENERATOR.scalarMul(sk);
 
 ```java
 BigInteger msg = Poseidon(dobYear, country, roleId, salaryBracket, nameHash);
-EdDSAJubjub.Signature sig = EdDSAJubjub.sign(sk, msg);
+JubjubMessage typed = JubjubMessage.fromCanonicalFieldBytes(BE32(msg));
+EdDSAJubjub.Signature sig =
+        EdDSAJubjub.signCompatibilityOffline(keypair, typed);
 // Deliver (full credential, sig) privately to the holder
 ```
 
@@ -88,7 +90,8 @@ secret:  (full credential), sigRU, sigRV, sigS, kModL, kQuotient,
 
 circuit:
     claimsMsg = Poseidon(dobYear, country, roleId, salaryBracket, nameHash)
-    EdDSA-Jubjub verify(pk, claimsMsg, sigR, sigS)
+    ZkEdDSAJubjub.verifyWithRegisteredKey(
+        pkU, pkV, claimsMsg, sigRU, sigRV, sigS, kModL, kQuotient)
     assert dobYear <= currentYear - 21
     merkleProof(country, countryRoot, siblings, pathBits)
     eligible = 1
@@ -102,7 +105,8 @@ secret:  (full credential), sigRU, sigRV, sigS, kModL, kQuotient
 
 circuit:
     claimsMsg = Poseidon(dobYear, country, roleId, salaryBracket, nameHash)
-    EdDSA-Jubjub verify(pk, claimsMsg, sigR, sigS)
+    ZkEdDSAJubjub.verifyWithRegisteredKey(
+        pkU, pkV, claimsMsg, sigRU, sigRV, sigS, kModL, kQuotient)
     assert roleId == 1001            // Doctor role ID
     assert dobYear <= currentYear - 30
     eligible = 1
@@ -178,9 +182,14 @@ cd zeroj-usecases/selective-disclosure
 ./gradlew bootRun
 ```
 
-First boot runs Powers of Tau (~8 min at power 16) **once**, then two
-Phase-2 setup ceremonies (~4 min each). Subsequent boots load both
-cached setups from `./data/` in <1s.
+First boot runs a development-only Powers of Tau once, followed by one
+Phase-2 setup per circuit. Timings are machine-dependent. Subsequent
+boots load setups whose filenames are keyed by SHA-256 of each complete
+serialized R1CS; a changed relation cannot accidentally reuse a cached
+setup merely because its dimensions stayed the same. The current circuits
+have 12,109 constraints (Adult Resident) and 11,137 constraints (Senior
+Doctor), so the development configuration uses a power-14 SRS; a capacity
+regression test prevents either circuit from silently outgrowing it.
 
 ### Minimal demo script
 
@@ -227,7 +236,7 @@ Or open <http://localhost:8085> for the UI.
 | Holder reveals *only* the predicate's truth value | All credential fields are `privateInput`; only `eligible` is public |
 | Same credential → many predicates | `claimsMessage = Poseidon(dobYear, country, roleId, salaryBracket, nameHash)` is common; only the constraint shape differs |
 | No linkability across DApps | Two unrelated Groth16 proofs, distinct vks — no shared nonce or tag |
-| Approved-country set is upgradeable | Merkle tree of approved country codes; the issuer publishes a new root without re-issuing credentials |
+| Approved-country policy is explicit | Merkle tree of approved country codes; the validator pins the accepted root as a script parameter |
 | On-chain verification is cheap | Groth16: 3 pairings, independent of circuit size |
 
 ## 7. What this does NOT yet defend against
@@ -248,6 +257,13 @@ Or open <http://localhost:8085> for the UI.
   link the two without additional metadata, but anything that *does*
   correlate (e.g. same recipient address paying fees) would leak.
   Production would use fresh per-tx recipient addresses.
+- **Issuer signing scope**: the seeded credentials use
+  `signCompatibilityOffline` during application startup. This is an
+  isolated/demo issuance path, not a network-reachable signing service.
+- **Policy upgrades redeploy scripts**: issuer key, `currentYear`, and
+  (for Adult Resident) `countryRoot` are validator parameters. Updating
+  any of them changes the script address; this is intentional so a caller
+  cannot select weaker public inputs.
 
 ## 8. Where to go next
 

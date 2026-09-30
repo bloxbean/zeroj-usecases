@@ -1,20 +1,22 @@
 package com.bloxbean.cardano.zeroj.usecases.airdrop.service;
 
-import com.bloxbean.cardano.zeroj.api.CurveId;
-import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
-import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.EdDSAJubjub;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.InCircuitEdDSAJubjub;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.JubjubCurve;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.JubjubPoint;
-import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash;
-import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
-import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupCache;
-import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
+import org.zeroj.api.CurveId;
+import org.zeroj.api.R1CSConstraint;
+import org.zeroj.circuit.CircuitBuilder;
+import org.zeroj.circuit.lib.jubjub.EdDSAJubjub;
+import org.zeroj.circuit.lib.jubjub.InCircuitEdDSAJubjub;
+import org.zeroj.circuit.lib.jubjub.JubjubCurve;
+import org.zeroj.circuit.lib.jubjub.JubjubPoint;
+import org.zeroj.circuit.lib.poseidon.PoseidonHash;
+import org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
+import org.zeroj.circuit.r1cs.R1CSConstraintSystem;
+import org.zeroj.circuit.r1cs.R1CSSerializer;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
+import org.zeroj.crypto.groth16.Groth16ProvingKeyBLS381;
+import org.zeroj.crypto.groth16.Groth16ProverBLS381;
+import org.zeroj.crypto.setup.Groth16SetupBLS381;
+import org.zeroj.crypto.setup.Groth16SetupCache;
+import org.zeroj.crypto.setup.PowersOfTauBLS381;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import com.bloxbean.cardano.zeroj.usecases.airdrop.circuit.PersonhoodAirdropProofCircuit;
@@ -25,7 +27,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -62,7 +67,9 @@ public class AirdropProofService {
 
     private Groth16SetupBLS381.SetupResult loadOrRunSetup() {
         Path cacheDir = Path.of("./data");
-        Path setupCache = cacheDir.resolve("setup-airdrop.bin");
+        String circuitDigest = circuitDigest(r1cs);
+        Path setupCache = cacheDir.resolve("setup-airdrop-" + circuitDigest + ".bin");
+        log.info("Circuit setup-cache key: {}...", circuitDigest.substring(0, 16));
         try { Files.createDirectories(cacheDir); } catch (Exception ignore) {}
 
         // Setup
@@ -93,10 +100,24 @@ public class AirdropProofService {
     private boolean matchesCurrentCircuit(Groth16SetupBLS381.SetupResult setup) {
         var pk = setup.provingKey();
         return pk.numPublic() == r1cs.numPublicInputs()
-                && pk.pointsA().length == r1cs.numWires();
+                && Groth16ProvingKeyBLS381.count(pk.pointsA()) == r1cs.numWires();
     }
 
-    private com.bloxbean.cardano.zeroj.crypto.plonk.PtauImporterBLS381.SRS generateDevSrs() {
+    /**
+     * Keys Phase-2 material by the complete circuit relation, not only its dimensions.
+     * Two circuits can have identical row/wire counts while imposing different constraints.
+     */
+    private static String circuitDigest(R1CSConstraintSystem system) {
+        try {
+            byte[] serialized = R1CSSerializer.serialize(system);
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(serialized);
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required but unavailable", e);
+        }
+    }
+
+    private org.zeroj.crypto.plonk.PtauImporterBLS381.SRS generateDevSrs() {
         log.info("Running in-memory dev Powers of Tau (power={})...", potPower);
         return PowersOfTauBLS381.generate(potPower);
     }
@@ -136,7 +157,6 @@ public class AirdropProofService {
         BigInteger[] witness = circuit.calculateWitness(inputs, CurveId.BLS12_381);
         var proof = Groth16ProverBLS381.prove(setupResult.provingKey(), witness,
                 constraints, r1cs.numWires());
-
         return new ClaimProof(proof, nullifier);
     }
 

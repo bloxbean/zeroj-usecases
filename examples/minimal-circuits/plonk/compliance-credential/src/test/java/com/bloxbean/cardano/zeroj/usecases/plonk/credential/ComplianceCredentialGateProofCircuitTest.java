@@ -1,6 +1,6 @@
 package com.bloxbean.cardano.zeroj.usecases.plonk.credential;
 
-import com.bloxbean.cardano.zeroj.api.CurveId;
+import org.zeroj.api.CurveId;
 import com.bloxbean.cardano.zeroj.usecases.plonk.credential.circuit.ComplianceCredentialGateProofCircuit;
 import org.junit.jupiter.api.Test;
 

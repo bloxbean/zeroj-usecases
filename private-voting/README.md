@@ -33,7 +33,7 @@ sdk use java 25.0.2-graal
 
 # 3. Build
 cd private-voting
-./gradlew clean build -x test
+./gradlew clean bootJar
 
 # 4. Top up admin wallet
 curl -X POST http://localhost:10000/local-cluster/api/addresses/topup \
@@ -41,7 +41,9 @@ curl -X POST http://localhost:10000/local-cluster/api/addresses/topup \
   -d '{"address":"addr_test1qryvgass5dsrf2kxl3vgfz76uhp83kv5lagzcp29tcana68ca5aqa6swlq6llfamln09tal7n5kvt4275ckwedpt4v7q48uhex","adaAmount":10000}'
 
 # 5. Run
-java --enable-native-access=ALL-UNNAMED -jar build/libs/private-voting-0.1.0-SNAPSHOT.jar
+java --enable-native-access=ALL-UNNAMED \
+  -Dzeroj.allowInsecureTrustedSetup=true \
+  -jar build/libs/private-voting-*.jar
 ```
 
 Startup takes ~55 seconds (circuit compilation + trusted setup + voter account creation).

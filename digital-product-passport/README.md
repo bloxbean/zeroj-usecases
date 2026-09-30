@@ -31,8 +31,10 @@ curl -X POST http://localhost:10000/local-cluster/api/addresses/topup \
   -H "Content-Type: application/json" \
   -d '{"address":"addr_test1qryvgass5dsrf2kxl3vgfz76uhp83kv5lagzcp29tcana68ca5aqa6swlq6llfamln09tal7n5kvt4275ckwedpt4v7q48uhex","adaAmount":10000}'
 
-./gradlew clean build -x test
-java --enable-native-access=ALL-UNNAMED -jar build/libs/digital-product-passport-0.1.0-SNAPSHOT.jar
+./gradlew clean bootJar
+java --enable-native-access=ALL-UNNAMED \
+  -Dzeroj.allowInsecureTrustedSetup=true \
+  -jar build/libs/digital-product-passport-*.jar
 ```
 
 Open **http://localhost:8088**
@@ -64,7 +66,7 @@ Open **http://localhost:8088**
 
 ## Key Innovation: Poseidon MPF
 
-This demo uses CCL's Merkle Patricia Forestry (0.8.0-pre4) with a **custom PoseidonCommitmentScheme** — replacing Blake2b-256 with Poseidon hash. This makes the MPF root ZK-circuit-verifiable while maintaining all MPF benefits: persistent RocksDB storage, add/remove products, scales to millions.
+This demo uses CCL's Merkle Patricia Forestry (`0.8.0-pre5-dev1`) with a **custom PoseidonCommitmentScheme** — replacing Blake2b-256 with Poseidon hash. This makes the MPF root ZK-circuit-verifiable while maintaining all MPF benefits: persistent RocksDB storage, add/remove products, scales to millions.
 
 See [`docs/mpf-architecture.md`](docs/mpf-architecture.md) for the full technical design.
 
@@ -77,7 +79,7 @@ See [`docs/mpf-architecture.md`](docs/mpf-architecture.md) for the full technica
 | On-chain | Julc → Plutus V3 spending validator |
 | Backend | Spring Boot 3.5.0-M3 |
 | Frontend | Svelte 5 + Vite |
-| Cardano client | cardano-client-lib 0.8.0-pre4-SNAPSHOT |
+| Cardano client | cardano-client-lib 0.8.0-pre5-dev1 |
 
 ## ZK Circuits
 

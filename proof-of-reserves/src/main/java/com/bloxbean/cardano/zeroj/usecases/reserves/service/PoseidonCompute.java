@@ -1,8 +1,8 @@
 package com.bloxbean.cardano.zeroj.usecases.reserves.service;
 
-import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash;
-import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParams;
-import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
+import org.zeroj.circuit.lib.poseidon.PoseidonHash;
+import org.zeroj.circuit.lib.poseidon.PoseidonParams;
+import org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 
 import java.math.BigInteger;
 import java.util.concurrent.ConcurrentHashMap;

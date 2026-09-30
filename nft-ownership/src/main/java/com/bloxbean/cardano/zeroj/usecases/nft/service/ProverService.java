@@ -1,18 +1,18 @@
 package com.bloxbean.cardano.zeroj.usecases.nft.service;
 
-import com.bloxbean.cardano.zeroj.api.CurveId;
-import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
-import com.bloxbean.cardano.zeroj.bls12381.ec.G1Point;
-import com.bloxbean.cardano.zeroj.bls12381.ec.G2Point;
-import com.bloxbean.cardano.zeroj.bls12381.field.Fp;
-import com.bloxbean.cardano.zeroj.bls12381.field.Fp2;
-import com.bloxbean.cardano.zeroj.bls12381.pairing.BLS12381Pairing;
-import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
-import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProverBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.PowersOfTauBLS381;
+import org.zeroj.api.CurveId;
+import org.zeroj.api.R1CSConstraint;
+import org.zeroj.bls12381.ec.G1Point;
+import org.zeroj.bls12381.ec.G2Point;
+import org.zeroj.bls12381.field.Fp;
+import org.zeroj.bls12381.field.Fp2;
+import org.zeroj.bls12381.pairing.BLS12381Pairing;
+import org.zeroj.circuit.CircuitBuilder;
+import org.zeroj.circuit.r1cs.R1CSConstraintSystem;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
+import org.zeroj.crypto.groth16.Groth16ProverBLS381;
+import org.zeroj.crypto.setup.Groth16SetupBLS381;
+import org.zeroj.crypto.setup.PowersOfTauBLS381;
 import com.bloxbean.cardano.zeroj.usecases.nft.circuit.NFTOwnershipProofCircuit;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -175,23 +175,23 @@ public class ProverService {
     /**
      * Compute Poseidon(a, b) over BLS12-381 using the standards-compatible preset.
      * Results are cached for performance. After ADR-0015, this delegates to
-     * {@link com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash} —
+     * {@link org.zeroj.circuit.lib.poseidon.PoseidonHash} —
      * no more reflection into {@code PoseidonConstants}.
      */
     private BigInteger computePoseidon(BigInteger a, BigInteger b) {
         String key = a.toString(16) + ":" + b.toString(16);
         return poseidonCache.computeIfAbsent(key, k ->
-                com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
-                        com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
+                org.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
+                        org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
                         a, b));
     }
 
-    private static G1Point toG1(com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG1BLS381.AffineG1 p) {
+    private static G1Point toG1(org.zeroj.bls12381.ec.JacobianG1BLS381.AffineG1 p) {
         if (p.isInfinity()) return G1Point.INFINITY;
         return new G1Point(Fp.of(p.xBigInt()), Fp.of(p.yBigInt()));
     }
 
-    private static G2Point toG2(com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG2BLS381.AffineG2 p) {
+    private static G2Point toG2(org.zeroj.bls12381.ec.JacobianG2BLS381.AffineG2 p) {
         if (p.isInfinity()) return G2Point.INFINITY;
         return new G2Point(
                 Fp2.of(Fp.of(p.x().reBigInt()), Fp.of(p.x().imBigInt())),

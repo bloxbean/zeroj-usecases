@@ -11,8 +11,8 @@ import com.bloxbean.cardano.client.plutus.spec.*;
 import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
 import com.bloxbean.cardano.client.quicktx.ScriptTx;
 import com.bloxbean.cardano.client.quicktx.Tx;
-import com.bloxbean.cardano.julc.clientlib.JulcScriptLoader;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
+import org.julclang.clientlib.JulcScriptLoader;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
 import com.bloxbean.cardano.zeroj.usecases.selective.onchain.AdultResidentValidator;
 import com.bloxbean.cardano.zeroj.usecases.selective.onchain.SeniorDoctorValidator;
 import jakarta.annotation.PostConstruct;
@@ -36,6 +36,7 @@ public class OnChainGateService {
     private final BackendService backendService;
     private final Account adminAccount;
     private final PredicateProofService proofService;
+    private final RichCredentialIssuerService issuerService;
 
     private PlutusScript adultScript;
     private String adultScriptAddr;
@@ -44,15 +45,19 @@ public class OnChainGateService {
     private boolean initialized;
 
     public OnChainGateService(BackendService backendService, Account adminAccount,
-                              PredicateProofService proofService) {
+                              PredicateProofService proofService,
+                              RichCredentialIssuerService issuerService) {
         this.backendService = backendService;
         this.adminAccount = adminAccount;
         this.proofService = proofService;
+        this.issuerService = issuerService;
     }
 
     @PostConstruct
     public synchronized void initialize() throws Exception {
         if (initialized) return;
+        var issuerPk = issuerService.issuerPk();
+        var currentYear = BigInteger.valueOf(proofService.currentYear());
         log.info("Compiling Adult-Resident validator...");
         var arVk = ProofCompressor.compressVk(proofService.adultResident().setup());
         adultScript = JulcScriptLoader.load(AdultResidentValidator.class,
@@ -60,7 +65,11 @@ public class OnChainGateService {
                 new BytesPlutusData(arVk.beta()),
                 new BytesPlutusData(arVk.gamma()),
                 new BytesPlutusData(arVk.delta()),
-                vkIcData(arVk.ic()));
+                vkIcData(arVk.ic()),
+                BigIntPlutusData.of(issuerPk.affineU()),
+                BigIntPlutusData.of(issuerPk.affineV()),
+                BigIntPlutusData.of(currentYear),
+                BigIntPlutusData.of(issuerService.countryRoot()));
         adultScriptAddr = AddressProvider.getEntAddress(adultScript, Networks.testnet()).toBech32();
         log.info("Adult-Resident gate: {}", adultScriptAddr.substring(0, 32) + "...");
 
@@ -71,7 +80,10 @@ public class OnChainGateService {
                 new BytesPlutusData(sdVk.beta()),
                 new BytesPlutusData(sdVk.gamma()),
                 new BytesPlutusData(sdVk.delta()),
-                vkIcData(sdVk.ic()));
+                vkIcData(sdVk.ic()),
+                BigIntPlutusData.of(issuerPk.affineU()),
+                BigIntPlutusData.of(issuerPk.affineV()),
+                BigIntPlutusData.of(currentYear));
         doctorScriptAddr = AddressProvider.getEntAddress(doctorScript, Networks.testnet()).toBech32();
         log.info("Senior-Doctor gate: {}", doctorScriptAddr.substring(0, 32) + "...");
 

@@ -13,7 +13,9 @@ cardano:
     mnemonic: "test test test test test test test test test test test test test test test test test test test test test test test sauce"
 
 zk:
-  pot-power: 16
+  # Both predicate circuits are below 2^14 constraints. Raise this if the
+  # capacity regression test reports that a future circuit revision outgrows it.
+  pot-power: 14
 
 credential:
   current-year: 2026

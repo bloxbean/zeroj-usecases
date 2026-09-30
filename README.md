@@ -101,7 +101,7 @@ For the Docker demo path:
 - Yaci DevKit running on the host
 
 Docker demos use the released ZeroJ version configured by `ZEROJ_VERSION`
-(`0.1.0-pre7` by default). A sibling ZeroJ checkout is optional and only needed
+(`0.1.0-pre12` by default). A sibling ZeroJ checkout is optional and only needed
 when you explicitly opt into publishing a local ZeroJ build during Docker image
 builds.
 
@@ -185,13 +185,17 @@ Use this when you want to develop a module locally:
 
 ```bash
 cd proof-of-reserves
-./gradlew clean build -x test
-java --enable-native-access=ALL-UNNAMED -jar build/libs/proof-of-reserves-0.1.0-SNAPSHOT.jar
+./gradlew clean bootJar
+java --enable-native-access=ALL-UNNAMED \
+  -Dzeroj.allowInsecureTrustedSetup=true \
+  -jar build/libs/proof-of-reserves-*.jar
 ```
 
 The same pattern works for every top-level Spring Boot module. Some modules
 take several minutes on first boot because they generate or validate
-development trusted setup artifacts.
+development trusted setup artifacts. The system property explicitly permits
+the single-party development setup used by these demos; do not enable it for
+production setup material.
 
 ## Minimal Circuit Examples
 
@@ -259,8 +263,13 @@ cd ../zeroj
 ./gradlew publishToMavenLocal
 
 cd ../zeroj-usecases
-gradle buildAllUsecasesNoTests -PzerojVersion=0.1.0-pre7
+gradle buildAllUsecasesNoTests -PzerojVersion=<local-zeroj-version>
 ```
+
+`<local-zeroj-version>` is the version the ZeroJ build published (a `-SNAPSHOT` version is
+published as `<version>-<commit>-SNAPSHOT`). Every build resolves `mavenLocal()` first, so a
+local publish of a released version number shadows the Maven Central artifact until it is
+removed from `~/.m2/repository/org/zeroj`.
 
 For Docker builds, use `PUBLISH_LOCAL_ZEROJ=true` and point
 `ZEROJ_SOURCE_CONTEXT` at the local checkout as shown in the Docker section.

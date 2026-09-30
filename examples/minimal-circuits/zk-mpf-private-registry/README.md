@@ -2,9 +2,8 @@
 
 This minimal circuit example shows how to build and test a private membership circuit for a
 Cardano Client Lib MPF registry using ZeroJ symbolic annotations. It is a
-witness-level demo: it builds the registry, derives MPF witness arrays, and
-evaluates the BLS12-381 circuit. A practical Groth16 proof/Yaci flow for MPF is
-deferred until the MPF circuit cost is reduced.
+witness-level demo: it builds the registry, strictly verifies and normalizes a
+CCL inclusion proof, and evaluates the operation-specific BLS12-381 circuit.
 
 The public verifier sees only:
 
@@ -22,8 +21,8 @@ MPF verifier. This project uses the separate ZeroJ Poseidon MPF profile:
 ```text
 CCL MpfTrie + ZeroJ Poseidon HashFunction
   -> CCL wire proof
-  -> PoseidonMpfCodec witness arrays
-  -> @ZKCircuit symbolic MPF verifier
+  -> PoseidonMpfBranchWitness.inclusion(...)
+  -> @ZKCircuit + ZkMpfInclusion
   -> BLS12-381 circuit witness
 ```
 
@@ -31,7 +30,8 @@ The two roots are not interchangeable.
 
 ## Project Structure
 
-- `PrivateRegistryMembership.java`: annotated circuit using `ZkMpf`.
+- `PrivateRegistryMembership.java`: annotated branch-inclusion circuit using
+  `ZkMpfInclusion` and `ZkMpfBranchProof`.
 - `PrivateRegistryDemo.java`: builds a CCL MPF registry, creates witness inputs,
   and calculates a BLS12-381 circuit witness.
 - `PrivateRegistryMembershipCircuitTest.java`: verifies valid and invalid
@@ -67,22 +67,18 @@ cd examples/minimal-circuits/zk-mpf-private-registry
 1. Build a Poseidon-rooted CCL MPF registry:
 
 ```java
-MpfTrie registry = PoseidonMpfTrie.inMemory();
+PoseidonMpfTrie registry = PoseidonMpfTrie.inMemory();
 registry.put(memberKey, memberValue);
 registry.put(otherKey, otherValue);
 ```
 
-2. Generate the CCL wire proof and convert it to symbolic witness arrays:
+2. Generate the CCL wire proof and strictly normalize it to the fixed S8 branch
+   witness profile:
 
 ```java
 byte[] proof = registry.getProofWire(memberKey).orElseThrow();
-int maxSteps = Math.max(1, PoseidonMpfCodec.decode(proof).size());
-
-PoseidonMpfWitness witness = PoseidonMpfCodec.toWitness(
-        memberKey,
-        proof,
-        maxSteps,
-        2);
+PoseidonMpfBranchWitness witness = PoseidonMpfBranchWitness.inclusion(
+        registry.getRootHash(), memberKey, memberValue, proof, 8);
 ```
 
 3. Build the public inputs:
@@ -111,7 +107,7 @@ witness.putInto(inputs);
 5. Build and evaluate the generated annotated circuit:
 
 ```java
-var circuit = PrivateRegistryMembershipCircuit.build(maxSteps, 2);
+var circuit = PrivateRegistryMembershipCircuit.build(8);
 circuit.calculateWitness(inputs.toWitnessMap(), CurveId.BLS12_381);
 ```
 
@@ -120,7 +116,15 @@ circuit.calculateWitness(inputs.toWitnessMap(), CurveId.BLS12_381);
    The validator should also enforce application-specific state rules such as
    the accepted registry root and one-time nullifier use.
 
-This project intentionally stops at witness evaluation. The existing ZeroJ
-Groth16/Yaci examples show the proof submission pattern, but applying it to MPF
-should wait until the MPF circuit is optimized enough for practical proving and
-transaction costs.
+This project intentionally stops at witness evaluation. ZeroJ's current S8
+operation-specific inclusion profile has 50,768 constraints and measured about
+4.0 seconds for local Groth16 proof generation; S9 covered every inclusion path
+in the retained five-million-entry reference MPF and measured about 4.2 seconds.
+Those are benchmark—not production ceremony—keys. The ZeroJ Groth16 artifact and
+Julc examples show the proof-submission pattern; deployment must additionally
+bind the accepted root/nullifier policy and use audited ceremony output.
+
+The circuit bound is a deployment profile, not a per-proof choice: a proving
+and verification key is tied to the exact circuit. S8 is used here for a stable
+example. Select a bound from a complete depth census of the application dataset;
+reject proofs beyond that bound before proving.

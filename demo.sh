@@ -8,15 +8,15 @@ usage() {
   cat <<'EOF'
 Usage: ./demo.sh <usecase> [--run] [--clean-cache] [--stop] [--no-open] [--logs]
 
-Usecases:
-  proof-of-reserves
-  identity-kyc
-  nft-ownership
-  voting
-  airdrop
-  dpp
-  selective-disclosure
-  reusable-kyc
+Usecases (canonical name, optional aliases, and default UI port):
+  proof-of-reserves                              8089
+  identity-kyc              (identity)           8087
+  nft-ownership             (nft)                8085
+  private-voting            (voting)             8086
+  personhood-airdrop        (airdrop)            8083
+  digital-product-passport  (dpp)                8088
+  selective-disclosure      (selective)          8091
+  reusable-kyc              (kyc)                8092
 
 Options:
   --run          Run the happy-path curl flow after the UI is healthy.
@@ -28,9 +28,10 @@ Options:
 Examples:
   # Default provider is external Yaci DevKit on localhost:8080/10000.
   yaci-cli devkit start
-  ./demo.sh voting
-  ./demo.sh airdrop --run
+  ./demo.sh private-voting
+  ./demo.sh personhood-airdrop --run
   ./demo.sh identity-kyc --run
+  ./demo.sh reusable-kyc --run
   ./demo.sh proof-of-reserves --stop
 
   # Public Blockfrost-compatible endpoint. Fund DEMO_WALLET_MNEMONIC manually.

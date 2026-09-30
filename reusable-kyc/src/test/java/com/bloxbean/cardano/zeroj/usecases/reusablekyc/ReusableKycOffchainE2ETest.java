@@ -1,6 +1,6 @@
 package com.bloxbean.cardano.zeroj.usecases.reusablekyc;
 
-import com.bloxbean.cardano.zeroj.bbs.BbsPresentation;
+import org.zeroj.bbs.BbsPresentation;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.credential.KycCredential;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.credential.SignedCredential;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.service.HolderService;

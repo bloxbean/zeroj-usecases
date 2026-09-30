@@ -1,8 +1,8 @@
 # Identity KYC with EdDSA-Jubjub — Tutorial
 
 This demo shows how to build a **privacy-preserving KYC credential system**
-on Cardano using ZK-SNARKs, with asymmetric EdDSA-Jubjub signatures (per
-ADR-0016). A holder proves they hold an issuer-signed credential that
+on Cardano using ZK-SNARKs, with asymmetric EdDSA-Jubjub signatures. A
+holder proves they hold an issuer-signed credential that
 satisfies policy rules (age ≥ minAge, country ∈ approved set) — without
 revealing age, country, or the signature itself.
 
@@ -18,7 +18,8 @@ Now the credential is a genuine digital signature: the issuer holds a
 credential with EdDSA:
 
 ```
-signature = EdDSAJubjub.sign(sk, Poseidon(age, country))
+message   = JubjubMessage.fromCanonicalFieldBytes(BE32(Poseidon(age, country)))
+signature = EdDSAJubjub.signCompatibilityOffline(keypair, message)
 ```
 
 The holder gets `(age, country, signature)`. The secret `sk` never leaves
@@ -58,12 +59,17 @@ pk    = [sk] · G                   // Jubjub subgroup generator
 
 for each (name, age, country):
     msg = Poseidon(age, country)    // BLS12-381 scalar field element
-    sig = EdDSA.sign(sk, msg)       // (R, S)
+    typedMsg = JubjubMessage.fromCanonicalFieldBytes(BE32(msg))
+    sig = EdDSAJubjub.signCompatibilityOffline(keypair, typedMsg) // (R, S)
     persist { name: (age, country, sig) }
 ```
 
 Published: `pk` (two 32-byte field elements).  
 Kept secret: `sk`.
+
+`signCompatibilityOffline` is deliberate: this application issues fixed
+demo fixtures during startup. It is not approval for a network-reachable
+Java signing endpoint.
 
 ### 3.2 Proof generation (by the holder)
 
@@ -74,7 +80,8 @@ input  (secret):  age, country, sig.R.u, sig.R.v, sig.S,
 
 circuit:
     claimsMsg = Poseidon(age, country)
-    InCircuitEdDSAJubjub.verify(pk, claimsMsg, sig.R, sig.S, kModL, kQuotient)
+    ZkEdDSAJubjub.verifyWithRegisteredKey(
+        pkU, pkV, claimsMsg, sigRU, sigRV, sigS, kModL, kQuotient)
     ageOk     = (age >= minAge)            // 8-bit unsigned compare
     assertMerkleInclusion(country, countryRoot)  // Poseidon tree
     assert eligible == ageOk
@@ -87,9 +94,11 @@ public inputs.
 ### 3.3 On-chain verification
 
 The Plutus V3 validator (`CredentialGatedValidator`) is parameterized with
-the Groth16 verifying key (vk.alpha, beta, gamma, delta, IC[0..5]). At
-unlock time it accepts the proof + public inputs as a redeemer and runs the
-pairing check. If valid AND `eligible == 1`, the script releases the funds.
+the Groth16 verifying key, the registered issuer's two Jubjub coordinates,
+the minimum age, and the approved-country root. At unlock time it accepts
+the proof + public inputs as a redeemer and runs the pairing check. It
+releases funds only if the proof is valid, `eligible == 1`, and all four
+registered policy values match.
 
 ## 4. API endpoints
 
@@ -165,8 +174,9 @@ cd zeroj-usecases/identity-kyc
 ./gradlew bootRun
 ```
 
-Startup takes 3–5 minutes the first time (Powers of Tau + Groth16 setup
-for the credential circuit). Subsequent starts use the cache under `./data`.
+Startup time is machine-dependent. The application compiles the
+11,258-constraint circuit and performs a fresh development-only Powers of
+Tau and Groth16 Phase-2 setup on every start.
 
 ### Quick demo
 ```
@@ -217,3 +227,16 @@ the values are.
   envelope so wallets can present credentials.
 - **Bridge to Atala PRISM DID**: issuers publish pk via DID documents; the
   circuit becomes interoperable with the broader Cardano identity stack.
+
+## 8. Security and deployment scope
+
+- The circuit uses `verifyWithRegisteredKey`; the Plutus script supplies
+  the required protocol-level key registry by pinning both issuer
+  coordinates as parameters.
+- The script also pins `minAge` and `countryRoot`. Treating them only as
+  public proof inputs would let a caller choose a weaker policy.
+- The seeded issuer key and single-party trusted setup are demo material.
+  Production requires protected key provisioning, reviewed ceremony
+  material, and external review of the complete protocol.
+- The compatibility signer is suitable for isolated/demo issuance, not a
+  network timing oracle.

@@ -47,6 +47,10 @@ Two consequences follow directly:
 
 ## Decision
 
+> Dependency update (2026-08-03): the repository-wide CCL baseline is now
+> `0.8.0-pre5-dev1`. The `0.8.0-pre4` value below records the original ADR decision and is
+> superseded by the shared version configuration.
+
 ### 1. Standalone application, self-contained by construction
 
 A new independent gradle project at `zeroj-usecases/account-ownership-recovery-cli/`:
@@ -187,3 +191,29 @@ simplified out in favor of the external-ceremony `export-r1cs`/`import` seam abo
 - ZeroJ ADR-0029 (prover performance: mmap'd key store, multi-core blst prover — the numbers above)
 - ZeroJ ADR-0031 (MPC trusted-setup ceremony: r1cs export, streaming zkey import, native contributor, phase-1 source analysis)
 - ZeroJ `docs/account-ownership-why-zk.md` (why root-key knowledge, proven in zero knowledge, is the only sound ownership attestation)
+
+## Amendment 2026-09-05 — preserve exact key-store fingerprints
+
+Risk: R2, integration metadata at the circuit/key boundary. This implements the existing
+ZeroJ exact-relation binding contract introduced by
+[ZeroJ commit 5c561d6](https://github.com/bloxbean/zeroj/commit/5c561d6a9f59fbd7d2b390477b5e144f805cd302)
+(PR #26), without changing proof equations, serialization, witnesses, or secret operations.
+
+The shared CLI/UI bundle writer must preserve `Loaded.circuitFingerprint()` from a validated
+`Groth16PkStore.load`, rather than replace it with a dimensions-only label. Before writing,
+metadata wire/public counts must match the loaded store; for bound stores, all three dimensions
+must also match the exact fingerprint. Missing/corrupt stores fail before metadata is replaced.
+The key manifest and underlying setup/ceremony remain trusted inputs: copying the fingerprint
+is not independent certification of a ceremony. No key is newly bound by this operation.
+
+A store with no exact binding retains its legacy dimensions-only metadata. This does not upgrade
+its assurance or bypass the pipeline's existing restrictions. Existing bundles whose CLI metadata
+lost a bound fingerprint need metadata regenerated from their validated store (and integrity sums
+regenerated); they are not silently rebound while proving. CLI and UI proving continue to pass the
+stored metadata fingerprint unchanged, and mismatching exact fingerprints remain rejected.
+
+Verification: small real sparse and dense key stores must round-trip their exact fingerprint,
+prove through the cached pipeline without recompilation, and pairing-verify. Negative tests cover
+dimension mismatches, corrupt/missing stores, and a different relation with identical dimensions.
+The gated full account-ownership setup/prove/verify test must confirm exact fingerprint propagation
+through bundle and proof metadata. Existing external-review and production-ceremony gates remain.

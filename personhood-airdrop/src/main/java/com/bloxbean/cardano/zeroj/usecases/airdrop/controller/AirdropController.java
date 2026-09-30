@@ -51,8 +51,8 @@ public class AirdropController {
                 "name", c.name(),
                 "personhoodId", "0x" + c.personhoodId().toString(16).substring(0, 16) + "...",
                 "alreadyClaimedThisEpoch", onChainService.alreadyClaimed(
-                        com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
-                                com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
+                        org.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
+                                org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
                                 c.personhoodId(), BigInteger.valueOf(currentEpoch))))).toList();
         var pk = issuerService.getIssuerPublicKey();
         return ResponseEntity.ok(Map.of(
@@ -143,11 +143,11 @@ public class AirdropController {
             byte[] pkh = addr.getPaymentCredentialHash().orElse(new byte[28]);
             // Treat as positive big-endian, reduce mod field prime.
             BigInteger n = new BigInteger(1, pkh);
-            return n.mod(com.bloxbean.cardano.zeroj.circuit.FieldConfig.BLS12_381.prime());
+            return n.mod(org.zeroj.circuit.FieldConfig.BLS12_381.prime());
         } catch (Exception e) {
             // Fallback: hash the address string into the field (demo-only).
             return new BigInteger(1, addressBech32.getBytes())
-                    .mod(com.bloxbean.cardano.zeroj.circuit.FieldConfig.BLS12_381.prime());
+                    .mod(org.zeroj.circuit.FieldConfig.BLS12_381.prime());
         }
     }
 

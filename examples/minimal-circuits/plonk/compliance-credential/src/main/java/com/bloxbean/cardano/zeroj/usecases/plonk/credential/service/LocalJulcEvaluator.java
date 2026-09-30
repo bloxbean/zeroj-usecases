@@ -7,7 +7,7 @@ import com.bloxbean.cardano.client.backend.api.DefaultProtocolParamsSupplier;
 import com.bloxbean.cardano.client.backend.api.DefaultScriptSupplier;
 import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier;
 import com.bloxbean.cardano.client.plutus.spec.ExUnits;
-import com.bloxbean.cardano.julc.clientlib.eval.JulcTransactionEvaluator;
+import org.julclang.clientlib.eval.JulcTransactionEvaluator;
 
 import java.math.BigInteger;
 

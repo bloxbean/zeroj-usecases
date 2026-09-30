@@ -41,11 +41,11 @@ def usecaseVersionsScript = {
 apply from: usecaseVersionsScript
 
 dependencies {
-    implementation "com.bloxbean.cardano:zeroj-api:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-circuit-dsl:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-circuit-lib:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-circuit-annotation-api:${zerojVersion}"
-    annotationProcessor "com.bloxbean.cardano:zeroj-circuit-annotation-processor:${zerojVersion}"
+    implementation "org.zeroj:zeroj-api:${zerojVersion}"
+    implementation "org.zeroj:zeroj-circuit-dsl:${zerojVersion}"
+    implementation "org.zeroj:zeroj-circuit-lib:${zerojVersion}"
+    implementation "org.zeroj:zeroj-circuit-annotation-api:${zerojVersion}"
+    annotationProcessor "org.zeroj:zeroj-circuit-annotation-processor:${zerojVersion}"
 
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'

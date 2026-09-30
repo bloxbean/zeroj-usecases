@@ -1,10 +1,10 @@
 package com.bloxbean.cardano.zeroj.usecases.voting.service;
 
-import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG1BLS381;
-import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG2BLS381;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
-import com.bloxbean.cardano.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
+import org.zeroj.bls12381.ec.JacobianG1BLS381;
+import org.zeroj.bls12381.ec.JacobianG2BLS381;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
+import org.zeroj.crypto.setup.Groth16SetupBLS381;
+import org.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
 import supranational.blst.P1_Affine;
 import supranational.blst.P2_Affine;
 

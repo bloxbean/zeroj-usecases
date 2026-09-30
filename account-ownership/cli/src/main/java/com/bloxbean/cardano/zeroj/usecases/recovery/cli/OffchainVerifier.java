@@ -1,13 +1,13 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.cli;
 
-import com.bloxbean.cardano.zeroj.bls12381.ec.G1Point;
-import com.bloxbean.cardano.zeroj.bls12381.ec.G2Point;
-import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG1BLS381.AffineG1;
-import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG2BLS381.AffineG2;
-import com.bloxbean.cardano.zeroj.bls12381.field.Fp;
-import com.bloxbean.cardano.zeroj.bls12381.field.Fp2;
-import com.bloxbean.cardano.zeroj.bls12381.pairing.BLS12381Pairing;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16PkStore;
+import org.zeroj.bls12381.ec.G1Point;
+import org.zeroj.bls12381.ec.G2Point;
+import org.zeroj.bls12381.ec.JacobianG1BLS381.AffineG1;
+import org.zeroj.bls12381.ec.JacobianG2BLS381.AffineG2;
+import org.zeroj.bls12381.field.Fp;
+import org.zeroj.bls12381.field.Fp2;
+import org.zeroj.bls12381.pairing.BLS12381Pairing;
+import org.zeroj.crypto.groth16.Groth16PkStore;
 
 import java.math.BigInteger;
 

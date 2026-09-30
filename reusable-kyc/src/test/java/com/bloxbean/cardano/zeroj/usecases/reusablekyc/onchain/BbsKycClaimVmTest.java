@@ -1,21 +1,21 @@
 package com.bloxbean.cardano.zeroj.usecases.reusablekyc.onchain;
 
-import com.bloxbean.cardano.julc.core.PlutusData;
-import com.bloxbean.cardano.julc.core.Program;
-import com.bloxbean.cardano.julc.ledger.PubKeyHash;
-import com.bloxbean.cardano.julc.ledger.TxId;
-import com.bloxbean.cardano.julc.ledger.TxOut;
-import com.bloxbean.cardano.julc.ledger.TxOutRef;
-import com.bloxbean.cardano.julc.ledger.Value;
-import com.bloxbean.cardano.julc.testkit.ContractTest;
-import com.bloxbean.cardano.julc.testkit.TestDataBuilder;
-import com.bloxbean.cardano.zeroj.bbs.BbsCiphersuite;
-import com.bloxbean.cardano.zeroj.bbs.BbsPresentation;
-import com.bloxbean.cardano.zeroj.bbs.internal.BbsCodec;
-import com.bloxbean.cardano.zeroj.bbs.internal.CfrgBbsCore;
-import com.bloxbean.cardano.zeroj.bls12381.Bls12381Codecs;
-import com.bloxbean.cardano.zeroj.bls12381.spi.Bls12381Provider;
-import com.bloxbean.cardano.zeroj.bls12381.spi.Bls12381Providers;
+import org.julclang.core.PlutusData;
+import org.julclang.core.Program;
+import org.julclang.ledger.PubKeyHash;
+import org.julclang.ledger.TxId;
+import org.julclang.ledger.TxOut;
+import org.julclang.ledger.TxOutRef;
+import org.julclang.ledger.Value;
+import org.julclang.testkit.ContractTest;
+import org.julclang.testkit.TestDataBuilder;
+import org.zeroj.bbs.BbsCiphersuite;
+import org.zeroj.bbs.BbsPresentation;
+import org.zeroj.bbs.internal.BbsCodec;
+import org.zeroj.bbs.internal.CfrgBbsCore;
+import org.zeroj.bls12381.Bls12381Codecs;
+import org.zeroj.bls12381.spi.Bls12381Provider;
+import org.zeroj.bls12381.spi.Bls12381Providers;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.credential.KycCredential;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.service.HolderService;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.service.IssuerService;
@@ -42,7 +42,7 @@ class BbsKycClaimVmTest extends ContractTest {
 
     private static byte[] u(String s) { return s.getBytes(StandardCharsets.UTF_8); }
     private static byte[] a(String s) { return s.getBytes(StandardCharsets.US_ASCII); }
-    private static byte[] g1c(com.bloxbean.cardano.zeroj.bls12381.ec.G1Point p) { return Bls12381Codecs.g1ToCompressed(p); }
+    private static byte[] g1c(org.zeroj.bls12381.ec.G1Point p) { return Bls12381Codecs.g1ToCompressed(p); }
 
     private static Program program;
     /** The voucher this claim spends — its ref is what the presentation header is derived from. */

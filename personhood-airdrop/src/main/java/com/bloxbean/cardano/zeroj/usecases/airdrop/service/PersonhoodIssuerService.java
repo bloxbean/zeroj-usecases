@@ -1,8 +1,9 @@
 package com.bloxbean.cardano.zeroj.usecases.airdrop.service;
 
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.EdDSAJubjub;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.JubjubCurve;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.JubjubPoint;
+import org.zeroj.circuit.lib.jubjub.EdDSAJubjub;
+import org.zeroj.circuit.lib.jubjub.JubjubCurve;
+import org.zeroj.circuit.lib.jubjub.JubjubMessage;
+import org.zeroj.circuit.lib.jubjub.JubjubPoint;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -68,10 +69,11 @@ public class PersonhoodIssuerService {
     public PersonhoodCredential issueCredential(String name, BigInteger personhoodId) {
         // Sign Poseidon(personhoodId, 0) — the message bound by the signature.
         // The "0" pads personhoodId into the t=3 Poseidon's two-input slot.
-        BigInteger msg = com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
-                com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
+        BigInteger msg = org.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
+                org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
                 personhoodId, BigInteger.ZERO);
-        EdDSAJubjub.Signature sig = EdDSAJubjub.sign(issuerKeypair.sk(), msg);
+        EdDSAJubjub.Signature sig = EdDSAJubjub.signCompatibilityOffline(
+                issuerKeypair, canonicalMessage(msg));
         var cred = new PersonhoodCredential(name, personhoodId, sig);
         credentials.put(name, cred);
         return cred;
@@ -87,6 +89,18 @@ public class PersonhoodIssuerService {
 
     public List<PersonhoodCredential> list() {
         return List.copyOf(credentials.values());
+    }
+
+    private static JubjubMessage canonicalMessage(BigInteger fieldElement) {
+        byte[] raw = fieldElement.toByteArray();
+        int sourceOffset = raw.length == JubjubMessage.CANONICAL_BYTES + 1 && raw[0] == 0 ? 1 : 0;
+        int length = raw.length - sourceOffset;
+        if (fieldElement.signum() < 0 || length > JubjubMessage.CANONICAL_BYTES) {
+            throw new IllegalArgumentException("claims message is not a canonical Jubjub field element");
+        }
+        byte[] canonical = new byte[JubjubMessage.CANONICAL_BYTES];
+        System.arraycopy(raw, sourceOffset, canonical, canonical.length - length, length);
+        return JubjubMessage.fromCanonicalFieldBytes(canonical);
     }
 
     /** A holder's personhood credential — claims plus the issuer's signature. */

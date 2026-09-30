@@ -1,8 +1,8 @@
 package com.bloxbean.cardano.zeroj.usecases.reusablekyc.service;
 
-import com.bloxbean.cardano.zeroj.bbs.BbsPresentation;
-import com.bloxbean.cardano.zeroj.bbs.BbsPublicKey;
-import com.bloxbean.cardano.zeroj.bbs.BbsService;
+import org.zeroj.bbs.BbsPresentation;
+import org.zeroj.bbs.BbsPublicKey;
+import org.zeroj.bbs.BbsService;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.credential.KycSchema;
 
 import java.nio.charset.StandardCharsets;

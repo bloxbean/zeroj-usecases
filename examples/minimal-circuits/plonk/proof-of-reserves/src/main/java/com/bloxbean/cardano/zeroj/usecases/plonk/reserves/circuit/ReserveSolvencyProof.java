@@ -1,17 +1,17 @@
 package com.bloxbean.cardano.zeroj.usecases.plonk.reserves.circuit;
 
-import com.bloxbean.cardano.zeroj.circuit.annotation.CircuitParam;
-import com.bloxbean.cardano.zeroj.circuit.annotation.FixedSize;
-import com.bloxbean.cardano.zeroj.circuit.annotation.Prove;
-import com.bloxbean.cardano.zeroj.circuit.annotation.Public;
-import com.bloxbean.cardano.zeroj.circuit.annotation.Secret;
-import com.bloxbean.cardano.zeroj.circuit.annotation.UInt;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZKCircuit;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZkArray;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZkBool;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZkContext;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZkField;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZkUInt;
+import org.zeroj.circuit.annotation.CircuitParam;
+import org.zeroj.circuit.annotation.FixedSize;
+import org.zeroj.circuit.annotation.Prove;
+import org.zeroj.circuit.annotation.Public;
+import org.zeroj.circuit.annotation.Secret;
+import org.zeroj.circuit.annotation.UInt;
+import org.zeroj.circuit.annotation.ZKCircuit;
+import org.zeroj.circuit.annotation.ZkArray;
+import org.zeroj.circuit.annotation.ZkBool;
+import org.zeroj.circuit.annotation.ZkContext;
+import org.zeroj.circuit.annotation.ZkField;
+import org.zeroj.circuit.annotation.ZkUInt;
 
 @ZKCircuit(
         name = "proof-of-reserves-plonk",

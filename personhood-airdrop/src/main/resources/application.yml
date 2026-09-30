@@ -17,9 +17,9 @@ cardano:
 
 zk:
   # Powers of Tau domain size. 2^pot-power must exceed circuit constraint
-  # count + 1. Circuit ≈ 20.6k constraints; 2^15 = 32768 is sufficient and
-  # ~2x faster than power=16.
-  pot-power: 15
+  # count + 1. The registered-key circuit has 10,467 constraints, so
+  # 2^14 = 16,384 is sufficient. This SRS is development/test-only.
+  pot-power: 14
 
 faucet:
   # ADA paid out per successful claim.

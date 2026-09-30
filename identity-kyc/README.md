@@ -1,12 +1,12 @@
 # Identity KYC Demo — Privacy-Preserving Credential Verification on Cardano
 
-Prove you meet KYC requirements (age, country) **without revealing your personal data**. Uses zero-knowledge proofs (Groth16 on BLS12-381) with Poseidon-signed credentials and on-chain verification via Plutus V3.
+Prove you meet KYC requirements (age, country) **without revealing your personal data**. Uses zero-knowledge proofs (Groth16 on BLS12-381), issuer-signed EdDSA-Jubjub credentials, and on-chain verification via Plutus V3.
 
 Built with [ZeroJ](https://github.com/bloxbean/zeroj) — a pure Java ZK toolkit for Cardano.
 
 ## What This Demo Does
 
-1. **Issues KYC credentials** — admin (KYC provider) signs credentials with Poseidon hash
+1. **Issues KYC credentials** — the KYC provider signs a Poseidon claim digest with EdDSA-Jubjub
 2. **Verifies eligibility** — user generates ZK proof: "I have a valid credential AND age >= 18 AND country is approved"
 3. **On-chain gated access** — ADA locked at a Plutus V3 script, unlockable only with valid credential proof
 4. **5 test users** with different ages/countries (some eligible, some not)
@@ -36,13 +36,15 @@ curl -X POST http://localhost:10000/local-cluster/api/addresses/topup \
 
 # 4. Build
 cd identity-kyc
-./gradlew clean build -x test
+./gradlew clean bootJar
 
 # 5. Run
-java --enable-native-access=ALL-UNNAMED -jar build/libs/identity-kyc-0.1.0-SNAPSHOT.jar
+java --enable-native-access=ALL-UNNAMED \
+  -Dzeroj.allowInsecureTrustedSetup=true \
+  -jar build/libs/identity-kyc-*.jar
 ```
 
-Startup takes ~30s (circuit compilation + trusted setup + credential issuance).
+Startup time is machine-dependent. The demo compiles an 11,258-constraint circuit and performs a fresh, development-only trusted setup on every start.
 
 ### Open UI: **http://localhost:8087**
 
@@ -92,14 +94,17 @@ curl -X POST http://localhost:8087/api/credential/unlock \
 
 ## How It Works
 
-**Credential issuance** (Poseidon-signed):
+**Credential issuance** (demo/offline compatibility signer):
 ```
-credentialHash = Poseidon(issuerSecret, Poseidon(age, country))
+field     = Poseidon(age, country)
+message   = JubjubMessage.fromCanonicalFieldBytes(BE32(field))
+signature = EdDSAJubjub.signCompatibilityOffline(issuerKeypair, message)
 ```
-The issuer stores `credentialHash` publicly. The user holds `issuerSecret`, `age`, and `country` privately.
+The issuer keeps the secret key. The holder receives `age`, `country`, and
+the signature; no issuer secret is shared with the holder.
 
-**ZK proof generation** (~1,300 constraints):
-1. Verify credential: `Poseidon(secret, Poseidon(age, country)) == credentialHash`
+**ZK proof generation** (11,258 constraints):
+1. Verify the EdDSA-Jubjub signature over `Poseidon(age, country)`
 2. Age check: `age >= minAge` (8-bit comparison)
 3. Country check: Merkle proof that `country` is in the approved list
 4. Output: `eligible = 1` if all checks pass
@@ -107,7 +112,9 @@ The issuer stores `credentialHash` publicly. The user holds `issuerSecret`, `age
 **On-chain verification**:
 - ADA locked at `CredentialGatedValidator` script address
 - Redeemer contains compressed Groth16 proof + public inputs
-- Validator does BLS12-381 pairing check + checks `eligible == 1`
+- Validator does the BLS12-381 pairing check, requires `eligible == 1`,
+  and pins the issuer public key, minimum age, and approved-country root
+  to script parameters
 - If valid, funds are released
 
 ## Key Difference from NFT/Voting Demos
@@ -129,7 +136,7 @@ This demo is **stateless** — no nullifiers, no linked list. The proof can be r
 | Java | GraalVM 25 |
 | ZK Proofs | ZeroJ (Groth16, BLS12-381, pure Java) |
 | On-chain | Julc (Java to Plutus V3) |
-| Credential signing | Poseidon hash (shared secret) |
+| Credential signing | EdDSA-Jubjub over a Poseidon claim digest |
 | Frontend | Svelte 5 + Vite |
 | Local devnet | Yaci DevKit |
 
@@ -155,6 +162,10 @@ identity-kyc/
 
 ## Notes
 
-- Poseidon-signed credentials use a shared secret (issuer + holder). For production, upgrade to EdDSA or BBS+ signatures.
-- Trusted setup is dev-only (single-party). Production requires MPC ceremony.
-- The credential circuit has ~1,300 constraints — much smaller than the voting (~10,800) or NFT (~10,800) circuits.
+- The seeded credentials use ZeroJ's explicit compatibility/offline signer.
+  Do not expose this demo issuance method as a network-reachable signing API.
+- Trusted setup is single-party and development-only. Production requires
+  reviewed ceremony material and an external cryptographic review.
+- The on-chain validator is registered-key mode: the script parameters bind
+  both issuer coordinates and the policy values. Changing the issuer, minimum
+  age, or country root creates a different script.

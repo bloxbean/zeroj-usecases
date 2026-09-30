@@ -1,8 +1,9 @@
 package com.bloxbean.cardano.zeroj.usecases.selective.service;
 
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.EdDSAJubjub;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.JubjubCurve;
-import com.bloxbean.cardano.zeroj.circuit.lib.jubjub.JubjubPoint;
+import org.zeroj.circuit.lib.jubjub.EdDSAJubjub;
+import org.zeroj.circuit.lib.jubjub.JubjubCurve;
+import org.zeroj.circuit.lib.jubjub.JubjubMessage;
+import org.zeroj.circuit.lib.jubjub.JubjubPoint;
 import com.bloxbean.cardano.zeroj.usecases.selective.circuit.CredentialSchema;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -83,8 +84,8 @@ public class RichCredentialIssuerService {
             int sz = countryTree[level - 1].length / 2;
             countryTree[level] = new BigInteger[sz];
             for (int i = 0; i < sz; i++) {
-                countryTree[level][i] = com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
-                        com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
+                countryTree[level][i] = org.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
+                        org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
                         countryTree[level - 1][2 * i], countryTree[level - 1][2 * i + 1]);
             }
         }
@@ -98,7 +99,8 @@ public class RichCredentialIssuerService {
         BigInteger sal = BigInteger.valueOf(salaryBracket);
         BigInteger nameH = CredentialSchema.nameHash(name);
         BigInteger msg = CredentialSchema.claimsMessage(dob, ctry, roleId, sal, nameH);
-        EdDSAJubjub.Signature sig = EdDSAJubjub.sign(issuerKeypair.sk(), msg);
+        EdDSAJubjub.Signature sig = EdDSAJubjub.signCompatibilityOffline(
+                issuerKeypair, canonicalMessage(msg));
         var cred = new RichCredential(name, dobYear, countryCode, roleId, salaryBracket, nameH, sig);
         credentials.put(name, cred);
         return cred;
@@ -123,6 +125,18 @@ public class RichCredentialIssuerService {
     public BigInteger countryRoot() { return countryRoot; }
     public RichCredential get(String name) { return credentials.get(name); }
     public List<RichCredential> list() { return List.copyOf(credentials.values()); }
+
+    private static JubjubMessage canonicalMessage(BigInteger fieldElement) {
+        byte[] raw = fieldElement.toByteArray();
+        int sourceOffset = raw.length == JubjubMessage.CANONICAL_BYTES + 1 && raw[0] == 0 ? 1 : 0;
+        int length = raw.length - sourceOffset;
+        if (fieldElement.signum() < 0 || length > JubjubMessage.CANONICAL_BYTES) {
+            throw new IllegalArgumentException("claims message is not a canonical Jubjub field element");
+        }
+        byte[] canonical = new byte[JubjubMessage.CANONICAL_BYTES];
+        System.arraycopy(raw, sourceOffset, canonical, canonical.length - length, length);
+        return JubjubMessage.fromCanonicalFieldBytes(canonical);
+    }
 
     public record RichCredential(String name, int dobYear, int countryCode,
                                  BigInteger roleId, int salaryBracket,

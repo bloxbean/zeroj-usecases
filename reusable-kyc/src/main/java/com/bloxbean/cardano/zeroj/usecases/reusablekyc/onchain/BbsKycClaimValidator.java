@@ -1,15 +1,15 @@
 package com.bloxbean.cardano.zeroj.usecases.reusablekyc.onchain;
 
-import com.bloxbean.cardano.julc.ledger.Credential;
-import com.bloxbean.cardano.julc.ledger.ScriptContext;
-import com.bloxbean.cardano.julc.ledger.ScriptInfo;
-import com.bloxbean.cardano.julc.ledger.TxOut;
-import com.bloxbean.cardano.julc.ledger.TxOutRef;
-import com.bloxbean.cardano.julc.stdlib.Builtins;
-import com.bloxbean.cardano.julc.stdlib.annotation.Entrypoint;
-import com.bloxbean.cardano.julc.stdlib.annotation.Param;
-import com.bloxbean.cardano.julc.stdlib.annotation.SpendingValidator;
-import com.bloxbean.cardano.zeroj.onchain.julc.bbs.lib.BbsProofVerify;
+import org.julclang.ledger.Credential;
+import org.julclang.ledger.ScriptContext;
+import org.julclang.ledger.ScriptInfo;
+import org.julclang.ledger.TxOut;
+import org.julclang.ledger.TxOutRef;
+import org.julclang.stdlib.Builtins;
+import org.julclang.stdlib.annotation.Entrypoint;
+import org.julclang.stdlib.annotation.Param;
+import org.julclang.stdlib.annotation.SpendingValidator;
+import org.zeroj.onchain.julc.bbs.lib.BbsProofVerify;
 
 import java.math.BigInteger;
 
@@ -100,10 +100,9 @@ public class BbsKycClaimValidator {
         if (ctx.scriptInfo() instanceof ScriptInfo.SpendingScript spending) {
             TxOutRef ref = spending.txOutRef();
             return Builtins.blake2b_256(
-                    Builtins.appendByteString(
-                            Builtins.appendByteString(
-                                    ref.txId().hash(),
-                                    Builtins.integerToByteString(true, 8L, ref.index())),
+                    Builtins.concat(
+                            ref.txId().hash(),
+                            Builtins.integerToByteString(true, 8L, ref.index()),
                             recipientPkh));
         }
         return Builtins.emptyByteString();   // not a spending script — cannot match a real header

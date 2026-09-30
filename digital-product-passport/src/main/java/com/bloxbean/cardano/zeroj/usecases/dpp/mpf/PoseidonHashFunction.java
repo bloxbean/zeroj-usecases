@@ -1,7 +1,7 @@
 package com.bloxbean.cardano.zeroj.usecases.dpp.mpf;
 
 import com.bloxbean.cardano.vds.core.api.HashFunction;
-import com.bloxbean.cardano.zeroj.circuit.FieldConfig;
+import org.zeroj.circuit.FieldConfig;
 
 import java.math.BigInteger;
 

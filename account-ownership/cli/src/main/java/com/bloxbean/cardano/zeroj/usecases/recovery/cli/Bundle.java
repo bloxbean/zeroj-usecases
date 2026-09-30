@@ -1,7 +1,8 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.cli;
 
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16PkStore;
-import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
+import org.zeroj.crypto.groth16.Groth16PkStore;
+import org.zeroj.crypto.groth16.Groth16Pipeline;
+import org.zeroj.crypto.setup.Groth16SetupBLS381;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -19,14 +20,14 @@ import java.util.TreeMap;
  * {@code prove}/{@code verify}. It wraps a {@link Groth16PkStore} directory (the proving key + VK)
  * with two extra artifacts:
  * <ul>
- *   <li>{@code bundle.properties} — setup mode, circuit fingerprint (dimensions), zeroj version,
+ *   <li>{@code bundle.properties} — setup mode, circuit fingerprint, zeroj version,
  *       creation time;</li>
  *   <li>{@code SHA256SUMS} — per-file digests for integrity verification.</li>
  * </ul>
  *
- * <p>Fingerprint is the circuit's dimensions ({@code c<constraints>-w<wires>-p<public>}); the
- * {@code Groth16PkStore} manifest independently pins the domain and public count, so the two
- * cross-check that a bundle's keys belong to the circuit that will prove/verify against them.</p>
+ * <p>For bound stores the fingerprint includes the canonical R1CS hash, copied from the
+ * validated key store. Dimensions alone do not identify a relation. Unbound legacy stores retain
+ * their dimensions-only label; writing metadata does not bind or certify a key.</p>
  */
 public final class Bundle {
 
@@ -44,27 +45,47 @@ public final class Bundle {
         return Groth16PkStore.exists(dir) && Files.isRegularFile(dir.resolve(BUNDLE_PROPS));
     }
 
-    /** Canonical circuit fingerprint — the format is owned by {@link Groth16Pipeline} now. */
+    /** Legacy dimensions-only label; bound stores use their exact relation fingerprint instead. */
     public static String fingerprint(int numConstraints, int numWires, int numPublic) {
-        return com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Pipeline
-                .fingerprint(numConstraints, numWires, numPublic);
+        return Groth16Pipeline.fingerprint(numConstraints, numWires, numPublic);
     }
 
     /** Write {@code bundle.properties} (call after the proving-key store has been saved to {@code dir}). */
     public void writeMetadata(String setupMode, int numConstraints, int numWires, int numPublic,
                               String zerojVersion, String createdAt) throws IOException {
+        String keyFingerprint = metadataFingerprint(numConstraints, numWires, numPublic);
         Properties p = new Properties();
         p.setProperty("setupMode", setupMode);
         p.setProperty("numConstraints", Integer.toString(numConstraints));
         p.setProperty("numWires", Integer.toString(numWires));
         p.setProperty("numPublic", Integer.toString(numPublic));
-        p.setProperty("fingerprint", fingerprint(numConstraints, numWires, numPublic));
+        p.setProperty("fingerprint", keyFingerprint);
         p.setProperty("zerojVersion", zerojVersion);
         p.setProperty("createdAt", createdAt);
         // snarkjs-based setups (ptau) append public-input binding rows — the prover needs to know.
         p.setProperty("snarkjsConstraints", Boolean.toString(!"local".equals(setupMode)));
         try (var out = Files.newOutputStream(dir.resolve(BUNDLE_PROPS))) {
             p.store(out, "Account-ownership proof key bundle (ADR-0001)");
+        }
+    }
+
+    private String metadataFingerprint(int numConstraints, int numWires, int numPublic) throws IOException {
+        String legacy = fingerprint(numConstraints, numWires, numPublic);
+        var loaded = Groth16PkStore.load(dir);
+        try {
+            if (loaded.readers().a().count() != numWires || loaded.pk().numPublic() != numPublic) {
+                throw new IOException("Bundle dimensions do not match the proving-key store");
+            }
+            String exact = loaded.circuitFingerprint();
+            if (exact == null) return legacy;
+            var dimensions = Groth16Pipeline.parseFingerprint(exact);
+            if (dimensions == null || dimensions.numConstraints() != numConstraints
+                    || dimensions.numWires() != numWires || dimensions.numPublic() != numPublic) {
+                throw new IOException("Bundle dimensions do not match the exact circuit fingerprint");
+            }
+            return exact;
+        } finally {
+            closeQuietly(loaded);
         }
     }
 
@@ -106,7 +127,7 @@ public final class Bundle {
         writeMetadata(mode, numConstraints, numWires, numPublic, zerojVersion(), java.time.Instant.now().toString());
         writeIntegrityManifest();
         System.out.printf("%nKey bundle ready at %s (%.1f GB)%n", dir.toAbsolutePath(), dirSize(dir) / 1e9);
-        System.out.println("  mode: " + mode + "   fingerprint: " + fingerprint(numConstraints, numWires, numPublic));
+        System.out.println("  mode: " + mode + "   fingerprint: " + metadata().getProperty("fingerprint"));
         System.out.println("Next: `info` to inspect, `prove` to generate a proof, or publish this directory.");
     }
 

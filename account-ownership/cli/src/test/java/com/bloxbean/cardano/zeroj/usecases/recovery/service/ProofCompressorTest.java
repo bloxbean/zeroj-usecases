@@ -1,7 +1,7 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.service;
 
-import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG1BLS381;
-import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG2BLS381;
+import org.zeroj.bls12381.ec.JacobianG1BLS381;
+import org.zeroj.bls12381.ec.JacobianG2BLS381;
 import org.junit.jupiter.api.Test;
 import supranational.blst.P1_Affine;
 import supranational.blst.P2_Affine;

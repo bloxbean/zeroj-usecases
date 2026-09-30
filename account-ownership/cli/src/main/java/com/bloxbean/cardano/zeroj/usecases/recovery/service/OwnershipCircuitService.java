@@ -1,13 +1,13 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.service;
 
-import com.bloxbean.cardano.zeroj.api.CurveId;
-import com.bloxbean.cardano.zeroj.api.R1CSConstraint;
-import com.bloxbean.cardano.zeroj.bls12381.field.MontFr381;
-import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
-import com.bloxbean.cardano.zeroj.circuit.r1cs.R1CSConstraintSystem;
-import com.bloxbean.cardano.zeroj.crypto.groth16.Groth16Pipeline;
-import com.bloxbean.cardano.zeroj.crypto.msm.FlatScalars;
-import com.bloxbean.cardano.zeroj.crypto.setup.Groth16SetupBLS381;
+import org.zeroj.api.CurveId;
+import org.zeroj.api.R1CSConstraint;
+import org.zeroj.bls12381.field.MontFr381;
+import org.zeroj.circuit.CircuitBuilder;
+import org.zeroj.circuit.r1cs.R1CSConstraintSystem;
+import org.zeroj.crypto.groth16.Groth16Pipeline;
+import org.zeroj.crypto.msm.FlatScalars;
+import org.zeroj.crypto.setup.Groth16SetupBLS381;
 import com.bloxbean.cardano.zeroj.usecases.recovery.circuit.OwnershipProofCircuit;
 
 import java.math.BigInteger;

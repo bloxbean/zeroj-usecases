@@ -1,6 +1,6 @@
 package com.bloxbean.cardano.zeroj.usecases.plonk.credential;
 
-import com.bloxbean.cardano.zeroj.api.VerificationResult;
+import org.zeroj.api.VerificationResult;
 import com.bloxbean.cardano.zeroj.usecases.plonk.credential.service.PlonkCredentialProofService;
 import org.junit.jupiter.api.Test;
 

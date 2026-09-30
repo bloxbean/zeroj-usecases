@@ -1,9 +1,9 @@
 package com.bloxbean.cardano.zeroj.usecases.plonk.credential.service;
 
-import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG1BLS381;
-import com.bloxbean.cardano.zeroj.bls12381.ec.JacobianG2BLS381;
-import com.bloxbean.cardano.zeroj.crypto.plonk.PlonKProofBLS381;
-import com.bloxbean.cardano.zeroj.crypto.plonk.PlonKProvingKeyBLS381;
+import org.zeroj.bls12381.ec.JacobianG1BLS381;
+import org.zeroj.bls12381.ec.JacobianG2BLS381;
+import org.zeroj.crypto.plonk.PlonKProofBLS381;
+import org.zeroj.crypto.plonk.PlonKProvingKeyBLS381;
 
 import java.math.BigInteger;
 

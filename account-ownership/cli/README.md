@@ -134,11 +134,19 @@ bin/account-ownership-recovery-cli export-r1cs --out circuit.r1cs
 #      snarkjs zkey contribute circuit_0000.zkey circuit_0001.zkey --name="c1" -v   (one per contributor)
 #      snarkjs zkey beacon     circuit_0001.zkey circuit_final.zkey <hashHex> 10
 #      snarkjs zkey verify     circuit.r1cs pot25_final.ptau circuit_final.zkey
+#    then publish the finalized key's hash with the ceremony record:
+#      shasum -a 256 circuit_final.zkey
 # (or use zeroj's own `zeroj-ceremony` tool for contributions — snarkjs-compatible transcript)
 
-# 3. import the finalized key (pure Java, no snarkjs)
-bin/account-ownership-recovery-cli import --zkey circuit_final.zkey
+# 3. import the finalized key (pure Java, no snarkjs), pinned to the published hash
+bin/account-ownership-recovery-cli import --zkey circuit_final.zkey --sha256 <published-sha256>
 ```
+`import` refuses a `.zkey` whose SHA-256 differs from `--sha256`, so a swapped or tampered key
+can't become your bundle. Take the hash from the ceremony's published record, not from the file
+you downloaded: a hash computed from the same file checks nothing. For a rehearsal ceremony you ran
+yourself, pass `--allow-unpinned` instead. After importing, the CLI prints the store's manifest
+SHA-256; keep it with the ceremony record. `--force` replaces an existing bundle only after the new
+key has imported and matched the circuit.
 The `.ptau` (phase 1) is universal — **reuse** an attested BLS12-381 one (Filecoin, Zcash), you don't
 generate it. A BN254 ptau (e.g. the PSE Perpetual Powers of Tau) is the wrong curve and won't work.
 

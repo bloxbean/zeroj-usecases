@@ -4,7 +4,7 @@ import com.bloxbean.cardano.client.account.Account;
 import com.bloxbean.cardano.client.address.Address;
 import com.bloxbean.cardano.client.backend.api.BackendService;
 import com.bloxbean.cardano.client.common.model.Networks;
-import com.bloxbean.cardano.zeroj.bbs.BbsPresentation;
+import org.zeroj.bbs.BbsPresentation;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.credential.KycCredential;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.credential.KycSchema;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.credential.SignedCredential;

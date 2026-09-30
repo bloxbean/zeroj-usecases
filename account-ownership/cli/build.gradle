@@ -34,31 +34,31 @@ repositories {
     maven { url = uri("https://repo.spring.io/milestone") }
 }
 
-def zerojVersion = ver('zerojVersion', '0.1.0-pre7')
-def julcVersion  = ver('julcVersion', '0.1.0-pre14')
-def cclVersion   = ver('cclVersion', '0.8.0-pre4')
+def zerojVersion = ver('zerojVersion', '0.1.0-pre12')
+def julcVersion  = ver('julcVersion', '0.1.0-pre18')
+def cclVersion   = ver('cclVersion', '0.8.0-pre5')
 
 dependencies {
     // ZeroJ ZK: circuit DSL + gadgets, prover, on-chain julc verifier, blst prover backend.
-    implementation "com.bloxbean.cardano:zeroj-circuit-dsl:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-circuit-lib:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-circuit-annotation-api:${zerojVersion}"
-    annotationProcessor "com.bloxbean.cardano:zeroj-circuit-annotation-processor:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-crypto:${zerojVersion}"              // Groth16 setup/prover, PkStore, R1csExporter, ZkeyPkStoreImporter
-    implementation "com.bloxbean.cardano:zeroj-crypto-blst:${zerojVersion}"         // BlstProverBackend (fast multi-core prove)
-    implementation "com.bloxbean.cardano:zeroj-verifier-groth16:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
-    annotationProcessor "com.bloxbean.cardano:zeroj-onchain-julc:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-bls12381:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-blst:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-api:${zerojVersion}"
-    implementation "com.bloxbean.cardano:zeroj-codec:${zerojVersion}"
+    implementation "org.zeroj:zeroj-circuit-dsl:${zerojVersion}"
+    implementation "org.zeroj:zeroj-circuit-lib:${zerojVersion}"
+    implementation "org.zeroj:zeroj-circuit-annotation-api:${zerojVersion}"
+    annotationProcessor "org.zeroj:zeroj-circuit-annotation-processor:${zerojVersion}"
+    implementation "org.zeroj:zeroj-crypto:${zerojVersion}"              // Groth16 setup/prover, PkStore, R1csExporter, ZkeyPkStoreImporter
+    implementation "org.zeroj:zeroj-crypto-blst:${zerojVersion}"         // BlstProverBackend (fast multi-core prove)
+    implementation "org.zeroj:zeroj-verifier-groth16:${zerojVersion}"
+    implementation "org.zeroj:zeroj-onchain-julc:${zerojVersion}"
+    annotationProcessor "org.zeroj:zeroj-onchain-julc:${zerojVersion}"
+    implementation "org.zeroj:zeroj-bls12381:${zerojVersion}"
+    implementation "org.zeroj:zeroj-blst:${zerojVersion}"
+    implementation "org.zeroj:zeroj-api:${zerojVersion}"
+    implementation "org.zeroj:zeroj-codec:${zerojVersion}"
 
     // Julc: on-chain validator stdlib + processor + client-lib evaluator.
-    implementation "com.bloxbean.cardano:julc-stdlib:${julcVersion}"
-    annotationProcessor "com.bloxbean.cardano:julc-annotation-processor:${julcVersion}"
-    implementation "com.bloxbean.cardano:julc-cardano-client-lib:${julcVersion}"
-    runtimeOnly "com.bloxbean.cardano:julc-vm-java:${julcVersion}"
+    implementation "org.julclang:julc-stdlib:${julcVersion}"
+    annotationProcessor "org.julclang:julc-annotation-processor:${julcVersion}"
+    implementation "org.julclang:julc-cardano-client-lib:${julcVersion}"
+    runtimeOnly "org.julclang:julc-vm-java:${julcVersion}"
 
     // Cardano client + Blockfrost backend for on-chain verification.
     implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
@@ -72,7 +72,7 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     // Julc VM test harness (ContractTest / ScriptContextTestBuilder) — runs the compiled validator
     // locally in the UPLC evaluator, no node. Same julc version as the rest of the deps (Maven Central).
-    testImplementation "com.bloxbean.cardano:julc-testkit:${julcVersion}"
+    testImplementation "org.julclang:julc-testkit:${julcVersion}"
 }
 
 def cliJvmArgs = [
@@ -102,6 +102,9 @@ test {
     systemProperty 'zeroj.allowInsecureTrustedSetup', 'true'
     // forward the heavy-e2e gate to the forked test JVM: `-Daor.e2e=true` enables FlowsE2ETest
     systemProperty 'aor.e2e', System.getProperty('aor.e2e', 'false')
+    if (System.getProperty('aor.e2e.keys') != null) {
+        systemProperty 'aor.e2e.keys', System.getProperty('aor.e2e.keys')
+    }
     systemProperty 'circuit.measure', System.getProperty('circuit.measure', 'false')
 }
 

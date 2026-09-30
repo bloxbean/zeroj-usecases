@@ -1,14 +1,14 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.circuit;
 
-import com.bloxbean.cardano.zeroj.circuit.annotation.FixedSize;
-import com.bloxbean.cardano.zeroj.circuit.annotation.Prove;
-import com.bloxbean.cardano.zeroj.circuit.annotation.Public;
-import com.bloxbean.cardano.zeroj.circuit.annotation.Secret;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZKCircuit;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZkBytes;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZkContext;
-import com.bloxbean.cardano.zeroj.circuit.annotation.ZkField;
-import com.bloxbean.cardano.zeroj.circuit.lib.zk.ZkCip1852;
+import org.zeroj.circuit.annotation.FixedSize;
+import org.zeroj.circuit.annotation.Prove;
+import org.zeroj.circuit.annotation.Public;
+import org.zeroj.circuit.annotation.Secret;
+import org.zeroj.circuit.annotation.ZKCircuit;
+import org.zeroj.circuit.annotation.ZkBytes;
+import org.zeroj.circuit.annotation.ZkContext;
+import org.zeroj.circuit.annotation.ZkField;
+import org.zeroj.circuit.lib.zk.ZkCip1852;
 
 /**
  * Off-chain ownership proof (annotation DSL): proves the claimant's wallet <b>root key</b> derives,

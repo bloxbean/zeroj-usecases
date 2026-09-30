@@ -1,13 +1,13 @@
 package com.bloxbean.cardano.zeroj.usecases.dpp.circuit;
 
-import com.bloxbean.cardano.zeroj.circuit.CircuitBuilder;
-import com.bloxbean.cardano.zeroj.circuit.CircuitSpec;
-import com.bloxbean.cardano.zeroj.circuit.Signal;
-import com.bloxbean.cardano.zeroj.circuit.SignalBuilder;
-import com.bloxbean.cardano.zeroj.circuit.lib.SignalComparators;
-import com.bloxbean.cardano.zeroj.circuit.lib.SignalPoseidon;
-import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParams;
-import com.bloxbean.cardano.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
+import org.zeroj.circuit.CircuitBuilder;
+import org.zeroj.circuit.CircuitSpec;
+import org.zeroj.circuit.Signal;
+import org.zeroj.circuit.SignalBuilder;
+import org.zeroj.circuit.lib.SignalComparators;
+import org.zeroj.circuit.lib.SignalPoseidon;
+import org.zeroj.circuit.lib.poseidon.PoseidonParams;
+import org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 
 /**
  * Generic compliance threshold circuit for DPP claims.
