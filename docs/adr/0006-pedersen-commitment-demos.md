@@ -209,7 +209,7 @@ share one hash.
 - Its inline datum is `Attestation(unlockAfter, [Entry(idHash: B32, u, v)] × N)`.
 - Its lovelace is the attested reserve `R`, with `R < 2^64`.
 - The entry count is exactly `N`, and every value is canonical.
-- Groth16 verifies over `[R, u_1, v_1, …, u_N, v_N]`.
+- Groth16 verifies over `[R, u_1, …, u_N, v_1, …, v_N]`.
 
 **Release (spending purpose).**
 - The validity range starts at or after `unlockAfter`.
