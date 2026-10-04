@@ -2,6 +2,7 @@ package com.bloxbean.cardano.zeroj.usecases.pedersen.solvency.onchain;
 
 import org.julclang.core.PlutusData;
 import org.julclang.core.types.JulcList;
+import org.julclang.ledger.Address;
 import org.julclang.ledger.Credential;
 import org.julclang.ledger.OutputDatum;
 import org.julclang.ledger.ScriptContext;
@@ -22,21 +23,25 @@ import org.julclang.stdlib.lib.ValuesLib;
 import org.zeroj.onchain.julc.groth16.lib.Groth16BLS12381Lib;
 
 import java.math.BigInteger;
+import java.util.Optional;
 
 /**
  * Solvency attestations with hidden liabilities (ADR-0006 demo C). One script is the attestation
- * policy and the vault address.
+ * policy and the vault address, and it is specific to one attestation period
+ * {@code [periodStart, periodEnd]}.
  *
- * <p><b>Attest</b> (mint): the exchange signs and mints one attestation token into a vault output
- * whose inline datum is {@code Attestation(unlockAfter, [Entry(idHash, u, v)] × N)} and whose
- * lovelace is the attested reserve {@code R}. The proof shows {@code Σ b_i ≤ R} over the hidden
- * balances committed in the entries; its public inputs are {@code [R, u_1..u_N, v_1..v_N]}, read
- * from that output.
+ * <p><b>Attest</b> (mint): before the period starts (validity range ending at or before
+ * {@code periodStart}), the exchange signs and mints one attestation token into a vault output at
+ * exactly the vault's enterprise address, whose inline datum is
+ * {@code Attestation([Entry(idHash, u, v)] × N)} and whose value is the attested reserve {@code R}
+ * in lovelace plus the token. The proof shows {@code Σ b_i ≤ R} over the hidden balances committed
+ * in the entries; its public inputs are {@code [R, u_1..u_N, v_1..v_N]}, read from that output.
  *
- * <p><b>Release</b> (spend + burn): only once the transaction's validity range starts at or after
- * {@code unlockAfter}, with the exchange's signature, burning the attestation token. Until then
- * neither the reserve nor the datum can change, and every attestation locks its own reserve, so
- * reserves cannot be counted twice.
+ * <p><b>Release</b> (spend + burn): only after the period ends (validity range starting at or after
+ * {@code periodEnd}), with the exchange's signature, burning the attestation token.
+ *
+ * <p>So every attestation of the period is locked for the whole period at once: none can be added
+ * or released inside it, and the same reserve cannot back attestations one after another.
  */
 @MultiValidator
 public class SolvencyVault {
@@ -44,6 +49,8 @@ public class SolvencyVault {
     @Param static byte[] exchangePkh;
     @Param static byte[] attestToken;
     @Param static BigInteger entryCount;
+    @Param static BigInteger periodStart;   // POSIX ms
+    @Param static BigInteger periodEnd;     // POSIX ms
     @Param static byte[] vkAlpha;
     @Param static byte[] vkBeta;
     @Param static byte[] vkGamma;
@@ -71,7 +78,9 @@ public class SolvencyVault {
     }
 
     private static boolean attest(Attest a, TxInfo txInfo, Credential own, byte[] policy) {
+        BigInteger upper = IntervalLib.finiteUpperBound(txInfo.validRange());
         if (!signedBy(txInfo, exchangePkh)
+                || upper.compareTo(BigInteger.ZERO) < 0 || upper.compareTo(periodStart) > 0
                 || ValuesLib.assetOf(txInfo.mint(), policy, attestToken).compareTo(BigInteger.ONE) != 0) {
             return false;
         }
@@ -86,8 +95,9 @@ public class SolvencyVault {
                 holders = holders;
             }
         }
+        Address vaultAddress = new Address(own, Optional.empty());
         if (holders != 1
-                || !Builtins.equalsData(vault.address().credential(), own)
+                || !Builtins.equalsData(vault.address(), vaultAddress)
                 || outerEntryCount(vault.value()) != 2
                 || policyEntryCount(vault.value(), policy) != 1) {
             return false;
@@ -98,11 +108,8 @@ public class SolvencyVault {
         PlutusData datum = inlineDatum(vault);
         if (Builtins.constrTag(datum) != 0) return false;
         PlutusData fields = Builtins.constrFields(datum);
-        BigInteger unlockAfter = Builtins.unIData(Builtins.headList(fields));
-        PlutusData entries = Builtins.unListData(Builtins.headList(Builtins.tailList(fields)));
-        if (!Builtins.nullList(Builtins.tailList(Builtins.tailList(fields))) || unlockAfter.compareTo(BigInteger.ZERO) < 0) {
-            return false;
-        }
+        PlutusData entries = Builtins.unListData(Builtins.headList(fields));
+        if (!Builtins.nullList(Builtins.tailList(fields))) return false;
 
         // [R, u_1..u_N, v_1..v_N], with every entry checked: 32-byte idHash, canonical u and v.
         int count = 0;
@@ -141,10 +148,9 @@ public class SolvencyVault {
         TxInfo txInfo = ctx.txInfo();
         byte[] policy = ContextsLib.ownHash(ctx);
         Credential own = new Credential.ScriptCredential(PlutusData.cast(policy, ScriptHash.class));
-        BigInteger unlockAfter = Builtins.unIData(Builtins.headList(Builtins.constrFields(datum)));
         BigInteger from = IntervalLib.finiteLowerBound(txInfo.validRange());
         return signedBy(txInfo, exchangePkh)
-                && from.compareTo(BigInteger.ZERO) >= 0 && from.compareTo(unlockAfter) >= 0
+                && from.compareTo(BigInteger.ZERO) >= 0 && from.compareTo(periodEnd) >= 0
                 && countInputs(txInfo.inputs(), own) == 1
                 && policyEntryCount(txInfo.mint(), policy) == 1
                 && ValuesLib.assetOf(txInfo.mint(), policy, attestToken).compareTo(BigInteger.valueOf(-1)) == 0;

@@ -30,8 +30,10 @@ public class HiddenLiabilitySolvencyProof {
     private final int customers;
 
     public HiddenLiabilitySolvencyProof(@CircuitParam("customers") int customers) {
-        if (customers < 1 || customers > 64) {
-            throw new IllegalArgumentException("customers must be in [1, 64]");
+        // Each customer adds two public inputs, i.e. two G1 scalar multiplications on-chain;
+        // 4.4e9 steps at N = 4 puts the 10e9 per-transaction limit near N = 19 (ADR-0006).
+        if (customers < 1 || customers > 16) {
+            throw new IllegalArgumentException("customers must be in [1, 16]");
         }
         this.customers = customers;
     }

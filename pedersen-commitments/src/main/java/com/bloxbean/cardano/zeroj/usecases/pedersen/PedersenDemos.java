@@ -98,31 +98,31 @@ public final class PedersenDemos {
         header("C. Solvency — liabilities stay hidden, reserves are locked");
         var exchange = funded(5_000);
         var solvency = new SolvencyAttestation(4);
-        var vault = solvency.vault(pkh(exchange));
+        long now = DevKit.chainTimeMillis(backend);
+        var period = new SolvencyAttestation.Period(now + 40_000, now + 100_000);
+        var vault = solvency.vault(pkh(exchange), period);
         var book = List.of(SolvencyAttestation.Customer.of("alice", 500_000_000L),
                 SolvencyAttestation.Customer.of("bob", 1_200_000_000L),
                 SolvencyAttestation.Customer.of("carol", 300_000_000L),
                 SolvencyAttestation.Customer.of("dave", 0));
         long reserves = 2_000_000_000L;
-        long unlockAfter = DevKit.chainTimeMillis(backend) + 60_000;
-        String attested = ok(SolvencyAttestation.attest(backend, vault, exchange, reserves, unlockAfter,
-                SolvencyAttestation.entries(book), solvency.prove(reserves, book)), "attest");
+        String attested = ok(SolvencyAttestation.attest(backend, vault, exchange, reserves,
+                SolvencyAttestation.entries(book), solvency.prove(reserves, book),
+                DevKit.slotAt(backend, period.start())), "attest");
         DevKit.waitForTx(backend, attested);
-        step("Exchange locked 2,000 ADA and proved its hidden liabilities are covered. On-chain: one"
-                + " commitment per customer, never a balance or the total.");
+        step("Before the period starts, the exchange locked 2,000 ADA and proved its hidden liabilities are"
+                + " covered. On-chain: one commitment per customer, never a balance or the total.");
 
-        String unit = Plutus.policyId(vault) + HexUtil.encodeHexString(SolvencyAttestation.ATTEST_TOKEN);
-        Utxo live = DevKit.utxosOf(backend, SolvencyAttestation.address(vault), attested).stream()
-                .filter(u -> u.getAmount().stream().anyMatch(a -> a.getUnit().equals(unit))).findFirst().orElseThrow();
-        var entries = SolvencyAttestation.readEntries(live);
+        while (DevKit.chainTimeMillis(backend) < period.start()) Thread.sleep(2_000);
+        step("The period %s – %s has begun: no attestation can be added or released until it ends.",
+                Instant.ofEpochMilli(period.start()), Instant.ofEpochMilli(period.end()));
+        var entries = SolvencyAttestation.liveEntries(backend, vault);
         for (var c : book) {
-            step("%s checks their own entry from chain data: %s", c.id(),
-                    SolvencyAttestation.customerCheck(entries, c) ? "included, balance correct" : "MISSING OR WRONG");
+            step("%s checks the period's attestations from chain data: %s", c.id(),
+                    SolvencyAttestation.customerCheck(entries, c) ? "listed once, balance correct" : "MISSING OR WRONG");
         }
         step("Auditor opens the sum of all commitments: total liabilities %s (no single balance revealed)",
                 SolvencyAttestation.auditorCheck(entries, SolvencyAttestation.auditOpening(book)) ? "verified" : "FAILED");
-        step("The reserve stays locked until %s; then the exchange may release it and the attestation ends.",
-                Instant.ofEpochMilli(unlockAfter));
     }
 
     // ------------------------------------------------------------------

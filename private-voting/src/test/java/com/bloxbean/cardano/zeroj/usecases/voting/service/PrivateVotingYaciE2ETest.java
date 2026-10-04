@@ -29,9 +29,10 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *   <li>Three trustees with proved keys; three voters; the scripts deployed with a one-shot
  *       root.</li>
  *   <li>Three encrypted ballots cast on-chain (YES, NO, YES).</li>
- *   <li>On-ledger rejections: a valid proof with a swapped ballot (ballot policy), a second
- *       ballot under the same nullifier (vote list) and, after the deadline, a ballot whose
- *       validity range ends past it (ballot policy).</li>
+ *   <li>Script rejections (evaluated locally with Julc, as the node would; never submitted):
+ *       a valid proof with a swapped ballot (ballot policy), a second ballot under the same
+ *       nullifier (vote list) and, after the deadline, a ballot whose validity range ends past
+ *       it (ballot policy).</li>
  *   <li>Before the deadline the tally reveals nothing but the ballot count.</li>
  *   <li>After the deadline the sum is decrypted once: 2 YES, 1 NO; the published tally
  *       re-verifies from chain data and the manifest.</li>

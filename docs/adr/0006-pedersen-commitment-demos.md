@@ -1,7 +1,8 @@
 # ADR-0006: Pedersen commitment demos — confidential points, committed credentials, hidden-liability solvency
 
 - **Status:** Proposed. Implementation is on `feat/pedersen-private-ballot-and-demos`.
-- **Date:** 2026-10-04 (r2: amended after the design review)
+- **Date:** 2026-10-04 (r2: amended after the design review; r3: after the implementation review —
+  demo C is bound to an attestation period)
 - **Related:**
   - ZeroJ ADR-0051 and its specs, `pedersen-jubjub-v1` and `pedersen-jubjub-vector-v1`.
   - ZeroJ's reference validators `ConfidentialNoteValidator` and
@@ -190,68 +191,98 @@ nothing on its own.
 ## C. Hidden-liability solvency (Provisions-style)
 
 An exchange publishes one Pedersen commitment per customer balance, and proves that the hidden
-total is at most the reserves it **locks** for the attestation period. Each customer checks their
-own entry. Nobody learns another customer's balance or the total liabilities. The total can be
-opened to an auditor through homomorphism, without opening any single entry. This follows the
-Provisions approach [DBB+15].
+total is at most the reserves it **locks** for an **attestation period**. Each customer checks
+their own entry. Nobody learns another customer's balance or the total liabilities. The total
+can be opened to an auditor through homomorphism, without opening any single entry. This follows
+the Provisions approach [DBB+15].
 
 The existing `proof-of-reserves` demo publishes the total liabilities, and its Merkle sum tree
 reveals partial sums along each path. This demo hides both.
 
+**Why a period.** Solvency is a claim about one moment, and every customer must check the same
+moment. Without a shared period, the exchange can reuse the same funds one after another:
+1. attest for customers 1–4 with `R`;
+2. let them check;
+3. release;
+4. attest for customers 5–8 with the same `R`.
+
+Each customer sees a correct, unique entry, and the book is only half covered. A period fixes
+this, because every attestation of the period must be locked **at the same time**, from before
+the period starts until after it ends. Within that window, attestations that split the customers
+between them are backed by the sum of their separately locked reserves.
+
 **Script.** `SolvencyVault`, a multi-validator, so the attestation policy and the vault address
 share one hash.
-- Parameters: `exchangePkh` and the verification key for `N` entries (`N = 4` in the demo).
+- Parameters: `exchangePkh`, the attestation token name, `N`, `periodStart`, `periodEnd` (POSIX ms)
+  and the verification key for `N` entries (`N = 4` in the demo).
+- Each period therefore has its own script hash. The exchange announces its periods publicly, as
+  a schedule. A customer checks the period everyone checks; one that was told to them privately
+  proves nothing.
 
 **Attest (minting purpose).**
-- The exchange signs.
+- The exchange signs, and no vault output is spent.
+- The validity range ends at or before `periodStart`: no attestation can be added once the
+  period has begun.
 - The policy's mint entry is exactly one attestation token, with quantity 1.
-- The output holding it has the vault's payment credential.
-- Its inline datum is `Attestation(unlockAfter, [Entry(idHash: B32, u, v)] × N)`.
-- Its lovelace is the attested reserve `R`, with `R < 2^64`.
+- The output holding it has exactly the vault's enterprise address (no staking part), so
+  customers find every attestation at one address.
+- Its inline datum is `Attestation([Entry(idHash: B32, u, v)] × N)`.
+- Its value is the attested reserve `R` in lovelace (`R < 2^64`) plus the token, and nothing else.
 - The entry count is exactly `N`, and every value is canonical.
 - Groth16 verifies over `[R, u_1, …, u_N, v_1, …, v_N]`.
 
 **Release (spending purpose).**
-- The validity range starts at or after `unlockAfter`.
+- The validity range starts at or after `periodEnd`.
 - The exchange signs.
+- Exactly one vault output is spent.
 - The attestation token is burned.
 
-While an attestation is live, neither its reserves nor its datum can change. Each attestation
-locks its own `R`, so reserves cannot be counted twice: attestations that split the customers
-between them are covered by the sum of their locked reserves.
+During `[periodStart, periodEnd]` the set of attestations for the period cannot change: none can
+be added, and none released. Neither a reserve nor a datum can change either.
 
 **Circuit.** `HiddenLiabilitySolvencyProof(N)` does three things:
 1. commits each balance (64 bits) with a 252-bit blinding;
 2. binds each commitment to its public coordinates;
 3. proves `Σ b_i ≤ R`.
 
-The sum cannot wrap, because `N·2^64 ≪ p`.
+The sum cannot wrap, because `N·2^64 ≪ p`. The circuit allows `N ≤ 16`. On-chain verification
+costs two G1 scalar multiplications per customer: measured at 4.4e9 steps for `N = 4`, which puts
+the 10e9 per-transaction limit near `N ≈ 19`.
 
-**Customer check (off-chain).**
-- `idHash = blake2b_256(I2OSP2(len(id)) ‖ UTF-8(id) ‖ salt)`, with a 32-byte salt that the
-  exchange gives each customer. The length prefix and fixed-size salt make the encoding
-  unambiguous, so two different ids cannot share an `idHash`.
-- The customer finds the live vault outputs, those that hold an attestation token, and checks
-  that their `idHash` appears **exactly once** across them.
-- That entry must open to the customer's `(balance, blinding)`.
+**Customer check (off-chain), during the period.**
+1. Derive the period's vault script from the published parameters and verification key, and use
+   its hash. Never trust a script the exchange merely points to.
+2. Read every UTxO at the vault address holding that policy's attestation token.
+3. Check that the customer's `idHash` appears **exactly once** across all their entries.
+   - `idHash = blake2b_256(I2OSP2(len(id)) ‖ UTF-8(id) ‖ salt)`, with a 32-byte salt per period.
+   - `id` must be an identifier the customer can confirm independently and that no one else
+     shares, such as their account login. Otherwise the exchange could give two customers with
+     equal balances the same `(id, salt, blinding)`, and count one entry for both.
+4. Check that the entry opens to the customer's `(balance, blinding)`.
 
 **Auditor check (off-chain).** The exchange hands the auditor `(L, Σ r_i mod l)`. The auditor
 checks `Σ C_i = Commit(L, Σ r_i)` against the on-chain entries and learns `L` and nothing else.
 
+**Trusted setup.** The verification key must come from a setup the exchange could not subvert,
+such as an MPC ceremony. Whoever holds the toxic waste can prove false solvency. In this demo the
+exchange's process runs the single-party dev setup, which is acceptable only as a demo.
+
 | ID | Invariant |
 |---|---|
-| S1 | Solvency: `Σ b_i ≤ R`, where `R` is the lovelace locked in the attestation output until `unlockAfter`. |
+| S1 | Solvency: `Σ b_i ≤ R`, where `R` is the lovelace locked in the attestation output from before `periodStart` until after `periodEnd`. |
 | S2 | No negative balances: each `b_i < 2^64`, proved. |
-| S3 | Binding: the proof covers exactly the datum's entries, in order. The datum cannot change while the attestation is live. |
-| S4 | Provenance: the exchange signs the attestation. |
+| S3 | Binding: the proof covers exactly the datum's entries, in order. Neither the datum nor the reserve can change while the attestation is live. |
+| S4 | Provenance: the exchange signs, under the period's vault script. |
 | S5 | Canonical integers. |
-| S6 | Inclusion is detected by customers, not prevented on-chain. |
+| S6 | Inclusion is detected by customers (exactly once across the period's attestations), not prevented on-chain. |
+| S7 | No reuse: all of a period's attestations are locked simultaneously throughout the period. |
 
 **Not provided:**
-- **Borrowed reserves:** an exchange can borrow funds for the lock period.
-- **After unlock:** once `unlockAfter` passes, the attestation ends.
+- **Borrowed reserves:** an exchange can borrow funds for the whole period.
+- **Outside the period:** before `periodStart` and after `periodEnd`, the attestation proves
+  nothing.
 - **Omission and understatement:** these are caught only by customers who check.
-- **The customer count:** `N` is public. Padding with commitments to 0, which are
+- **The customer count:** `N` per attestation is public. Padding with commitments to 0, which are
   indistinguishable from any other commitment, hides the true count.
 - **Linkage across periods:** a persistent salt links a customer's entries across periods. Use a
   fresh salt each period.
@@ -295,10 +326,12 @@ checks `Σ C_i = Commit(L, Σ r_i)` against the on-chain entries and learns `L` 
   - a forged or unbound receipt;
   - a badge sent elsewhere;
   - the wrong entry count;
+  - an attestation after `periodStart`, or a vault with a staking part;
   - an early release;
-  - a datum changed on release;
   - non-canonical values.
-- **DevKit end-to-end** for each demo, with at least one on-ledger rejection.
+- **DevKit end-to-end** for each demo, including script rejections. A rejection is the
+  script failing in local Julc evaluation, run as the node would run it. Rejected transactions
+  are never submitted, which would cost collateral.
 
 ## References
 

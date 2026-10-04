@@ -367,7 +367,8 @@ each key once. The new key is derived from `N`, so each eligible voter can inser
   - stray tokens in the new node or the continuing anchor;
   - extra list or nullifier mint entries;
   - non-canonical coordinates.
-- **DevKit:** cast ballots; on-ledger script rejections of a swapped ballot, a double vote
+- **DevKit:** cast ballots; script rejections (local Julc evaluation, as the node would run them;
+  rejected transactions are not submitted) of a swapped ballot, a double vote
   forced past the client, and a ballot valid past the deadline; close; walk the list; tally;
   verify every share, the manifest and the seed binding.
 - **Mutation checks:** removing the one-unit rule or the exact anchor datum makes a VM test fail.

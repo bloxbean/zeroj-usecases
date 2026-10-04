@@ -77,13 +77,18 @@ proves that the hidden total is at most `R`. This follows the Provisions approac
 | A customer's check | Merkle path | Opens their own commitment |
 | Auditor | Sees the total | Opens the sum of commitments, by homomorphism |
 
-- Each customer finds their entry by `blake2b(len(id) ‖ id ‖ salt)`, checks it appears exactly
-  once, and opens it.
-- `SolvencyVault` keeps the reserve and the attestation fixed until `unlockAfter`. Each
-  attestation locks its own reserve, so the same funds cannot back two attestations.
+- Solvency is attested for a public **period**, and each period has its own vault script.
+  Attestations can be made only **before** the period starts and released only **after** it
+  ends. So every attestation of the period is locked at the same time, and the same funds cannot
+  back attestations one after another.
+- During the period each customer derives the period's vault script themselves and reads every
+  attestation it holds. They check that their entry, found by `blake2b(len(id) ‖ id ‖ salt)`,
+  appears exactly once, and then open it.
 
 **Not provided:**
-- borrowed reserves;
+- borrowed reserves, held for the period;
+- protection against a setup the exchange ran itself: the verification key must come from a
+  setup the exchange cannot subvert;
 - omission, which only the customers who check will catch;
 - the customer count, which is public (pad with commitments to 0 to hide it).
 
@@ -92,7 +97,9 @@ proves that the hidden total is at most `R`. This follows the Provisions approac
 ## Run
 
 ```bash
-# Yaci DevKit running (yaci-cli devkit start); Java 25
+# Yaci DevKit running (yaci-cli devkit start); Java 25. Script rejections in the tests are
+# the scripts failing in local Julc evaluation, as the node would run them; rejected
+# transactions are not submitted.
 sdk use java 25.0.2-graal
 
 ./gradlew test                       # circuits, checks, Plutus VM mutation tests

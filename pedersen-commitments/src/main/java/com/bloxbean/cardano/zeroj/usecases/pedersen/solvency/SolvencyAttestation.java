@@ -75,6 +75,16 @@ public final class SolvencyAttestation {
     /** A published entry: the customer's id hash and balance commitment. */
     public record Entry(byte[] idHash, JubjubPoint commitment) {}
 
+    /**
+     * An attestation period {@code [start, end]} (POSIX ms), from the exchange's public schedule.
+     * Attestations must be made before {@code start} and stay locked until after {@code end}.
+     */
+    public record Period(long start, long end) {
+        public Period {
+            if (end <= start) throw new IllegalArgumentException("period must end after it starts");
+        }
+    }
+
     private final int customers;
     private final KeyedCircuit circuit;
 
@@ -112,8 +122,8 @@ public final class SolvencyAttestation {
     // ------------------------------------------------------------------
 
     /**
-     * The customer's check: their id hash appears exactly once in {@code entries}, and that entry
-     * opens to their balance.
+     * The customer's check over a set of entries: their id hash appears exactly once, and that
+     * entry opens to their balance. Pass every entry of the period ({@link #liveEntries}).
      */
     public static boolean customerCheck(List<Entry> entries, Customer me) {
         byte[] mine = me.idHash();
@@ -149,12 +159,18 @@ public final class SolvencyAttestation {
     //  Script, datums and transactions
     // ------------------------------------------------------------------
 
-    public PlutusScript vault(byte[] exchangePkh) {
+    /**
+     * The vault for one exchange and one period. Customers derive it themselves from the published
+     * parameters and verification key, and never take a script the exchange merely points to.
+     */
+    public PlutusScript vault(byte[] exchangePkh, Period period) {
         var vk = circuit.compressedVk();
         return JulcScriptLoader.load(SolvencyVault.class,
                 new BytesPlutusData(exchangePkh),
                 new BytesPlutusData(ATTEST_TOKEN),
                 BigIntPlutusData.of(customers),
+                BigIntPlutusData.of(period.start()),
+                BigIntPlutusData.of(period.end()),
                 new BytesPlutusData(vk.alpha()), new BytesPlutusData(vk.beta()),
                 new BytesPlutusData(vk.gamma()), new BytesPlutusData(vk.delta()), Plutus.icData(vk.ic()));
     }
@@ -167,8 +183,8 @@ public final class SolvencyAttestation {
         }
     }
 
-    /** {@code Attestation(unlockAfter, [Entry(idHash, u, v)])}. */
-    public static ConstrPlutusData attestationDatum(long unlockAfter, List<Entry> entries) {
+    /** {@code Attestation([Entry(idHash, u, v)])}. */
+    public static ConstrPlutusData attestationDatum(List<Entry> entries) {
         List<PlutusData> items = new ArrayList<>();
         for (Entry e : entries) {
             items.add(ConstrPlutusData.builder().alternative(0).data(ListPlutusData.of(
@@ -177,7 +193,6 @@ public final class SolvencyAttestation {
                     BigIntPlutusData.of(e.commitment().affineV()))).build());
         }
         return ConstrPlutusData.builder().alternative(0).data(ListPlutusData.of(
-                BigIntPlutusData.of(unlockAfter),
                 ListPlutusData.of(items.toArray(new PlutusData[0])))).build();
     }
 
@@ -188,7 +203,7 @@ public final class SolvencyAttestation {
     public static List<Entry> readEntries(Utxo vaultUtxo) {
         try {
             var datum = (ConstrPlutusData) PlutusData.deserialize(HexUtil.decodeHexString(vaultUtxo.getInlineDatum()));
-            var entries = (ListPlutusData) datum.getData().getPlutusDataList().get(1);
+            var entries = (ListPlutusData) datum.getData().getPlutusDataList().get(0);
             List<Entry> out = new ArrayList<>();
             for (PlutusData item : entries.getPlutusDataList()) {
                 var f = ((ConstrPlutusData) item).getData().getPlutusDataList();
@@ -201,10 +216,28 @@ public final class SolvencyAttestation {
         }
     }
 
+    /**
+     * Every entry of every live attestation of {@code vault}'s period: all UTxOs at the vault's
+     * address that hold its attestation token. This is the set a customer checks.
+     */
+    public static List<Entry> liveEntries(BackendService backend, PlutusScript vault) throws Exception {
+        String unit = Plutus.policyId(vault) + HexUtil.encodeHexString(ATTEST_TOKEN);
+        List<Entry> all = new ArrayList<>();
+        for (int page = 1; ; page++) {
+            var result = backend.getUtxoService().getUtxos(address(vault), 100, page);
+            if (!result.isSuccessful() || result.getValue() == null || result.getValue().isEmpty()) break;
+            for (Utxo u : result.getValue()) {
+                if (u.getAmount().stream().anyMatch(a -> a.getUnit().equals(unit))) all.addAll(readEntries(u));
+            }
+            if (result.getValue().size() < 100) break;
+        }
+        return all;
+    }
+
     /** Locks {@code reservesLovelace} in the vault with the attestation, minting its token. */
     public static Result<String> attest(BackendService backend, PlutusScript vault, Account exchange,
-                                        long reservesLovelace, long unlockAfter, List<Entry> entries,
-                                        Groth16ProofBLS381 proof) {
+                                        long reservesLovelace, List<Entry> entries,
+                                        Groth16ProofBLS381 proof, long validToSlot) {
         String policyId = Plutus.policyId(vault);
         var p = ProverToCardano.compressProof(proof);
         var redeemer = ConstrPlutusData.builder().alternative(0).data(ListPlutusData.of(
@@ -214,11 +247,11 @@ public final class SolvencyAttestation {
                 .payToContract(address(vault),
                         List.of(new Amount("lovelace", BigInteger.valueOf(reservesLovelace)),
                                 new Amount(policyId + HexUtil.encodeHexString(ATTEST_TOKEN), BigInteger.ONE)),
-                        attestationDatum(unlockAfter, entries));
-        return submit(backend, tx, exchange, null);
+                        attestationDatum(entries));
+        return submit(backend, tx, exchange, null, validToSlot);
     }
 
-    /** Releases the reserve once the lock has expired, burning the attestation token. */
+    /** Releases the reserve once the period has ended, burning the attestation token. */
     public static Result<String> release(BackendService backend, PlutusScript vault, Account exchange,
                                          Utxo vaultUtxo, Long validFromSlot) {
         var burn = ConstrPlutusData.builder().alternative(1).data(ListPlutusData.of(BigIntPlutusData.of(0))).build();
@@ -227,10 +260,11 @@ public final class SolvencyAttestation {
                 .mintAsset(vault, List.of(new Asset("0x" + HexUtil.encodeHexString(ATTEST_TOKEN), BigInteger.ONE.negate())), burn)
                 .payToAddress(exchange.baseAddress(), Amount.ada(2))
                 .attachSpendingValidator(vault);
-        return submit(backend, tx, exchange, validFromSlot);
+        return submit(backend, tx, exchange, validFromSlot, null);
     }
 
-    private static Result<String> submit(BackendService backend, ScriptTx tx, Account exchange, Long validFrom) {
+    private static Result<String> submit(BackendService backend, ScriptTx tx, Account exchange,
+                                         Long validFrom, Long validTo) {
         try {
             var ctx = new QuickTxBuilder(backend).compose(tx)
                     .withTxEvaluator(DevKit.evaluator(backend))
@@ -239,6 +273,7 @@ public final class SolvencyAttestation {
                     .feePayer(exchange.baseAddress())
                     .collateralPayer(exchange.baseAddress());
             if (validFrom != null) ctx = ctx.validFrom(validFrom);
+            if (validTo != null) ctx = ctx.validTo(validTo);
             return ctx.complete();
         } catch (RuntimeException e) {
             return Result.error(e.getMessage());

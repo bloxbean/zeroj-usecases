@@ -111,7 +111,9 @@ class PointsLedgerVmTest extends ContractTest {
         Note first = m == IssueMutation.SHORT_OWNER
                 ? new Note(Arrays.copyOf(ALICE, 27), 10, in.blinding(), in.commitment()) : in;
         b.output(noteOut(first, m == IssueMutation.TWO_TOKENS_IN_NOTE ? 2 : 1));
-        if (m != IssueMutation.COUNT_MISMATCH && m != IssueMutation.TWO_TOKENS_IN_NOTE) b.output(noteOut(out1, 1));
+        // TWO_TOKENS_IN_NOTE keeps the output count right (2 notes for n = 2): only the
+        // one-token-per-note rule can reject it.
+        if (m != IssueMutation.COUNT_MISMATCH) b.output(noteOut(out1, m == IssueMutation.TWO_TOKENS_IN_NOTE ? 0 : 1));
         return b.buildPlutusData();
     }
 
@@ -120,9 +122,9 @@ class PointsLedgerVmTest extends ContractTest {
     // ------------------------------------------------------------------
 
     enum TransferMutation {
-        NONE, NO_SIGNER, TAMPERED_PROOF, SWAPPED_OUTPUTS, OUTPUT_COMMITMENT, EXTRA_SCRIPT_INPUT,
+        NONE, NO_SIGNER, MALFORMED_PROOF, SWAPPED_OUTPUTS, OUTPUT_COMMITMENT, EXTRA_SCRIPT_INPUT,
         EXTRA_STAKED_SCRIPT_INPUT, THREE_OUTPUTS, MINT_TWO, MINT_RECEIPT_INSTEAD, OUTPUT_TWO_TOKENS,
-        NON_CANONICAL_OUTPUT, INPUT_WITHOUT_TOKEN
+        NON_CANONICAL_OUTPUT, INPUT_WITHOUT_TOKEN, NO_NOTE_SPENT
     }
 
     @Test
@@ -138,7 +140,7 @@ class PointsLedgerVmTest extends ContractTest {
             }
         }
         for (TransferMutation m : List.of(TransferMutation.MINT_TWO, TransferMutation.EXTRA_SCRIPT_INPUT,
-                TransferMutation.EXTRA_STAKED_SCRIPT_INPUT)) {
+                TransferMutation.EXTRA_STAKED_SCRIPT_INPUT, TransferMutation.NO_NOTE_SPENT)) {
             if (evaluate(program, transferMint(m)) instanceof EvalResult.Success) fail("Split mint accepted " + m);
         }
     }
@@ -148,9 +150,14 @@ class PointsLedgerVmTest extends ContractTest {
         if (m == TransferMutation.MINT_RECEIPT_INSTEAD) mint = token(receiptName(ownRef), 1);
         b.mint(mint);
         if (m != TransferMutation.NO_SIGNER) b.signer(ALICE);
-        b.input(m == TransferMutation.INPUT_WITHOUT_TOKEN
-                ? new TxInInfo(ownRef, new TxOut(LEDGER, ada(), inline(noteDatum(in)), Optional.empty()))
-                : noteInput(in, ownRef));
+        if (m == TransferMutation.NO_NOTE_SPENT) {
+            // "Free PTS": a Split mint with no note spent (a wallet input instead).
+            b.input(new TxInInfo(ownRef, new TxOut(ALICE_WALLET, ada(), new OutputDatum.NoOutputDatum(), Optional.empty())));
+        } else {
+            b.input(m == TransferMutation.INPUT_WITHOUT_TOKEN
+                    ? new TxInInfo(ownRef, new TxOut(LEDGER, ada(), inline(noteDatum(in)), Optional.empty()))
+                    : noteInput(in, ownRef));
+        }
         if (m == TransferMutation.EXTRA_SCRIPT_INPUT) b.input(noteInput(Note.of(ALICE, 5), TestDataBuilder.randomTxOutRef_typed()));
         if (m == TransferMutation.EXTRA_STAKED_SCRIPT_INPUT) {
             Address staked = new Address(LEDGER.credential(), Optional.of(new StakingCredential.StakingHash(
@@ -176,7 +183,7 @@ class PointsLedgerVmTest extends ContractTest {
 
     private PlutusData transferSpend(TransferMutation m) {
         TxOutRef ownRef = new TxOutRef(TxId.of(filled(32, (byte) 0x44)), BigInteger.ZERO);
-        byte[] piA = m == TransferMutation.TAMPERED_PROOF ? flipped(transferProof.piA()) : transferProof.piA();
+        byte[] piA = m == TransferMutation.MALFORMED_PROOF ? flipped(transferProof.piA()) : transferProof.piA();
         var b = ScriptContextTestBuilder.spending(ownRef, noteDatum(in)).redeemer(PlutusData.constr(0,
                 PlutusData.bytes(piA), PlutusData.bytes(transferProof.piB()), PlutusData.bytes(transferProof.piC())));
         return transferTx(m, b, ownRef).buildPlutusData();
@@ -195,7 +202,7 @@ class PointsLedgerVmTest extends ContractTest {
     enum RedeemMutation {
         NONE, NO_SIGNER, PRICE_IN_REDEEMER, RECEIPT_PRICE, RECEIPT_TO_OTHER, RECEIPT_NAME_NOT_DERIVED,
         NO_RECEIPT_MINTED, ALSO_MINT_PTS, CHANGE_COMMITMENT, PRICE_ZERO, PRICE_TOO_LARGE, TWO_CHANGE_NOTES,
-        RECEIPT_WITHOUT_TOKEN
+        RECEIPT_WITHOUT_TOKEN, NO_NOTE_SPENT, TWO_NOTES_SPENT, RECEIPT_NAME_NOT_32_BYTES
     }
 
     @Test
@@ -210,22 +217,37 @@ class PointsLedgerVmTest extends ContractTest {
                 fail("Redeem spend accepted " + m);
             }
         }
-        if (evaluate(program, redeemMint(RedeemMutation.ALSO_MINT_PTS)) instanceof EvalResult.Success) {
-            fail("Receipt mint accepted an extra entry");
+        for (RedeemMutation m : List.of(RedeemMutation.ALSO_MINT_PTS, RedeemMutation.NO_NOTE_SPENT,
+                RedeemMutation.TWO_NOTES_SPENT, RedeemMutation.RECEIPT_NAME_NOT_32_BYTES)) {
+            if (evaluate(program, redeemMint(m)) instanceof EvalResult.Success) fail("Receipt mint accepted " + m);
         }
     }
 
     private ScriptContextTestBuilder redeemTx(RedeemMutation m, ScriptContextTestBuilder b, TxOutRef ownRef) {
-        byte[] receipt = m == RedeemMutation.RECEIPT_NAME_NOT_DERIVED ? filled(32, (byte) 0x77) : receiptName(ownRef);
+        byte[] receipt = switch (m) {
+            case RECEIPT_NAME_NOT_DERIVED -> filled(32, (byte) 0x77);
+            case RECEIPT_NAME_NOT_32_BYTES -> filled(31, (byte) 0x77);
+            default -> receiptName(ownRef);
+        };
         Value mint = m == RedeemMutation.NO_RECEIPT_MINTED ? Value.zero() : token(receipt, 1);
         if (m == RedeemMutation.ALSO_MINT_PTS) mint = mint.merge(token(PTS, 1));
         b.mint(mint);
         if (m != RedeemMutation.NO_SIGNER) b.signer(ALICE);
-        b.input(noteInput(in, ownRef));
+        if (m == RedeemMutation.NO_NOTE_SPENT) {
+            b.input(new TxInInfo(ownRef, new TxOut(ALICE_WALLET, ada(), new OutputDatum.NoOutputDatum(), Optional.empty())));
+        } else {
+            b.input(noteInput(in, ownRef));
+        }
+        if (m == RedeemMutation.TWO_NOTES_SPENT) b.input(noteInput(Note.of(ALICE, 5), TestDataBuilder.randomTxOutRef_typed()));
         Note c = m == RedeemMutation.CHANGE_COMMITMENT ? Note.of(ALICE, 880) : change;
         b.output(noteOut(c, 1));
         if (m == RedeemMutation.TWO_CHANGE_NOTES) b.output(noteOut(Note.of(ALICE, 0), 1));
-        long receiptPrice = m == RedeemMutation.RECEIPT_PRICE ? PRICE + 1 : PRICE;
+        long receiptPrice = switch (m) {
+            case RECEIPT_PRICE -> PRICE + 1;
+            // Redeemer and receipt agree on 119; only the proof (made for 120) can reject it.
+            case PRICE_IN_REDEEMER -> PRICE - 1;
+            default -> PRICE;
+        };
         Address to = m == RedeemMutation.RECEIPT_TO_OTHER ? ALICE_WALLET : ISSUER_ADDRESS;
         Value receiptValue = m == RedeemMutation.RECEIPT_WITHOUT_TOKEN ? ada() : ada().merge(token(receipt, 1));
         b.output(new TxOut(to, receiptValue, inline(PlutusData.constr(0,

@@ -18,11 +18,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * Demo C on Yaci DevKit: an exchange with four customers locks 2,000 ADA and attests that its
- * hidden liabilities are covered. Each customer finds and opens their own entry from chain data;
- * an auditor opens the total by homomorphism; an insolvent book cannot be proved; releasing the
- * reserve before the lock expires is rejected by the vault; after it, the release burns the
- * attestation.
+ * Demo C on Yaci DevKit: before an attestation period, an exchange with four customers locks
+ * 2,000 ADA and attests that its hidden liabilities are covered. During the period each customer
+ * checks every attestation of the period's vault from chain data and finds their entry exactly
+ * once; an auditor opens the total by homomorphism; an insolvent book cannot be proved; a second
+ * attestation and an early release are rejected by the vault. After the period the release burns
+ * the attestation.
  *
  * <p>Runs only with {@code ZEROJ_YACI_E2E=true}.
  */
@@ -36,39 +37,48 @@ class SolvencyDevKitE2ETest {
         DevKit.topUp(exchange.baseAddress(), 5_000);
 
         var solvency = new SolvencyAttestation(SolvencyCircuitTest.N);
-        var vault = solvency.vault(exchange.hdKeyPair().getPublicKey().getKeyHash());
+        long now = DevKit.chainTimeMillis(backend);
+        var period = new SolvencyAttestation.Period(now + 40_000, now + 90_000);
+        var vault = solvency.vault(exchange.hdKeyPair().getPublicKey().getKeyHash(), period);
         String vaultAddress = SolvencyAttestation.address(vault);
         List<Customer> book = SolvencyCircuitTest.book();   // 2,000 ADA of liabilities, in lovelace
         long reserves = 2_000_000_000L;
 
         assertThrows(RuntimeException.class, () -> solvency.prove(reserves - 1, book), "insolvent books have no proof");
+        var proof = solvency.prove(reserves, book);
 
-        long unlockAfter = DevKit.chainTimeMillis(backend) + 60_000;
-        var attested = SolvencyAttestation.attest(backend, vault, exchange, reserves, unlockAfter,
-                SolvencyAttestation.entries(book), solvency.prove(reserves, book));
+        // Before the period: attest, with a validity range ending at the period start.
+        var attested = SolvencyAttestation.attest(backend, vault, exchange, reserves,
+                SolvencyAttestation.entries(book), proof, DevKit.slotAt(backend, period.start()));
         assertTrue(attested.isSuccessful(), "attest: " + attested.getResponse());
         DevKit.waitForTx(backend, attested.getValue());
 
-        // Everyone reads the attestation from the chain: the vault output holding the token.
-        String tokenUnit = Plutus.policyId(vault) + HexUtil.encodeHexString(SolvencyAttestation.ATTEST_TOKEN);
-        Utxo live = DevKit.utxosOf(backend, vaultAddress, attested.getValue()).stream()
-                .filter(u -> u.getAmount().stream().anyMatch(a -> a.getUnit().equals(tokenUnit)))
-                .findFirst().orElseThrow();
-        var entries = SolvencyAttestation.readEntries(live);
+        // During the period: customers and the auditor check every live attestation of the
+        // period's vault, which they derive themselves.
+        while (DevKit.chainTimeMillis(backend) < period.start() + 2_000) Thread.sleep(2_000);
+        var entries = SolvencyAttestation.liveEntries(backend, vault);
         for (Customer c : book) {
-            assertTrue(SolvencyAttestation.customerCheck(entries, c), c.id() + " finds and opens their entry");
+            assertTrue(SolvencyAttestation.customerCheck(entries, c), c.id() + " is listed once and opens");
         }
         assertFalse(SolvencyAttestation.customerCheck(entries, Customer.of("eve", 1)), "a stranger has no entry");
         assertTrue(SolvencyAttestation.auditorCheck(entries, SolvencyAttestation.auditOpening(book)),
                 "the auditor opens total liabilities from the on-chain entries");
 
-        // Too early: the vault refuses to release the reserve.
+        // Inside the period nothing changes: a second attestation (here, the same reserves for
+        // the same book again, valid until a minute from now) and an early release are rejected.
+        E2E.assertScriptRejected(SolvencyAttestation.attest(backend, vault, exchange, reserves,
+                SolvencyAttestation.entries(book), proof,
+                DevKit.slotAt(backend, DevKit.chainTimeMillis(backend) + 60_000)), "an attestation inside the period");
+        String tokenUnit = Plutus.policyId(vault) + HexUtil.encodeHexString(SolvencyAttestation.ATTEST_TOKEN);
+        Utxo live = DevKit.utxosOf(backend, vaultAddress, attested.getValue()).stream()
+                .filter(u -> u.getAmount().stream().anyMatch(a -> a.getUnit().equals(tokenUnit)))
+                .findFirst().orElseThrow();
         E2E.assertScriptRejected(SolvencyAttestation.release(backend, vault, exchange, live,
-                DevKit.slotAt(backend, DevKit.chainTimeMillis(backend))), "an early release");
+                DevKit.slotAt(backend, DevKit.chainTimeMillis(backend))), "a release inside the period");
 
-        // After the lock: released, attestation token burned.
-        while (DevKit.chainTimeMillis(backend) < unlockAfter + 2_000) Thread.sleep(3_000);
-        var released = SolvencyAttestation.release(backend, vault, exchange, live, DevKit.slotAt(backend, unlockAfter) + 1);
+        // After the period: released, attestation token burned.
+        while (DevKit.chainTimeMillis(backend) < period.end() + 2_000) Thread.sleep(3_000);
+        var released = SolvencyAttestation.release(backend, vault, exchange, live, DevKit.slotAt(backend, period.end()) + 1);
         assertTrue(released.isSuccessful(), "release: " + released.getResponse());
         DevKit.waitForTx(backend, released.getValue());
         System.out.println("Solvency on DevKit: attest " + attested.getValue() + ", release " + released.getValue());

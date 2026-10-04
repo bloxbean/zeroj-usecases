@@ -1,5 +1,6 @@
 package com.bloxbean.cardano.zeroj.usecases.pedersen.credential;
 
+import com.bloxbean.cardano.client.crypto.Blake2bUtil;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.common.Fields;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.credential.CreditGate.Profile;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.credential.circuit.CreditProfileProof;
@@ -72,7 +73,7 @@ class CreditGateVmTest extends ContractTest {
     }
 
     enum Mutation {
-        NONE, NO_SIGNER, TAMPERED_PROOF, LOWER_THRESHOLD_PROOF, NO_RECORD, RECORD_OTHER_SCHEMA_DATUM,
+        NONE, NO_SIGNER, MALFORMED_PROOF, LOWER_THRESHOLD_PROOF, NO_RECORD, RECORD_OTHER_SCHEMA_DATUM,
         RECORD_FOR_OTHER_HOLDER, RECORD_UNDER_OTHER_POLICY, RECORD_AS_INPUT_NOT_REFERENCE, BADGE_NAME_NOT_HOLDER,
         BADGE_TO_OTHER, TWO_BADGES, EXTRA_MINT_ENTRY, OTHER_COMMITMENT, NON_CANONICAL_U, SHORT_HOLDER,
         IMPOSTOR_HOLDER
@@ -106,7 +107,7 @@ class CreditGateVmTest extends ContractTest {
             v = other.affineV();
         }
         var p = m == Mutation.LOWER_THRESHOLD_PROOF ? lowThresholdProof : proof;
-        byte[] piA = m == Mutation.TAMPERED_PROOF ? flipped(p.piA()) : p.piA();
+        byte[] piA = m == Mutation.MALFORMED_PROOF ? flipped(p.piA()) : p.piA();
 
         byte[] badgeName = m == Mutation.BADGE_NAME_NOT_HOLDER ? MALLORY : holder;
         Value mint = Value.singleton(PolicyId.of(GATE), TokenName.of(badgeName), BigInteger.valueOf(m == Mutation.TWO_BADGES ? 2 : 1));
@@ -123,12 +124,16 @@ class CreditGateVmTest extends ContractTest {
         byte[] recordPolicy = m == Mutation.RECORD_UNDER_OTHER_POLICY ? filled(28, (byte) 0x99) : BUREAU;
         BigInteger recordSigma = m == Mutation.RECORD_OTHER_SCHEMA_DATUM
                 ? CreditProfileProof.SCHEMA.digest().add(BigInteger.ONE) : CreditProfileProof.SCHEMA.digest();
-        byte[] recordName = CreditGate.recordTokenName(commitment, recordHolder);
+        // NON_CANONICAL_U: the record is made for the same u + p, so the record lookup matches and
+        // only the gate's canonical check (and the verifier's own) can reject it.
+        BigInteger recordU = m == Mutation.NON_CANONICAL_U ? u : point.affineU();
+        byte[] recordName = Blake2bUtil.blake2bHash256(Fields.concat(Fields.i2osp(recordU, 32),
+                Fields.i2osp(point.affineV(), 32), Fields.i2osp(CreditProfileProof.SCHEMA.digest(), 32), recordHolder));
         TxOut record = new TxOut(TestDataBuilder.pubKeyAddress(PubKeyHash.of(HOLDER)),
                 Value.lovelace(BigInteger.valueOf(2_000_000)).merge(
                         Value.singleton(PolicyId.of(recordPolicy), TokenName.of(recordName), BigInteger.ONE)),
                 new OutputDatum.OutputDatumInline(PlutusData.constr(0,
-                        PlutusData.integer(point.affineU()), PlutusData.integer(point.affineV()),
+                        PlutusData.integer(recordU), PlutusData.integer(point.affineV()),
                         PlutusData.integer(recordSigma), PlutusData.bytes(recordHolder))),
                 Optional.empty());
         if (m == Mutation.RECORD_AS_INPUT_NOT_REFERENCE) {

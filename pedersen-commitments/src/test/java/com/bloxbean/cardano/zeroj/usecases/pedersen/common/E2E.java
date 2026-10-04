@@ -17,6 +17,8 @@ public final class E2E {
 
     /**
      * The transaction failed, and it failed in script evaluation (not, say, for lack of funds).
+     * Evaluation is the local Julc evaluator running the script on the real transaction, as the
+     * node would; a rejected transaction is never submitted (that would cost collateral).
      * CCL reports a failing script as {@code "... Script evaluation failed for <purpose>[i] ..."}
      * when a spend is involved, and as {@code "Error while evaluating script cost"} for mint-only
      * transactions (the script's own failure is logged); both come only from the script

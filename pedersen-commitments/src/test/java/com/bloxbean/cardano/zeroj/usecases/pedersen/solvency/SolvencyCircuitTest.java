@@ -84,7 +84,7 @@ class SolvencyCircuitTest {
     }
 
     @Test
-    @DisplayName("Customer check: own entry exactly once and opening; ambiguous ids and duplicates are caught")
+    @DisplayName("Customer check: own entry exactly once and opening; understated and duplicated entries are caught")
     void customerCheck() {
         var book = book();
         List<Entry> entries = SolvencyAttestation.entries(book);
@@ -98,14 +98,13 @@ class SolvencyCircuitTest {
         var twice = new ArrayList<>(entries);
         twice.set(3, entries.getFirst());
         assertFalse(SolvencyAttestation.customerCheck(twice, alice));
-        // The encoding is unambiguous (length prefix, fixed-size salt): ids that share a prefix,
-        // with salts chosen to line up the bytes, still hash differently.
+        // Different ids give different id hashes. (The 32-byte salt is fixed-size, so id ‖ salt is
+        // already unambiguous; the length prefix keeps it so if the salt format ever changes.) What
+        // the encoding cannot stop is the exchange handing two customers the same id: ids must be
+        // identifiers the customer can confirm and no one else shares (ADR-0006).
         byte[] s = new byte[32];
-        byte[] s3 = s.clone();
-        s3[0] = '3';
-        Customer a = new Customer("12", s3, 1, BigInteger.ONE);
-        Customer b = new Customer("123", s, 1, BigInteger.ONE);
-        assertFalse(Arrays.equals(a.idHash(), b.idHash()));
+        assertFalse(Arrays.equals(new Customer("12", s, 1, BigInteger.ONE).idHash(),
+                new Customer("123", s, 1, BigInteger.ONE).idHash()));
     }
 
     @Test

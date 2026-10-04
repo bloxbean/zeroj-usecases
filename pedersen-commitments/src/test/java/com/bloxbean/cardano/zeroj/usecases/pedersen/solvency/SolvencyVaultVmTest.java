@@ -14,6 +14,7 @@ import org.julclang.ledger.OutputDatum;
 import org.julclang.ledger.PolicyId;
 import org.julclang.ledger.PubKeyHash;
 import org.julclang.ledger.ScriptHash;
+import org.julclang.ledger.StakingCredential;
 import org.julclang.ledger.TokenName;
 import org.julclang.ledger.TxInInfo;
 import org.julclang.ledger.TxOut;
@@ -40,8 +41,9 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * {@code SolvencyVault} in the Plutus VM (ADR-0006 demo C): an honest attestation and an honest
- * release after the lock are accepted; every mutation that would break S1–S5 is rejected.
+ * {@code SolvencyVault} in the Plutus VM (ADR-0006 demo C): an honest attestation before the
+ * period and an honest release after it are accepted; every mutation that would break S1–S7 is
+ * rejected.
  */
 class SolvencyVaultVmTest extends ContractTest {
 
@@ -53,7 +55,10 @@ class SolvencyVaultVmTest extends ContractTest {
     private static final Address EXCHANGE_ADDRESS = new Address(
             new Credential.PubKeyCredential(PubKeyHash.of(EXCHANGE)), Optional.empty());
     private static final long RESERVES = 2_000_000_000L;
-    private static final long UNLOCK = 1_800_000_000_000L;
+    private static final long PERIOD_START = 1_800_000_000_000L;
+    private static final long PERIOD_END = PERIOD_START + 86_400_000L;
+    private static final Address STAKED_VAULT_ADDRESS = new Address(VAULT_ADDRESS.credential(),
+            Optional.of(new StakingCredential.StakingHash(new Credential.PubKeyCredential(PubKeyHash.of(filled(28, (byte) 0x5a))))));
 
     private static Program program;
     private static List<Entry> entries;
@@ -70,6 +75,8 @@ class SolvencyVaultVmTest extends ContractTest {
                 .program().applyParams(
                         PlutusData.bytes(EXCHANGE), PlutusData.bytes(TOKEN),
                         PlutusData.integer(BigInteger.valueOf(SolvencyCircuitTest.N)),
+                        PlutusData.integer(BigInteger.valueOf(PERIOD_START)),
+                        PlutusData.integer(BigInteger.valueOf(PERIOD_END)),
                         PlutusData.bytes(vk.alpha()), PlutusData.bytes(vk.beta()),
                         PlutusData.bytes(vk.gamma()), PlutusData.bytes(vk.delta()), icData(vk.ic()));
     }
@@ -79,9 +86,9 @@ class SolvencyVaultVmTest extends ContractTest {
     // ------------------------------------------------------------------
 
     enum Attest {
-        NONE, NO_SIGNER, TAMPERED_PROOF, LESS_LOCKED, EXTRA_TOKEN_IN_VAULT, VAULT_ELSEWHERE, MISSING_ENTRY,
-        EXTRA_ENTRY, SWAPPED_ENTRIES, NON_CANONICAL_U, SHORT_ID_HASH, TWO_TOKENS, EXTRA_MINT_ENTRY,
-        VAULT_SPENT_IN_SAME_TX
+        NONE, NO_SIGNER, MALFORMED_PROOF, LESS_LOCKED, EXTRA_TOKEN_IN_VAULT, VAULT_ELSEWHERE, STAKED_VAULT,
+        MISSING_ENTRY, EXTRA_ENTRY, SWAPPED_ENTRIES, NON_CANONICAL_U, SHORT_ID_HASH, TWO_TOKENS, EXTRA_MINT_ENTRY,
+        VAULT_SPENT_IN_SAME_TX, AFTER_PERIOD_START, NO_UPPER_BOUND
     }
 
     @Test
@@ -100,8 +107,14 @@ class SolvencyVaultVmTest extends ContractTest {
     private PlutusData attestContext(Attest m) {
         Value mint = token(m == Attest.TWO_TOKENS ? 2 : 1);
         if (m == Attest.EXTRA_MINT_ENTRY) mint = mint.merge(Value.singleton(PolicyId.of(VAULT), TokenName.of(new byte[] {7}), BigInteger.ONE));
-        byte[] piA = m == Attest.TAMPERED_PROOF ? flipped(proof.piA()) : proof.piA();
+        byte[] piA = m == Attest.MALFORMED_PROOF ? flipped(proof.piA()) : proof.piA();
+        IntervalBound upper = switch (m) {
+            case AFTER_PERIOD_START -> new IntervalBound(new IntervalBoundType.Finite(BigInteger.valueOf(PERIOD_START + 1000)), false);
+            case NO_UPPER_BOUND -> new IntervalBound(new IntervalBoundType.PosInf(), true);
+            default -> new IntervalBound(new IntervalBoundType.Finite(BigInteger.valueOf(PERIOD_START)), false);
+        };
         var b = ScriptContextTestBuilder.minting(PolicyId.of(VAULT)).mint(mint)
+                .validRange(new Interval(new IntervalBound(new IntervalBoundType.NegInf(), true), upper))
                 .redeemer(PlutusData.constr(0, PlutusData.bytes(piA), PlutusData.bytes(proof.piB()), PlutusData.bytes(proof.piC())));
         if (m != Attest.NO_SIGNER) b.signer(EXCHANGE);
         if (m == Attest.VAULT_SPENT_IN_SAME_TX) {
@@ -120,7 +133,12 @@ class SolvencyVaultVmTest extends ContractTest {
         long locked = m == Attest.LESS_LOCKED ? RESERVES - 1 : RESERVES;
         Value vaultValue = Value.lovelace(BigInteger.valueOf(locked)).merge(token(m == Attest.TWO_TOKENS ? 2 : 1));
         if (m == Attest.EXTRA_TOKEN_IN_VAULT) vaultValue = vaultValue.merge(Value.singleton(PolicyId.of(filled(28, (byte) 3)), TokenName.of(new byte[] {1}), BigInteger.ONE));
-        b.output(new TxOut(m == Attest.VAULT_ELSEWHERE ? EXCHANGE_ADDRESS : VAULT_ADDRESS, vaultValue,
+        Address to = switch (m) {
+            case VAULT_ELSEWHERE -> EXCHANGE_ADDRESS;
+            case STAKED_VAULT -> STAKED_VAULT_ADDRESS;
+            default -> VAULT_ADDRESS;
+        };
+        b.output(new TxOut(to, vaultValue,
                 new OutputDatum.OutputDatumInline(attestation(published, m == Attest.NON_CANONICAL_U)), Optional.empty()));
         return b.buildPlutusData();
     }
@@ -129,10 +147,10 @@ class SolvencyVaultVmTest extends ContractTest {
     //  Release
     // ------------------------------------------------------------------
 
-    enum Release { NONE, BEFORE_UNLOCK, NO_LOWER_BOUND, NO_SIGNER, NO_BURN, TWO_VAULTS }
+    enum Release { NONE, BEFORE_PERIOD_END, NO_LOWER_BOUND, NO_SIGNER, NO_BURN, TWO_VAULTS }
 
     @Test
-    @DisplayName("Release: after the lock, with the exchange's signature and a burn; every mutation is rejected")
+    @DisplayName("Release: after the period, with the exchange's signature and a burn; every mutation is rejected")
     void release() {
         assertSuccess(evaluate(program, releaseSpend(Release.NONE)));
         assertSuccess(evaluate(program, releaseBurn(Release.NONE)));
@@ -149,7 +167,7 @@ class SolvencyVaultVmTest extends ContractTest {
     private ScriptContextTestBuilder releaseTx(Release m, ScriptContextTestBuilder b, TxOutRef ref) {
         b.mint(m == Release.NO_BURN ? Value.zero() : token(-1));
         if (m != Release.NO_SIGNER) b.signer(EXCHANGE);
-        long from = m == Release.BEFORE_UNLOCK ? UNLOCK - 1000 : UNLOCK;
+        long from = m == Release.BEFORE_PERIOD_END ? PERIOD_END - 1000 : PERIOD_END;
         IntervalBound lower = m == Release.NO_LOWER_BOUND
                 ? new IntervalBound(new IntervalBoundType.NegInf(), true)
                 : new IntervalBound(new IntervalBoundType.Finite(BigInteger.valueOf(from)), true);
@@ -189,7 +207,7 @@ class SolvencyVaultVmTest extends ContractTest {
             items[i] = PlutusData.constr(0, PlutusData.bytes(e.idHash()), PlutusData.integer(u),
                     PlutusData.integer(e.commitment().affineV()));
         }
-        return PlutusData.constr(0, PlutusData.integer(BigInteger.valueOf(UNLOCK)), PlutusData.list(items));
+        return PlutusData.constr(0, PlutusData.list(items));
     }
 
     private static Value token(long qty) {

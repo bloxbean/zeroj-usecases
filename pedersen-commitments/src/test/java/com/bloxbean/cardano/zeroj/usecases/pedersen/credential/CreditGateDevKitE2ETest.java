@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 /**
  * Demo B on Yaci DevKit: a bureau issues Alice a committed credit profile and records the
  * issuance on-chain; Alice proves {@code income ≥ 50,000 ∧ credit_score ≥ 650} to a lender's gate
- * and receives a badge, revealing nothing else. Rejected by the gate on the ledger path: the claim
+ * and receives a badge, revealing nothing else. Rejected by the gate script (local Julc evaluation, as the node would run it): the claim
  * without the issuance record, and Mallory presenting Alice's commitment with a valid proof.
  * A profile below the thresholds cannot be proved at all.
  *

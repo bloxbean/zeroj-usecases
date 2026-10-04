@@ -183,8 +183,9 @@ public final class ConfidentialPoints {
     }
 
     /**
-     * The owner spends {@code price} points at the issuer and keeps {@code change} as a new note.
-     * A receipt token goes to the issuer with datum {@code Receipt(owner, price)}.
+     * The owner spends {@code price} points at the issuer and keeps {@code change} as a new note
+     * (which may belong to someone else). A receipt token goes to the issuer with datum
+     * {@code Receipt(owner, price)}, naming the spender.
      */
     public static Result<String> redeem(BackendService backend, PlutusScript script, Account owner,
                                         String issuerAddress, Utxo noteUtxo, Note change, long price,
@@ -203,7 +204,7 @@ public final class ConfidentialPoints {
                 .payToContract(address, noteAmounts(policyId), noteDatum(change))
                 .payToContract(issuerAddress,
                         List.of(Amount.ada(2), new Amount(policyId + HexUtil.encodeHexString(receipt), BigInteger.ONE)),
-                        receiptDatum(change.owner(), price))
+                        receiptDatum(owner.hdKeyPair().getPublicKey().getKeyHash(), price))
                 .attachSpendingValidator(script);
         return submit(backend, tx, owner);
     }
