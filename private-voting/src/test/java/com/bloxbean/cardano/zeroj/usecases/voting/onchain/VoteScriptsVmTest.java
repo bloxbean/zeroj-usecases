@@ -13,7 +13,9 @@ import org.julclang.ledger.IntervalBound;
 import org.julclang.ledger.IntervalBoundType;
 import org.julclang.ledger.OutputDatum;
 import org.julclang.ledger.PolicyId;
+import org.julclang.ledger.PubKeyHash;
 import org.julclang.ledger.ScriptHash;
+import org.julclang.ledger.StakingCredential;
 import org.julclang.ledger.TokenName;
 import org.julclang.ledger.TxId;
 import org.julclang.ledger.TxInInfo;
@@ -51,6 +53,8 @@ class VoteScriptsVmTest extends ContractTest {
     private static final byte[] LIST_POLICY = filled(28, (byte) 0x1c);
     private static final Address LIST_ADDRESS = new Address(
             new Credential.ScriptCredential(ScriptHash.of(LIST_POLICY)), Optional.empty());
+    private static final Address STAKED_LIST_ADDRESS = new Address(LIST_ADDRESS.credential(),
+            Optional.of(new StakingCredential.StakingHash(new Credential.PubKeyCredential(PubKeyHash.of(filled(28, (byte) 0x5a))))));
     private static final Address WALLET = TestDataBuilder.pubKeyAddress(TestDataBuilder.randomPubKeyHash_typed());
     private static final byte[] ROOT_KEY = "VROOT".getBytes();
     private static final byte[] PREFIX = "V".getBytes();
@@ -104,8 +108,9 @@ class VoteScriptsVmTest extends ContractTest {
     // ------------------------------------------------------------------
 
     enum ZkMutation {
-        NONE, FOREIGN_ROOT, TAMPERED_PROOF, DATUM_BALLOT_CHANGED, PRE_MINTED_COPY, TWO_UNITS,
-        EXTRA_ENTRY, AFTER_DEADLINE, NO_UPPER_BOUND, NON_CANONICAL_COORDINATE, SHORT_NAME, HASHED_DATUM
+        NONE, FOREIGN_ROOT, TAMPERED_PROOF, DATUM_BALLOT_CHANGED, PRE_MINTED_COPY, PRE_MINTED_COPY_AFTER_NODE,
+        TWO_UNITS, EXTRA_ENTRY, AFTER_DEADLINE, NO_UPPER_BOUND, NON_CANONICAL_COORDINATE, NON_CANONICAL_NULLIFIER,
+        SHORT_NAME, HASHED_DATUM
     }
 
     @Test
@@ -126,11 +131,14 @@ class VoteScriptsVmTest extends ContractTest {
         var ballot = m == ZkMutation.FOREIGN_ROOT ? foreignRoot : honest;
         byte[] name = nullifierName(ballot.nullifier());
         if (m == ZkMutation.SHORT_NAME) name = Arrays.copyOfRange(name, 1, 32);
+        // N + p: the same field element, a different 32-byte name (and so a different list key).
+        if (m == ZkMutation.NON_CANONICAL_NULLIFIER) name = nullifierName(ballot.nullifier().add(JubjubCurve.BASE_FIELD_PRIME));
         var proof = m == ZkMutation.FOREIGN_ROOT ? ProverToCardano.compressProof(foreignRoot.proof()) : honestProof;
         byte[] piA = m == ZkMutation.TAMPERED_PROOF ? flipped(proof.piA()) : proof.piA();
 
         JubjubElGamal.Ciphertext stored = ballot.ciphertext();
-        if (m == ZkMutation.DATUM_BALLOT_CHANGED || m == ZkMutation.PRE_MINTED_COPY) {
+        if (m == ZkMutation.DATUM_BALLOT_CHANGED || m == ZkMutation.PRE_MINTED_COPY
+                || m == ZkMutation.PRE_MINTED_COPY_AFTER_NODE) {
             // An unproved ballot: here, the honest ballot plus an encryption of 1 (a double vote).
             stored = stored.add(JubjubElGamal.encrypt(1, BigInteger.TWO, fx.electionKey));
         }
@@ -160,7 +168,37 @@ class VoteScriptsVmTest extends ContractTest {
                 ? new OutputDatum.OutputDatumHash(DatumHash.of(filled(32, (byte) 9)))
                 : new OutputDatum.OutputDatumInline(nodeDatum);
         builder.output(new TxOut(LIST_ADDRESS, nodeValue(name, units), datum, Optional.empty()));
+        if (m == ZkMutation.PRE_MINTED_COPY_AFTER_NODE) {
+            // The dangerous order: the node (unproved ballot) first, the copy (proved datum) last.
+            // Without the one-unit rule a "last holder wins" read would verify the copy.
+            builder.output(new TxOut(WALLET,
+                    Value.lovelace(BigInteger.valueOf(2_000_000)).merge(
+                            Value.singleton(PolicyId.of(ZK_POLICY), TokenName.of(name), BigInteger.ONE)),
+                    new OutputDatum.OutputDatumInline(listElement(ballotData(ballot.ciphertext(), false), new byte[0])),
+                    Optional.empty()));
+        }
         return builder.buildPlutusData();
+    }
+
+    @Test
+    @DisplayName("Ballot policy: a valid ballot is rejected under another election id or election key (G1)")
+    void foreignParameters() {
+        var vk = ProverToCardano.compressVk(fx.circuits.ballotSetup());
+        JubjubPoint key = fx.electionKey.normalized();
+        JubjubPoint otherKey = fx.electionKey.add(JubjubElGamal.G).normalized();
+        for (int variant = 0; variant < 2; variant++) {
+            BigInteger id = variant == 0 ? VotingFixture.ELECTION_ID.add(BigInteger.ONE) : VotingFixture.ELECTION_ID;
+            JubjubPoint k = variant == 1 ? otherKey : key;
+            Program other = compileValidator(VoteZkMintingPolicy.class, Path.of("src/main/java")).program().applyParams(
+                    PlutusData.integer(id), PlutusData.integer(fx.root()),
+                    PlutusData.integer(k.affineU()), PlutusData.integer(k.affineV()),
+                    PlutusData.integer(BigInteger.valueOf(DEADLINE)),
+                    PlutusData.bytes(vk.alpha()), PlutusData.bytes(vk.beta()),
+                    PlutusData.bytes(vk.gamma()), PlutusData.bytes(vk.delta()), icData(vk.ic()));
+            if (evaluate(other, zkContext(ZkMutation.NONE)) instanceof EvalResult.Success) {
+                fail("ballot accepted under foreign " + (variant == 0 ? "election id" : "election key"));
+            }
+        }
     }
 
     private static Interval range(ZkMutation m) {
@@ -180,7 +218,8 @@ class VoteScriptsVmTest extends ContractTest {
 
     enum ListMutation {
         NONE, KEY_NOT_NULLIFIER, SECOND_LIST_INPUT, STRAY_TOKEN_IN_NODE, STRAY_TOKEN_IN_ANCHOR,
-        EXTRA_LIST_MINT, NODE_WITHOUT_NULLIFIER, NO_NULLIFIER_MINTED, TWO_NULLIFIERS_MINTED, ANCHOR_DATA_CHANGED
+        EXTRA_LIST_MINT, NODE_WITHOUT_NULLIFIER, NO_NULLIFIER_MINTED, TWO_NULLIFIERS_MINTED, ANCHOR_DATA_CHANGED,
+        ANCHOR_DATUM_EXTRA_FIELD, STAKED_CONT_OUTPUT, STAKED_NEW_OUTPUT
     }
 
     @Test
@@ -195,15 +234,69 @@ class VoteScriptsVmTest extends ContractTest {
         }
     }
 
+    enum NonRootMutation { NONE, ORDER_VIOLATION, DUPLICATE_KEY, ANCHOR_DROPS_NULLIFIER }
+
     @Test
-    @DisplayName("Vote list: the root is created only by consuming the seed, and alone")
-    void listInit() {
-        assertSuccess(evaluate(listPolicy, initContext(true, false)));
-        if (evaluate(listPolicy, initContext(false, false)) instanceof EvalResult.Success) {
-            fail("InitList accepted without consuming the seed (a second root)");
+    @DisplayName("Vote list: inserts after a vote node keep order, refuse a duplicate key and keep the anchor's nullifier")
+    void listInsertAfterNode() {
+        assertSuccess(evaluate(listPolicy, nonRootContext(NonRootMutation.NONE)));
+        for (NonRootMutation m : NonRootMutation.values()) {
+            if (m != NonRootMutation.NONE && evaluate(listPolicy, nonRootContext(m)) instanceof EvalResult.Success) {
+                fail("vote list accepted " + m);
+            }
         }
-        if (evaluate(listPolicy, initContext(true, true)) instanceof EvalResult.Success) {
-            fail("InitList accepted an extra list token");
+    }
+
+    /**
+     * Inserts the honest ballot's key after a vote node. {@code ORDER_VIOLATION} uses an anchor
+     * whose key is above the new key; {@code DUPLICATE_KEY} an anchor that already points at the
+     * new key (the voter's earlier node); {@code ANCHOR_DROPS_NULLIFIER} moves the anchor's own
+     * nullifier token out of the continuing anchor.
+     */
+    private PlutusData nonRootContext(NonRootMutation m) {
+        byte[] name = nullifierName(honest.nullifier());
+        byte[] key = Arrays.copyOfRange(name, 1, 32);
+        byte[] anchorKey = filled(31, m == NonRootMutation.ORDER_VIOLATION ? (byte) 0xff : (byte) 0x00);
+        byte[] anchorName = concat(new byte[] {0}, anchorKey);
+        byte[] anchorToken = concat(PREFIX, anchorKey);
+        byte[] anchorNext = m == NonRootMutation.DUPLICATE_KEY ? key : new byte[0];
+        byte[] nodeToken = concat(PREFIX, key);
+        PlutusData anchorBallot = ballotData(JubjubElGamal.encrypt(0, BigInteger.TEN, fx.electionKey), false);
+
+        Value anchorValue = nodeValueFor(anchorToken, anchorName);
+        var builder = ScriptContextTestBuilder.minting(PolicyId.of(LIST_POLICY))
+                .mint(Value.singleton(PolicyId.of(LIST_POLICY), TokenName.of(nodeToken), BigInteger.ONE)
+                        .merge(Value.singleton(PolicyId.of(ZK_POLICY), TokenName.of(name), BigInteger.ONE)))
+                .input(new TxInInfo(TestDataBuilder.randomTxOutRef_typed(), new TxOut(LIST_ADDRESS, anchorValue,
+                        new OutputDatum.OutputDatumInline(listElement(anchorBallot, anchorNext)), Optional.empty())))
+                .redeemer(PlutusData.constr(1, PlutusData.bytes(anchorToken), PlutusData.integer(0), PlutusData.integer(1)));
+        Value contValue = m == NonRootMutation.ANCHOR_DROPS_NULLIFIER
+                ? Value.lovelace(BigInteger.valueOf(2_000_000))
+                        .merge(Value.singleton(PolicyId.of(LIST_POLICY), TokenName.of(anchorToken), BigInteger.ONE))
+                : anchorValue;
+        builder.output(new TxOut(LIST_ADDRESS, contValue,
+                new OutputDatum.OutputDatumInline(listElement(anchorBallot, key)), Optional.empty()));
+        builder.output(new TxOut(LIST_ADDRESS, nodeValueFor(nodeToken, name),
+                new OutputDatum.OutputDatumInline(listElement(ballotData(honest.ciphertext(), false), anchorNext)),
+                Optional.empty()));
+        if (m == NonRootMutation.ANCHOR_DROPS_NULLIFIER) {
+            builder.output(new TxOut(WALLET, Value.lovelace(BigInteger.valueOf(2_000_000))
+                    .merge(Value.singleton(PolicyId.of(ZK_POLICY), TokenName.of(anchorName), BigInteger.ONE)),
+                    new OutputDatum.NoOutputDatum(), Optional.empty()));
+        }
+        return builder.buildPlutusData();
+    }
+
+    enum InitMutation { NONE, NO_SEED, EXTRA_TOKEN, ROOT_DATUM_EXTRA_FIELD, ROOT_TOKEN_ELSEWHERE }
+
+    @Test
+    @DisplayName("Vote list: the root is created only by consuming the seed, alone and exactly")
+    void listInit() {
+        assertSuccess(evaluate(listPolicy, initContext(InitMutation.NONE)));
+        for (InitMutation m : InitMutation.values()) {
+            if (m != InitMutation.NONE && evaluate(listPolicy, initContext(m)) instanceof EvalResult.Success) {
+                fail("InitList accepted " + m);
+            }
         }
     }
 
@@ -253,8 +346,11 @@ class VoteScriptsVmTest extends ContractTest {
         }
         PlutusData contData = m == ListMutation.ANCHOR_DATA_CHANGED
                 ? ballotData(honest.ciphertext(), false) : rootData;
-        builder.output(new TxOut(LIST_ADDRESS, contValue,
-                new OutputDatum.OutputDatumInline(listElement(contData, key)), Optional.empty()));
+        PlutusData contDatum = m == ListMutation.ANCHOR_DATUM_EXTRA_FIELD
+                ? PlutusData.constr(0, contData, PlutusData.bytes(key), PlutusData.integer(0))
+                : listElement(contData, key);
+        builder.output(new TxOut(m == ListMutation.STAKED_CONT_OUTPUT ? STAKED_LIST_ADDRESS : LIST_ADDRESS, contValue,
+                new OutputDatum.OutputDatumInline(contDatum), Optional.empty()));
 
         Value newValue = m == ListMutation.NODE_WITHOUT_NULLIFIER
                 ? Value.lovelace(BigInteger.valueOf(2_000_000))
@@ -263,7 +359,7 @@ class VoteScriptsVmTest extends ContractTest {
         if (m == ListMutation.STRAY_TOKEN_IN_NODE) {
             newValue = newValue.merge(Value.singleton(PolicyId.of(ZK_POLICY), TokenName.of(filled(32, (byte) 4)), BigInteger.ONE));
         }
-        builder.output(new TxOut(LIST_ADDRESS, newValue,
+        builder.output(new TxOut(m == ListMutation.STAKED_NEW_OUTPUT ? STAKED_LIST_ADDRESS : LIST_ADDRESS, newValue,
                 new OutputDatum.OutputDatumInline(listElement(ballotData(honest.ciphertext(), false), new byte[0])),
                 Optional.empty()));
         if (m == ListMutation.NODE_WITHOUT_NULLIFIER) {
@@ -274,20 +370,30 @@ class VoteScriptsVmTest extends ContractTest {
         return builder.buildPlutusData();
     }
 
-    private PlutusData initContext(boolean withSeed, boolean extraToken) {
+    private PlutusData initContext(InitMutation m) {
         Value mint = Value.singleton(PolicyId.of(LIST_POLICY), TokenName.of(ROOT_KEY), BigInteger.ONE);
-        if (extraToken) {
+        if (m == InitMutation.EXTRA_TOKEN) {
             mint = mint.merge(Value.singleton(PolicyId.of(LIST_POLICY), TokenName.of(concat(PREFIX, filled(31, (byte) 0))), BigInteger.ONE));
         }
         var builder = ScriptContextTestBuilder.minting(PolicyId.of(LIST_POLICY))
                 .mint(mint)
                 .redeemer(PlutusData.constr(0, PlutusData.integer(0)));
-        TxOutRef ref = withSeed ? SEED : new TxOutRef(TxId.of(filled(32, (byte) 0x5e)), BigInteger.valueOf(4));
+        TxOutRef ref = m != InitMutation.NO_SEED ? SEED : new TxOutRef(TxId.of(filled(32, (byte) 0x5e)), BigInteger.valueOf(4));
         builder.input(new TxInInfo(ref, new TxOut(WALLET, Value.lovelace(BigInteger.valueOf(10_000_000)),
                 new OutputDatum.NoOutputDatum(), Optional.empty())));
-        builder.output(new TxOut(LIST_ADDRESS, Value.lovelace(BigInteger.valueOf(2_000_000))
-                .merge(Value.singleton(PolicyId.of(LIST_POLICY), TokenName.of(ROOT_KEY), BigInteger.ONE)),
-                new OutputDatum.OutputDatumInline(listElement(PlutusData.constr(0), new byte[0])), Optional.empty()));
+        PlutusData rootDatum = m == InitMutation.ROOT_DATUM_EXTRA_FIELD
+                ? PlutusData.constr(0, PlutusData.constr(0), PlutusData.bytes(new byte[0]), PlutusData.integer(0))
+                : listElement(PlutusData.constr(0), new byte[0]);
+        Value rootValue = Value.lovelace(BigInteger.valueOf(2_000_000));
+        if (m != InitMutation.ROOT_TOKEN_ELSEWHERE) {
+            rootValue = rootValue.merge(Value.singleton(PolicyId.of(LIST_POLICY), TokenName.of(ROOT_KEY), BigInteger.ONE));
+        }
+        builder.output(new TxOut(LIST_ADDRESS, rootValue, new OutputDatum.OutputDatumInline(rootDatum), Optional.empty()));
+        if (m == InitMutation.ROOT_TOKEN_ELSEWHERE) {
+            builder.output(new TxOut(WALLET, Value.lovelace(BigInteger.valueOf(2_000_000))
+                    .merge(Value.singleton(PolicyId.of(LIST_POLICY), TokenName.of(ROOT_KEY), BigInteger.ONE)),
+                    new OutputDatum.NoOutputDatum(), Optional.empty()));
+        }
         return builder.buildPlutusData();
     }
 

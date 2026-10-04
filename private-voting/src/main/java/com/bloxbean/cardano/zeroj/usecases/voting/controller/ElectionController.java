@@ -57,8 +57,12 @@ public class ElectionController {
                     "label", t.label(),
                     "publicKey", VoteController.point(t.publicKey()),
                     "keyProof", t.keyProofJson())).toList());
+            body.put("ballotVerificationKey", circuitService.ballotVerificationKeyJson());
             body.put("ballotVerificationKeyHash", blake2b(circuitService.ballotVerificationKeyJson()));
             body.put("dleqVerificationKey", circuitService.dleqVerificationKeyJson());
+            var cbor = onChainVoteService.scriptCbor(config);
+            body.put("ballotPolicyScript", cbor.ballotPolicy());
+            body.put("listPolicyScript", cbor.listPolicy());
             body.put("seedRef", binding.seedRef());
             body.put("ballotPolicyId", binding.ballotPolicyId());
             body.put("listPolicyId", binding.listPolicyId());
@@ -103,6 +107,12 @@ public class ElectionController {
 
     @PostMapping("/create")
     public ResponseEntity<?> create(@RequestBody Map<String, String> request) {
+        // Replacing a finalized election would discard its trustees' key shares and make it
+        // untallyable. (The demo's endpoints are unauthenticated; a real deployment guards them.)
+        if (electionService.isFinalized()) {
+            return ResponseEntity.status(409).body(Map.of("error",
+                    "An election is finalized; restart the demo to start a new one"));
+        }
         String name = request.getOrDefault("name", "Proposal #1");
         electionService.createElection(name);
         return ResponseEntity.ok(Map.of(

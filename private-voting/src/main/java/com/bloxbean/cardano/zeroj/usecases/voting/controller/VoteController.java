@@ -145,7 +145,10 @@ public class VoteController {
         var config = electionService.getConfig();
         int ballots = 0;
         try {
-            if (config != null) ballots = onChainVoteService.getBallots(config).size();
+            // Read-only: never deploys scripts as a side effect of a status request.
+            if (config != null && onChainVoteService.isDeployed(config)) {
+                ballots = onChainVoteService.getBallots(config).size();
+            }
         } catch (Exception e) {
             log.debug("Ballot count unavailable: {}", e.getMessage());
         }

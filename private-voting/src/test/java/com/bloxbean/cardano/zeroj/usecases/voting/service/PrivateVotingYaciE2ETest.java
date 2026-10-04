@@ -1,13 +1,10 @@
-package com.bloxbean.cardano.zeroj.usecases.voting;
+package com.bloxbean.cardano.zeroj.usecases.voting.service;
 
 import com.bloxbean.cardano.client.account.Account;
 import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService;
 import com.bloxbean.cardano.client.common.model.Networks;
+import com.bloxbean.cardano.zeroj.usecases.voting.VotingFixture;
 import com.bloxbean.cardano.zeroj.usecases.voting.crypto.JubjubElGamal;
-import com.bloxbean.cardano.zeroj.usecases.voting.service.ElectionService;
-import com.bloxbean.cardano.zeroj.usecases.voting.service.OnChainVoteService;
-import com.bloxbean.cardano.zeroj.usecases.voting.service.TallyService;
-import com.bloxbean.cardano.zeroj.usecases.voting.service.VoteCircuitService;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -32,8 +29,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *   <li>Three trustees with proved keys; three voters; the scripts deployed with a one-shot
  *       root.</li>
  *   <li>Three encrypted ballots cast on-chain (YES, NO, YES).</li>
- *   <li>A second ballot by the same voter is refused; a valid proof submitted with a swapped
- *       ballot is rejected by the ballot policy.</li>
+ *   <li>On-ledger rejections: a valid proof with a swapped ballot (ballot policy), a second
+ *       ballot under the same nullifier (vote list) and, after the deadline, a ballot whose
+ *       validity range ends past it (ballot policy).</li>
  *   <li>Before the deadline the tally reveals nothing but the ballot count.</li>
  *   <li>After the deadline the sum is decrypted once: 2 YES, 1 NO; the published tally
  *       re-verifies from chain data and the manifest.</li>
@@ -78,21 +76,21 @@ class PrivateVotingYaciE2ETest {
             System.out.println("Ballot " + i + " on DevKit: " + tx);
         }
 
-        // A second ballot by voter0 (same nullifier) cannot be inserted.
+        // A second ballot by voter0 (same nullifier): the client refuses it, and when forced in
+        // after the node that already points at voter0's key, the vote list script rejects it.
         var again = prove(circuits, election, config, "voter0", 0);
         assertTrue(onChain.isNullifierUsed(config, again.nullifier()));
         assertThrows(IllegalStateException.class, () -> onChain.submitBallot(config, again));
+        assertScriptRejected(() -> onChain.submitBallotAt(config, again,
+                onChain.anchorForDuplicate(config, again.nullifier()),
+                onChain.slotAt(config.votingDeadlineMillis())), "a double vote");
 
         // A valid proof with a swapped (unproved) ballot in the datum: the ballot policy rejects it.
         var honest = prove(circuits, election, config, "voter3", 0);
         var swapped = new VoteCircuitService.BallotProof(honest.proof(), honest.nullifier(),
                 JubjubElGamal.encrypt(1, JubjubElGamal.randomScalar(new SecureRandom()), config.electionKey()),
                 honest.publicInputs());
-        var rejected = assertThrows(RuntimeException.class, () -> onChain.submitBallot(config, swapped));
-        System.out.println("Swapped ballot rejected: " + rejected.getMessage());
-        assertTrue(String.valueOf(rejected.getMessage()).toLowerCase().contains("script")
-                || String.valueOf(rejected.getMessage()).toLowerCase().contains("evaluat"),
-                "rejection must come from script evaluation: " + rejected.getMessage());
+        assertScriptRejected(() -> onChain.submitBallot(config, swapped), "a valid proof with a swapped ballot");
         assertFalse(onChain.isNullifierUsed(config, honest.nullifier()), "the rejected ballot left no trace");
 
         // Before the deadline: no decryption, only the encrypted running sum.
@@ -114,9 +112,12 @@ class PrivateVotingYaciE2ETest {
         assertTrue(verification.valid(), "published tally must re-verify");
         assertTrue(tally.tally() == result, "the tally is decrypted once and re-served");
 
-        // After the deadline no ballot can be cast (the transaction could not be valid in time).
-        var late = prove(circuits, election, config, "voter2", 1);
+        // After the deadline: the client refuses, and a ballot forced in with a validity range
+        // past the deadline is rejected by the ballot policy.
+        var late = prove(circuits, election, config, "voter3", 1);
         assertThrows(IllegalStateException.class, () -> onChain.submitBallot(config, late));
+        assertScriptRejected(() -> onChain.submitBallotAt(config, late, onChain.anchorFor(config, late.nullifier()),
+                onChain.slotAt(onChain.chainTimeMillis() + 120_000)), "a ballot after the deadline");
         System.out.println("Private election on DevKit: YES=" + result.yes() + " NO=" + result.no()
                 + " digest=" + result.ballotSetDigest());
     }
@@ -129,6 +130,18 @@ class PrivateVotingYaciE2ETest {
         return circuits.proveBallot(new VoteCircuitService.BallotWitness(config.electionId(), config.voterRoot(),
                 config.electionKey(), secret, vote, JubjubElGamal.randomScalar(new SecureRandom()),
                 path.siblings(), path.pathBits()));
+    }
+
+    private interface Submission {
+        String run() throws Exception;
+    }
+
+    /** The submission failed in script evaluation, not earlier in the client. */
+    private static void assertScriptRejected(Submission submission, String what) {
+        var rejected = assertThrows(Exception.class, submission::run, what + " must be rejected");
+        String message = String.valueOf(rejected.getMessage());
+        System.out.println("Rejected (" + what + "): " + message.substring(0, Math.min(140, message.length())));
+        assertTrue(message.contains("Script evaluation failed"), what + " must be rejected by a script: " + message);
     }
 
     private static boolean e2eEnabled() {

@@ -56,11 +56,18 @@ public class VoteListLib {
 
         boolean atScript = Builtins.equalsData(rootOutput.address(), scriptAddr);
 
-        PlutusData datum = OutputLib.getInlineDatum(rootOutput);
-        boolean emptyNext = Builtins.equalsByteString(elementNextKey(datum), Builtins.emptyByteString());
+        // The root output is exact: lovelace plus the root token, datum Constr 0 [Constr 0 [], B ""].
+        PlutusData expectedRoot = Builtins.constrData(0,
+                Builtins.mkCons(Builtins.constrData(0, Builtins.mkNilData()),
+                Builtins.mkCons(Builtins.bData(Builtins.emptyByteString()),
+                        Builtins.mkNilData())));
+        boolean emptyNext = Builtins.equalsData(OutputLib.getInlineDatum(rootOutput), expectedRoot);
+        boolean rootHeld = ValuesLib.assetOf(rootOutput.value(), policyId, rootKey).compareTo(BigInteger.ONE) == 0
+                && outerEntryCount(rootOutput.value()) == 2
+                && policyEntryCount(rootOutput.value(), policyId) == 1;
 
         BigInteger rootQty = ValuesLib.assetOf(mint, policyId, rootKey);
-        boolean rootMinted = rootQty.compareTo(BigInteger.ONE) == 0;
+        boolean rootMinted = rootQty.compareTo(BigInteger.ONE) == 0 && rootHeld;
         boolean onlyRoot = policyEntryCount(mint, policyId) == 1;
 
         return seedConsumed && atScript && emptyNext && rootMinted && onlyRoot;
@@ -138,11 +145,16 @@ public class VoteListLib {
         PlutusData contAnchor = OutputLib.getInlineDatum(contAnchorOutput);
         PlutusData newElement = OutputLib.getInlineDatum(newElementOutput);
 
-        // Anchor userData unchanged (root has unit data, stays unit)
-        boolean dataUnchanged = Builtins.equalsData(elementUserData(anchorOld), elementUserData(contAnchor));
+        // The continuing anchor's datum is exactly ListElement(old userData, newKey): same ballot
+        // (or the root's unit), next pointer moved to the new node, no extra fields. A datum the
+        // off-chain walk cannot parse would make the election untallyable.
+        boolean dataUnchanged = Builtins.equalsData(contAnchor, Builtins.constrData(0,
+                Builtins.mkCons(elementUserData(anchorOld),
+                Builtins.mkCons(Builtins.bData(newKey),
+                        Builtins.mkNilData()))));
 
         byte[] anchorOldNextKey = elementNextKey(anchorOld);
-        boolean contNextOk = Builtins.equalsByteString(elementNextKey(contAnchor), newKey);
+        boolean contNextOk = dataUnchanged;
         boolean newNextOk = Builtins.equalsByteString(elementNextKey(newElement), anchorOldNextKey);
 
         boolean insertAtEnd = Builtins.equalsByteString(anchorOldNextKey, Builtins.emptyByteString());

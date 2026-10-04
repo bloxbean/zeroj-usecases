@@ -19,6 +19,11 @@ import org.zeroj.crypto.snarkjs.SnarkjsGroth16Json;
 import org.zeroj.verifier.groth16.bls12381.Groth16BLS12381PureJavaVerifier;
 
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.TreeMap;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,8 +37,8 @@ import java.util.Map;
  *
  * <p>Keys come from a single-party <b>development</b> setup (requires
  * {@code -Dzeroj.allowInsecureTrustedSetup=true}) and are cached under {@code ./data}, keyed by
- * the circuit's fingerprint ({@code c<rows>-w<wires>-p<public>}), so a changed circuit never
- * reuses stale keys.
+ * the circuit's fingerprint ({@code c<rows>-w<wires>-p<public>}) and a SHA-256 of its constraints,
+ * so a changed circuit never reuses stale keys, even one with the same shape.
  */
 final class KeyedCircuit {
 
@@ -66,7 +71,7 @@ final class KeyedCircuit {
                 r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs());
         log.info("Circuit {}: {} constraints, {} wires, {} public inputs ({})",
                 name, r1cs.numConstraints(), r1cs.numWires(), r1cs.numPublicInputs(), fingerprint);
-        Path cache = cacheDir.resolve("setup-" + name + "-" + fingerprint + ".bin");
+        Path cache = cacheDir.resolve("setup-" + name + "-" + fingerprint + "-" + r1csDigest(r1cs.constraints()) + ".bin");
         Groth16SetupBLS381.SetupResult setup = null;
         try {
             if (Files.exists(cache)) {
@@ -123,5 +128,26 @@ final class KeyedCircuit {
         byte[] bytes = new byte[64];
         new SecureRandom().nextBytes(bytes);
         return new BigInteger(1, bytes).mod(FR);
+    }
+
+    /** SHA-256 over every constraint's A, B and C terms, in order, wires sorted; first 8 bytes, hex. */
+    static String r1csDigest(List<R1CSConstraint> constraints) {
+        try {
+            MessageDigest sha = MessageDigest.getInstance("SHA-256");
+            for (R1CSConstraint row : constraints) {
+                for (Map<Integer, BigInteger> terms : List.of(row.a(), row.b(), row.c())) {
+                    sha.update(ByteBuffer.allocate(4).putInt(terms.size()).array());
+                    for (var term : new TreeMap<>(terms).entrySet()) {
+                        sha.update(ByteBuffer.allocate(4).putInt(term.getKey()).array());
+                        byte[] coefficient = term.getValue().toByteArray();
+                        sha.update(ByteBuffer.allocate(4).putInt(coefficient.length).array());
+                        sha.update(coefficient);
+                    }
+                }
+            }
+            return HexFormat.of().formatHex(sha.digest(), 0, 8);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 }

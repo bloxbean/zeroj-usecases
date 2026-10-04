@@ -120,7 +120,7 @@ curl http://localhost:8086/api/election/manifest | python3 -m json.tool
 | POST | `/api/election/register` | Register voter (`label`, `secretKey`) |
 | POST | `/api/election/finalize` | Build voter Merkle tree |
 | POST | `/api/vote` | Cast vote (`voterLabel`, `vote`: 0=NO, 1=YES) |
-| GET | `/api/election/manifest` | Election manifest (keys, key proofs, script hashes, seed) |
+| GET | `/api/election/manifest` | Election manifest (keys and key proofs, verification keys, scripts and hashes, seed) |
 | GET | `/api/results` | Tally: encrypted sum while open; totals, shares and checks after the deadline |
 | GET | `/api/status` | System status (circuit, election, votes) |
 
@@ -208,6 +208,9 @@ private-voting/
 - **Finality.** On a public network the tally must wait for the deadline plus a finality margin;
   configure `election.tally-settle-seconds`.
 - **Locked ADA.** Each on-chain vote node locks about 2 ADA.
+- **Unauthenticated endpoints.** The demo's HTTP API is open: `GET /api/results` after the
+  deadline triggers the one-time decryption, and `POST /api/election/create` is refused once an
+  election is finalized. A real deployment authenticates trustees and the administrator.
 - **Test voters.** 5 test voters are auto-created at startup with deterministic secret keys.
 
 ## Configuration

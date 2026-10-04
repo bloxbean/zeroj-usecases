@@ -11,6 +11,7 @@ import org.zeroj.circuit.lib.jubjub.JubjubPoint;
 
 import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -70,12 +71,15 @@ public class TallyService {
         TallyResult done = decrypted.get(config.electionId());
         if (done != null) return done;
 
+        // Time first, then the ballots: once the chain is past the deadline no ballot can be added,
+        // so a set read after this check is final.
+        long now = onChainVoteService.chainTimeMillis();
         var ballots = onChainVoteService.getBallots(config);
         var aggregate = JubjubElGamal.sum(ballots.stream().map(OnChainVoteService.BallotNode::ciphertext).toList());
-        long now = onChainVoteService.chainTimeMillis();
+        String digest = ballotSetDigest(config.electionId(), onChainVoteService.scriptBinding(config).listPolicyId(), ballots);
         if (now < config.votingDeadlineMillis() + settleSeconds * 1000) {
             return new TallyResult(config.electionId(), false, config.votingDeadlineMillis(),
-                    ballots.size(), null, null, aggregate, List.of(), ballots, ballotSetDigest(ballots));
+                    ballots.size(), null, null, aggregate, List.of(), ballots, digest);
         }
 
         log.info("Voting closed; decrypting the sum of {} ballots (once)...", ballots.size());
@@ -87,10 +91,11 @@ public class TallyService {
         }
         int yes = combine(aggregate, shares, ballots.size());
         var result = new TallyResult(config.electionId(), true, config.votingDeadlineMillis(),
-                ballots.size(), yes, ballots.size() - yes, aggregate, List.copyOf(shares), ballots,
-                ballotSetDigest(ballots));
-        if (!verify(result).valid()) {
-            throw new IllegalStateException("tally failed its own verification; not publishing");
+                ballots.size(), yes, ballots.size() - yes, aggregate, List.copyOf(shares), ballots, digest);
+        var verification = verify(result);
+        if (!verification.valid()) {
+            throw new IllegalStateException("tally failed its own verification; not publishing: "
+                    + verification.checks().stream().filter(c -> !c.startsWith("ok")).toList());
         }
         decrypted.put(config.electionId(), result);
         log.info("Tally: YES={}, NO={}, ballots={}", yes, ballots.size() - yes, ballots.size());
@@ -103,8 +108,9 @@ public class TallyService {
     /**
      * Re-checks a published tally the way any observer could:
      * <ol>
-     *   <li>check the manifest: the election key is the sum of the trustee keys, and the script
-     *       hashes recompute from the manifest's parameters;</li>
+     *   <li>check the manifest: the election key is the sum of the trustee keys, the script
+     *       hashes recompute from the manifest's parameters, and the list root was created by
+     *       spending the manifest's seed;</li>
      *   <li>re-walk the vote list, recompute the ballot-set digest and {@code (ΣA, ΣB)};</li>
      *   <li>check each trustee's key proof (base {@code G}) against the election manifest;</li>
      *   <li>check each decryption-share proof with base {@code ΣA} <i>as recomputed here</i>, the
@@ -134,11 +140,14 @@ public class TallyService {
                 && binding.listPolicyId().equals(onChainVoteService.recomputeListPolicyId(config,
                         HexUtil.decodeHexString(binding.seedRef())));
         checks.add((scriptsOk ? "ok" : "FAIL") + ": script hashes recomputed from the manifest");
-        ok &= keyOk && scriptsOk;
+        boolean seedOk = onChainVoteService.rootSpendsSeed(config);
+        checks.add((seedOk ? "ok" : "FAIL") + ": list root created by spending the manifest's seed");
+        ok &= keyOk && scriptsOk && seedOk;
 
         var ballots = onChainVoteService.getBallots(config);
         var aggregate = JubjubElGamal.sum(ballots.stream().map(OnChainVoteService.BallotNode::ciphertext).toList());
-        boolean sameDigest = ballotSetDigest(ballots).equals(result.ballotSetDigest());
+        boolean sameDigest = ballotSetDigest(config.electionId(), binding.listPolicyId(), ballots)
+                .equals(result.ballotSetDigest());
         checks.add((sameDigest ? "ok" : "FAIL") + ": ballot-set digest " + result.ballotSetDigest().substring(0, 16) + "...");
         ok &= sameDigest;
         boolean sameSet = ballots.size() == result.ballots()
@@ -166,22 +175,32 @@ public class TallyService {
         }
 
         JubjubPoint m = JubjubElGamal.unmask(aggregate.ballot(), shares);
-        boolean totalOk = result.yes() != null
-                && JubjubElGamal.G.scalarMul(BigInteger.valueOf(result.yes())).projectiveEquals(m)
-                && result.yes() + result.no() == ballots.size();
+        boolean totalOk = result.yes() != null && result.no() != null
+                && result.yes() >= 0 && result.no() >= 0
+                && result.yes() + result.no() == ballots.size()
+                && JubjubElGamal.G.scalarMul(BigInteger.valueOf(result.yes())).projectiveEquals(m);
         checks.add((totalOk ? "ok" : "FAIL") + ": ΣB − ΣD = [" + result.yes() + "]·G");
         ok &= totalOk;
         return new Verification(ok, checks);
     }
 
+    private static final byte[] DIGEST_TAG =
+            "zeroj.private-voting.ballot-set.v1".getBytes(StandardCharsets.UTF_8);
+
     /**
-     * {@code blake2b_256} over the ballots sorted by nullifier, each encoded as
-     * {@code I2OSP32(N) ‖ I2OSP32(A.u) ‖ I2OSP32(A.v) ‖ I2OSP32(B.u) ‖ I2OSP32(B.v)}.
+     * {@code blake2b_256(tag ‖ I2OSP32(electionId) ‖ listPolicyId ‖ entries)}, the entries sorted by
+     * nullifier, each {@code I2OSP32(N) ‖ I2OSP32(A.u) ‖ I2OSP32(A.v) ‖ I2OSP32(B.u) ‖ I2OSP32(B.v)}.
+     * Domain-separated and bound to the election and its list, so a digest cannot be replayed for
+     * another election.
      */
-    public static String ballotSetDigest(List<OnChainVoteService.BallotNode> ballots) {
+    public static String ballotSetDigest(BigInteger electionId, String listPolicyId,
+                                         List<OnChainVoteService.BallotNode> ballots) {
         var sorted = new ArrayList<>(ballots);
         sorted.sort((a, b) -> Arrays.compareUnsigned(a.nullifier(), b.nullifier()));
         var buf = new ByteArrayOutputStream();
+        buf.writeBytes(DIGEST_TAG);
+        buf.writeBytes(OnChainVoteService.toFixedWidth(electionId, 32));
+        buf.writeBytes(HexUtil.decodeHexString(listPolicyId));
         for (var n : sorted) {
             buf.writeBytes(OnChainVoteService.toFixedWidth(new BigInteger(1, n.nullifier()), 32));
             for (BigInteger c : List.of(n.ciphertext().handle().affineU(), n.ciphertext().handle().affineV(),

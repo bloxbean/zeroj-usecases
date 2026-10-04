@@ -1,6 +1,8 @@
 package com.bloxbean.cardano.zeroj.usecases.voting.service;
 
 import com.bloxbean.cardano.client.account.Account;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.bloxbean.cardano.client.address.AddressProvider;
 import com.bloxbean.cardano.client.api.model.Amount;
 import com.bloxbean.cardano.client.api.model.Result;
@@ -24,10 +26,15 @@ import com.bloxbean.cardano.zeroj.usecases.voting.onchain.VoteZkMintingPolicy;
 import org.julclang.clientlib.JulcScriptLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.zeroj.onchain.julc.groth16.codec.ProverToCardano;
 
 import java.math.BigInteger;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -52,6 +59,11 @@ public class OnChainVoteService {
     static final byte[] PREFIX = "V".getBytes();
     static final BigInteger PREFIX_LEN = BigInteger.ONE;
     static final int NULL_KEY_WIDTH = 31;
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    @Value("${cardano.yaci.base-url:http://localhost:8080/api/v1/}")
+    private String storeUrl = "http://localhost:8080/api/v1/";
 
     private final BackendService backendService;
     private final Account adminAccount;
@@ -113,18 +125,23 @@ public class OnChainVoteService {
     public String submitBallot(ElectionService.ElectionConfig config,
                                VoteCircuitService.BallotProof ballot) throws Exception {
         Deployment d = deploy(config);
-        long ttl = deadlineSlot(config.votingDeadlineMillis());
-
-        byte[] nullFull = toFixedWidth(ballot.nullifier(), 32);
-        byte[] nullKey = Arrays.copyOfRange(nullFull, 32 - NULL_KEY_WIDTH, 32);
-        byte[] nodeTokenName = concat(PREFIX, nullKey);
+        byte[] nullKey = nullifierKey(ballot.nullifier());
         log.info("Submitting ballot on-chain (nullifier={}...)", HexUtil.encodeHexString(nullKey).substring(0, 16));
+        var anchor = findAnchor(d, registryUtxos(d), nullKey, false);
+        return submitBallotAt(config, ballot, anchor, deadlineSlot(config.votingDeadlineMillis()));
+    }
 
-        var utxos = registryUtxos(d);
-        var anchor = findAnchor(d, utxos, nullKey);
-        if (anchor == null) {
-            throw new IllegalStateException("Nullifier already in the vote list — double vote attempt");
-        }
+    /**
+     * Builds and submits the insert for {@code ballot} after {@code anchor}, valid until slot
+     * {@code ttl}. {@link #submitBallot} chooses both honestly; tests pass others to show that the
+     * scripts, not this client, reject a duplicate or a late ballot.
+     */
+    String submitBallotAt(ElectionService.ElectionConfig config, VoteCircuitService.BallotProof ballot,
+                          AnchorInfo anchor, long ttl) throws Exception {
+        Deployment d = deploy(config);
+        byte[] nullFull = toFixedWidth(ballot.nullifier(), 32);
+        byte[] nullKey = nullifierKey(ballot.nullifier());
+        byte[] nodeTokenName = concat(PREFIX, nullKey);
 
         var compressed = ProverToCardano.compressProof(ballot.proof());
         var zkRedeemer = ConstrPlutusData.builder().alternative(0).data(ListPlutusData.of(
@@ -172,8 +189,7 @@ public class OnChainVoteService {
 
     public boolean isNullifierUsed(ElectionService.ElectionConfig config, BigInteger nullifier) throws Exception {
         Deployment d = deploy(config);
-        byte[] nullFull = toFixedWidth(nullifier, 32);
-        byte[] nullKey = Arrays.copyOfRange(nullFull, 32 - NULL_KEY_WIDTH, 32);
+        byte[] nullKey = nullifierKey(nullifier);
         for (var utxo : registryUtxos(d)) {
             byte[] tokenName = findToken(utxo, d.listPolicyHex());
             if (tokenName != null && !Arrays.equals(tokenName, ROOT_KEY)
@@ -271,6 +287,57 @@ public class OnChainVoteService {
             throw new IllegalStateException("Cannot read the latest block: " + latest.getResponse());
         }
         return latest.getValue().getTime() * 1000;
+    }
+
+    /** Whether {@code config}'s scripts are deployed (without deploying them). */
+    public boolean isDeployed(ElectionService.ElectionConfig config) {
+        return deployment != null && deployment.electionId().equals(config.electionId());
+    }
+
+    /** The parameter-applied scripts, CBOR hex: hash them to check the policy ids. */
+    public record ScriptCbor(String ballotPolicy, String listPolicy) {}
+
+    public ScriptCbor scriptCbor(ElectionService.ElectionConfig config) throws Exception {
+        Deployment d = deploy(config);
+        return new ScriptCbor(d.zkScript().getCborHex(), d.listScript().getCborHex());
+    }
+
+    /**
+     * Whether the list root token was minted exactly once, with quantity 1, by a transaction that
+     * spent the manifest's seed output. Binds the seed (and so the list policy) to chain data, not
+     * to this process's memory. Reads the Blockfrost-shaped asset history and transaction UTxOs
+     * that Yaci Store serves.
+     */
+    public boolean rootSpendsSeed(ElectionService.ElectionConfig config) throws Exception {
+        Deployment d = deploy(config);
+        String seedTx = HexUtil.encodeHexString(Arrays.copyOfRange(d.seedRef(), 0, 32));
+        int seedIndex = ((d.seedRef()[32] & 0xff) << 8) | (d.seedRef()[33] & 0xff);
+        String rootUnit = d.listPolicyHex() + HexUtil.encodeHexString(ROOT_KEY);
+
+        String mintTx = null;
+        int mints = 0;
+        for (JsonNode event : getJson("assets/" + rootUnit + "/history")) {
+            if (!"MINT".equals(event.path("mint_type").asText())) return false;   // never burned
+            mints++;
+            if (event.path("quantity").asLong() != 1) return false;
+            mintTx = event.path("tx_hash").asText();
+        }
+        if (mints != 1) return false;
+        for (JsonNode in : getJson("txs/" + mintTx + "/utxos").path("inputs")) {
+            if (seedTx.equals(in.path("tx_hash").asText()) && in.path("output_index").asInt(-1) == seedIndex) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private JsonNode getJson(String path) throws Exception {
+        var request = HttpRequest.newBuilder(URI.create(storeUrl + path)).GET().build();
+        var response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            throw new IllegalStateException("GET " + path + " returned " + response.statusCode());
+        }
+        return JSON.readTree(response.body());
     }
 
     public String getRegistryAddress() {
@@ -387,7 +454,14 @@ public class OnChainVoteService {
 
     record ListDatum(PlutusData userData, byte[] nextKey) {}
 
-    private AnchorInfo findAnchor(Deployment d, List<Utxo> utxos, byte[] newKey) {
+    /**
+     * The node after which {@code newKey} belongs. Refuses a key that is already in the list
+     * (a second ballot by the same voter) unless {@code predecessorOfDuplicate}, in which case it
+     * returns the node that points at the existing key — the anchor a double-voter would have to
+     * use, which the list script rejects.
+     */
+    private AnchorInfo findAnchor(Deployment d, List<Utxo> utxos, byte[] newKey, boolean predecessorOfDuplicate) {
+        AnchorInfo found = null;
         for (var utxo : utxos) {
             byte[] tokenName = findToken(utxo, d.listPolicyHex());
             if (tokenName == null) continue;
@@ -395,12 +469,44 @@ public class OnChainVoteService {
             if (datum == null) continue;
             boolean isRoot = Arrays.equals(tokenName, ROOT_KEY);
             byte[] anchorKey = isRoot ? null : extractKey(tokenName);
-            if (!isRoot && Arrays.equals(anchorKey, newKey)) return null;
+            if (!isRoot && Arrays.equals(anchorKey, newKey)) {
+                if (!predecessorOfDuplicate) {
+                    throw new IllegalStateException("Nullifier already in the vote list — double vote attempt");
+                }
+                continue;
+            }
             boolean leftOk = isRoot || Arrays.compareUnsigned(anchorKey, newKey) < 0;
             boolean rightOk = datum.nextKey().length == 0 || Arrays.compareUnsigned(newKey, datum.nextKey()) < 0;
-            if (leftOk && rightOk) return new AnchorInfo(utxo, tokenName, datum.nextKey(), datum.userData());
+            boolean pointsAtDuplicate = predecessorOfDuplicate && Arrays.equals(datum.nextKey(), newKey);
+            if ((leftOk && rightOk) || pointsAtDuplicate) {
+                found = new AnchorInfo(utxo, tokenName, datum.nextKey(), datum.userData());
+            }
         }
-        return null;
+        if (found == null) throw new IllegalStateException("No anchor found in the vote list");
+        return found;
+    }
+
+    /** Test hook: the anchor a second ballot under an existing nullifier would have to use. */
+    AnchorInfo anchorForDuplicate(ElectionService.ElectionConfig config, BigInteger nullifier) throws Exception {
+        Deployment d = deploy(config);
+        return findAnchor(d, registryUtxos(d), nullifierKey(nullifier), true);
+    }
+
+    /** Test hook: the honest anchor for {@code nullifier}. */
+    AnchorInfo anchorFor(ElectionService.ElectionConfig config, BigInteger nullifier) throws Exception {
+        Deployment d = deploy(config);
+        return findAnchor(d, registryUtxos(d), nullifierKey(nullifier), false);
+    }
+
+    /** Test hook: the slot whose start is {@code posixMillis}, from the latest block. */
+    long slotAt(long posixMillis) throws Exception {
+        var latest = backendService.getBlockService().getLatestBlock();
+        return latest.getValue().getSlot() + (Math.floorDiv(posixMillis, 1000L) - latest.getValue().getTime());
+    }
+
+    private static byte[] nullifierKey(BigInteger nullifier) {
+        byte[] full = toFixedWidth(nullifier, 32);
+        return Arrays.copyOfRange(full, 32 - NULL_KEY_WIDTH, 32);
     }
 
     record Token(byte[] name, BigInteger quantity) {}
@@ -438,7 +544,7 @@ public class OnChainVoteService {
             var inlineDatumHex = utxo.getInlineDatum();
             if (inlineDatumHex == null || inlineDatumHex.isEmpty()) return null;
             var data = PlutusData.deserialize(HexUtil.decodeHexString(inlineDatumHex));
-            if (data instanceof ConstrPlutusData constr) {
+            if (data instanceof ConstrPlutusData constr && constr.getAlternative() == 0) {
                 var fields = constr.getData().getPlutusDataList();
                 if (fields.size() == 2 && fields.get(1) instanceof BytesPlutusData next) {
                     return new ListDatum(fields.get(0), next.getValue());

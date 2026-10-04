@@ -1,7 +1,7 @@
 # ADR-0005: Private ballots with a homomorphic tally (private-voting)
 
 - **Status:** Proposed. Implementation is on `feat/pedersen-private-ballot-and-demos`.
-- **Date:** 2026-10-04 (r2: amended after the design review)
+- **Date:** 2026-10-04 (r2: amended after the design review; r3: after the implementation review)
 - **Fixes:** [zeroj-usecases#7](https://github.com/bloxbean/zeroj-usecases/issues/7)
 - **Related:** ZeroJ ADR-0051 (Pedersen commitment profiles; finding F7, scope item D8),
   ZeroJ ADR-0037/0038 (Jubjub gadget hardening), [ADR-0006](0006-pedersen-commitment-demos.md).
@@ -101,17 +101,21 @@ contains:
 - `electionId`, `voterRoot` and `votingDeadline`;
 - every `PK_j` with `π_key_j`;
 - `PK`;
-- the hashes of the ballot verification key and the DLEQ verification key;
+- the full ballot and DLEQ verification keys;
+- the two parameter-applied scripts (CBOR);
 - the seed output reference;
 - the two script hashes.
 
 A verifier:
 1. checks every key proof and recomputes `PK = Σ PK_j`;
-2. **recomputes both script hashes** from the manifest's parameters;
-3. reads ballots only from the list whose policy has the recomputed hash.
+2. hashes the published scripts, and checks their parameters against the manifest's values;
+3. checks on-chain that the list root token was **minted exactly once, with quantity 1, by the
+   transaction that spent the seed**, using the token's mint history and that transaction's
+   inputs;
+4. reads ballots only from the list whose policy has that hash.
 
 A second list built with the same ballot policy, but a different seed, is not the official list
-and is ignored.
+and is ignored. The demo's own verification performs steps 1–3 against its deployment.
 
 ### Ballot
 
@@ -178,8 +182,15 @@ M = ΣB − Σ_j D_j = [T]·G,     T = the unique t ∈ [0, |𝔅|] with [t]·G 
 ```
 
 `T` is found by linear search. YES is `T` and NO is `|𝔅| − T`. If no `t` matches, the tally is
-refused. The published result carries a **ballot-set digest**, `blake2b_256` over the sorted
-`(N, A.u, A.v, B.u, B.v)` encodings, so anyone can confirm it was computed over the set they see.
+refused. The published result carries a **ballot-set digest**, so anyone can confirm it was
+computed over the set they see:
+
+```
+blake2b_256("zeroj.private-voting.ballot-set.v1" ‖ I2OSP32(electionId) ‖ listPolicyId ‖ entries)
+```
+
+Each entry is `I2OSP32(N) ‖ I2OSP32(A.u) ‖ I2OSP32(A.v) ‖ I2OSP32(B.u) ‖ I2OSP32(B.v)`, and the
+entries are sorted by `N`. The chain tip time is read before the ballots, so the set read is final.
 
 **Relation `R_dleq`.**
 - Public, in this order: `X.u, X.v, P.u, P.v, D.u, D.v`.
@@ -192,7 +203,15 @@ harmless, since `D` must then be `O`.
 
 **Single decryption.** Trustees decrypt exactly once per election, over the final ballot set. The
 result is stored and re-served. A second decryption over a different set is refused (V7). In
-this demo the trustees run inside the backend, which enforces the rule.
+this demo the trustees run inside the backend, which enforces the rule. The trustee secrets live
+in memory only, so a restart cannot decrypt again either.
+
+The demo's HTTP endpoints are unauthenticated:
+- a `GET /api/results` after the deadline triggers the one decryption;
+- `POST /api/election/create` is refused once an election is finalized, because replacing it would
+  discard the trustees' shares.
+
+A real deployment authenticates trustees and the administrator.
 
 ### On-chain (Plutus V3 via Julc)
 
@@ -221,14 +240,19 @@ Every public input comes from the parameters or the ledger.
 - Parameters: `rootKey`, `prefix`, `prefixLen`, `zkPolicyId`, and `seedRef = txId ‖ I2OSP2(index)`.
 
 5. `InitList` must consume the seed output. The policy's mint entry must be exactly the root
-   token (G5).
+   token (G5). The root output is exact: lovelace plus the root token, with datum
+   `Constr 0 [Constr 0 [], B ""]`.
 6. `InsertNode` spends **exactly one** input at the list script's payment credential, the anchor
    (G3).
 7. `InsertNode` requires:
    - the list policy's mint entry is exactly one new token;
    - exactly one token is minted under `zkPolicyId`, with quantity 1 and a 32-byte name;
    - the new key equals the **low 31 bytes of that name** (G2).
-8. **Values are exact.**
+8. **Values and datums are exact.**
+   - The continuing anchor's datum is exactly `ListElement(old userData, B newKey)`. An extra
+     field would be accepted by a field-by-field read on-chain but rejected by the off-chain walk,
+     which would make the election untallyable. Anyone who copies a ballot transaction from the
+     mempool could do that.
    - The new node holds lovelace, one new list token and one unit of `N`, and nothing else.
    - The continuing anchor holds lovelace plus exactly the anchor's tokens: its list token and,
      unless it is the root, its own nullifier token.
@@ -290,7 +314,7 @@ each key once. The new key is derived from `N`, so each eligible voter can inser
 | V9 | The key setup is sound. | Proof of possession per `PK_j`; distinct keys; `PK ≠ O` |
 | V10 | On-chain integers are canonical. | Every public input and token-derived scalar is checked `< p` |
 | V11 | The ballot set is the whole list. | Root walk, full coverage, per-node checks, fail closed, published digest |
-| V12 | The scripts are the published election. | Manifest; script hashes recomputed by verifiers |
+| V12 | The scripts are the published election. | Manifest with full keys and scripts; hashes recomputed; root minted once by the seed's spender |
 
 ## Alternatives considered
 
@@ -343,8 +367,10 @@ each key once. The new key is derived from `N`, so each eligible voter can inser
   - stray tokens in the new node or the continuing anchor;
   - extra list or nullifier mint entries;
   - non-canonical coordinates.
-- **DevKit:** cast ballots, reject a double vote, close at the deadline, walk the list, tally,
-  and verify every share and the manifest.
+- **DevKit:** cast ballots; on-ledger script rejections of a swapped ballot, a double vote
+  forced past the client, and a ballot valid past the deadline; close; walk the list; tally;
+  verify every share, the manifest and the seed binding.
+- **Mutation checks:** removing the one-unit rule or the exact anchor datum makes a VM test fail.
 
 ## Production gates (not met by this demo)
 
