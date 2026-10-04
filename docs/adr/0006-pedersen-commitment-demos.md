@@ -216,8 +216,20 @@ share one hash.
 - Parameters: `exchangePkh`, the attestation token name, `N`, `periodStart`, `periodEnd` (POSIX ms)
   and the verification key for `N` entries (`N = 4` in the demo).
 - Each period therefore has its own script hash. The exchange announces its periods publicly, as
-  a schedule. A customer checks the period everyone checks; one that was told to them privately
-  proves nothing.
+  a schedule. The schedule publishes **every** vault parameter set used for a period. Customers
+  and the auditor add up across all of them. A period told to a customer privately proves nothing.
+- `periodStart < periodEnd` is enforced off-chain, when the vault is derived. A malformed vault
+  cannot fool customers, because they derive the vault from the schedule themselves.
+
+**What the period guarantees.** The guarantee holds **per period**. Within one period, every
+attestation is locked over the whole period at once, so its reserves are counted once. A check
+covers only the period checked.
+
+With a recurring schedule, such as monthly periods, the exchange could list one group of
+customers only in one period and another group only in the next, backed by the same funds. That
+is the omission limitation, applied per period. So:
+- each period's attestations must cover the whole book;
+- customers should check every period they rely on, and in particular the current one.
 
 **Attest (minting purpose).**
 - The exchange signs, and no vault output is spent.
