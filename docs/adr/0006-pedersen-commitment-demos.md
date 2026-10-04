@@ -136,10 +136,10 @@ given to recipients off-chain; that delivery channel is out of scope.
 ## B. Committed credential gate
 
 A credit bureau issues one vector commitment to a holder's profile. The schema is
-`zeroj.demo.credit-profile` v1, with entries `income/64, creditScore/16, birthYear/16,
+`zeroj.demo.credit-profile` v1, with entries `income/64, credit_score/16, birth_year/16,
 country/16`. A lender's gate mints an access badge when the holder proves
-`income ≥ minIncome ∧ creditScore ≥ minScore`. The proof reveals nothing else, and in particular
-not `birthYear` or `country`.
+`income ≥ minIncome ∧ credit_score ≥ minScore`. The proof reveals nothing else, and in particular
+not `birth_year` or `country`.
 
 **Issuance record.**
 - The bureau's native-script policy mints a record token named
@@ -175,7 +175,7 @@ nothing on its own.
 | C1 | Statement binding: `σ` is a public input fixed by the gate's parameters. |
 | C2 | Provenance: no record, no badge. The record token name commits to `(u, v, σ, holder)` (fail closed). |
 | C3 | Holder binding: the record names the holder; the holder signs; the badge is named after the holder and paid to the holder. |
-| C4 | Predicates: `income ≥ minIncome` and `creditScore ≥ minScore`, with the thresholds from the parameters. |
+| C4 | Predicates: `income ≥ minIncome` and `credit_score ≥ minScore`, with the thresholds from the parameters. |
 | C5 | Canonical integers and exact lengths. |
 
 **Not provided:**

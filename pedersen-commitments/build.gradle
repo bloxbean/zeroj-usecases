@@ -1,0 +1,102 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.bloxbean.cardano.zeroj.usecases'
+// Release version: repo-wide version.properties (single source), overridable with -PreleaseVersion.
+version = project.findProperty('releaseVersion') ?: {
+    for (def dir = projectDir; dir != null; dir = dir.parentFile) {
+        def vf = new File(dir, 'version.properties')
+        if (vf.isFile()) { def p = new Properties(); vf.withInputStream { p.load(it) }; return p.getProperty('version') }
+    }
+    return '0.1.0-SNAPSHOT'
+}()
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+    maven {
+        url = uri("https://central.sonatype.com/repository/maven-snapshots")
+        content { snapshotsOnly() }
+    }
+}
+
+def usecaseVersionsScript = {
+    def dir = projectDir
+    while (dir != null) {
+        def candidate = new File(dir, 'gradle/usecase-versions.gradle')
+        if (candidate.isFile()) {
+            return candidate
+        }
+        dir = dir.parentFile
+    }
+    throw new GradleException('Could not find gradle/usecase-versions.gradle')
+}()
+apply from: usecaseVersionsScript
+
+dependencies {
+    // ZeroJ — circuits, Pedersen gadgets, Groth16 prover/verifier, on-chain verifier library
+    implementation "org.zeroj:zeroj-api:${zerojVersion}"
+    implementation "org.zeroj:zeroj-circuit-dsl:${zerojVersion}"
+    implementation "org.zeroj:zeroj-circuit-lib:${zerojVersion}"
+    implementation "org.zeroj:zeroj-circuit-annotation-api:${zerojVersion}"
+    annotationProcessor "org.zeroj:zeroj-circuit-annotation-processor:${zerojVersion}"
+    implementation "org.zeroj:zeroj-crypto:${zerojVersion}"
+    implementation "org.zeroj:zeroj-codec:${zerojVersion}"
+    implementation "org.zeroj:zeroj-verifier-groth16:${zerojVersion}"
+    implementation "org.zeroj:zeroj-onchain-julc:${zerojVersion}"
+    annotationProcessor "org.zeroj:zeroj-onchain-julc:${zerojVersion}"
+
+    // Julc — Java to Plutus V3
+    implementation "org.julclang:julc-stdlib:${julcVersion}"
+    annotationProcessor "org.julclang:julc-annotation-processor:${julcVersion}"
+    implementation "org.julclang:julc-cardano-client-lib:${julcVersion}"
+    runtimeOnly "org.julclang:julc-vm-java:${julcVersion}"
+
+    // Cardano Client Lib — transactions against Yaci DevKit
+    implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
+    implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
+    runtimeOnly 'org.slf4j:slf4j-simple:2.0.16'
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation "org.julclang:julc-testkit:${julcVersion}"
+    testRuntimeOnly "org.julclang:julc-vm-java:${julcVersion}"
+}
+
+application {
+    mainClass = 'com.bloxbean.cardano.zeroj.usecases.pedersen.PedersenDemos'
+    applicationDefaultJvmArgs = ['--enable-native-access=ALL-UNNAMED', '-Dzeroj.allowInsecureTrustedSetup=true']
+}
+
+// Fork the compiler for the Julc annotation processor on Java 25
+compileJava {
+    options.compilerArgs.add('-proc:full')
+    options.fork = true
+    options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED']
+}
+compileTestJava {
+    options.compilerArgs.add('-proc:full')
+    options.fork = true
+    options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED']
+}
+
+test {
+    useJUnitPlatform()
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    maxHeapSize = '4g'
+    systemProperty "zeroj.allowInsecureTrustedSetup", "true"
+    systemProperty "zeroj.yaci.e2e", System.getenv("ZEROJ_YACI_E2E") ?: ""
+    environment "ZEROJ_YACI_E2E", System.getenv("ZEROJ_YACI_E2E") ?: ""
+    testLogging {
+        events "passed", "failed", "skipped"
+        showStandardStreams = true
+    }
+}
