@@ -13,8 +13,12 @@ import java.math.BigInteger;
 import java.util.Optional;
 
 /**
- * Sorted linked list validator for vote nullifiers.
- * Adapted from LinkedListValidator in julc-examples.
+ * The vote list: a sorted linked list of ballots keyed by nullifier (ADR-0005). Adapted from
+ * LinkedListValidator in julc-examples.
+ *
+ * <p>The minting purpose validates every change to the list; the spending purpose only requires
+ * that it runs. {@code seedRef} ({@code txId ‖ I2OSP2(index)}) names an output that
+ * {@code InitList} must consume, so the root can be created only once.
  */
 @MultiValidator
 public class VoteListValidator {
@@ -23,6 +27,7 @@ public class VoteListValidator {
     @Param static byte[] prefix;
     @Param static BigInteger prefixLen;
     @Param static byte[] zkPolicyId;
+    @Param static byte[] seedRef;
 
     sealed interface ListAction permits InitList, InsertNode {}
     record InitList(BigInteger rootOutputIndex) implements ListAction {}
@@ -43,7 +48,8 @@ public class VoteListValidator {
                         Optional.empty());
                 TxOut rootOutput = txInfo.outputs().get(init.rootOutputIndex().intValue());
                 yield VoteListLib.validateInit(
-                        rootOutput, txInfo.mint(), policyBytes, rootKey, scriptAddr);
+                        rootOutput, txInfo.mint(), policyBytes, rootKey, scriptAddr,
+                        txInfo.inputs(), seedRef);
             }
             case InsertNode insert -> {
                 Address scriptAddr = new Address(
@@ -52,7 +58,7 @@ public class VoteListValidator {
                 TxInInfo anchorInput = OutputLib.findInputWithToken(
                         txInfo.inputs(), policyBytes, policyBytes, insert.anchorTokenName());
                 yield VoteListLib.validateInsert(
-                        anchorInput.resolved(), txInfo.outputs(),
+                        anchorInput.resolved(), txInfo.inputs(), txInfo.outputs(),
                         txInfo.mint(), policyBytes, rootKey, prefix, prefixLen.intValue(),
                         scriptAddr, zkPolicyId);
             }

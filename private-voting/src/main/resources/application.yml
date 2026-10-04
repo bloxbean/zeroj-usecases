@@ -19,10 +19,15 @@ cardano:
 
 zk:
   tree-depth: 10
-  pot-power: 13
 
 election:
   # Number of test voter accounts to create at startup
   voter-count: 5
   # Default election name
   default-name: "ZeroJ DAO Proposal #1"
+  # Trustees who jointly hold the election key (n-of-n; all are needed to decrypt the tally)
+  trustee-count: 3
+  # Ballots are accepted on-chain until this many seconds after the election is finalized
+  voting-window-seconds: 600
+  # The tally is decrypted once, this long after the deadline, so late blocks are indexed
+  tally-settle-seconds: 20
