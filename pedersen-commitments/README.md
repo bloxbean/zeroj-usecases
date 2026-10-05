@@ -6,6 +6,11 @@ Three small use cases built on ZeroJ's Pedersen commitments (`pedersen-jubjub-v1
 - Plutus V3 validators written in Java with Julc;
 - transactions built with cardano-client-lib.
 
+A web UI (Spring Boot + Svelte, port **8093**) has one tab per demo. Each tab shows the
+**private** side (the openings the wallets hold) next to the **on-chain** side (what anyone can
+read), and offers "try to cheat" actions that end in "no proof possible" or a validator
+rejection. A CLI walkthrough and the test suites run the same flows.
+
 Design and threat model: [ADR-0006](../docs/adr/0006-pedersen-commitment-demos.md).
 
 ## Why Pedersen commitments
@@ -96,20 +101,51 @@ proves that the hidden total is at most `R`. This follows the Provisions approac
 
 ## Run
 
-```bash
-# Yaci DevKit running (yaci-cli devkit start); Java 25. Script rejections in the tests are
-# the scripts failing in local Julc evaluation, as the node would run them; rejected
-# transactions are not submitted.
-sdk use java 25.0.2-graal
+Yaci DevKit must be running (`yaci-cli devkit start`), with Java 25 (`sdk use java 25.0.2-graal`).
 
-./gradlew test                       # circuits, checks, Plutus VM mutation tests
-ZEROJ_YACI_E2E=true ./gradlew test   # + the three DevKit end-to-end tests
-./gradlew run                        # narrated walkthrough of all three demos on DevKit
+**Web UI.**
+
+```bash
+./gradlew clean bootJar -PwithFrontend      # builds the Svelte UI into the jar
+java --enable-native-access=ALL-UNNAMED -Dzeroj.allowInsecureTrustedSetup=true \
+  -jar build/libs/pedersen-commitments-*.jar
+# open http://localhost:8093
 ```
 
-Set `ZEROJ_YACI_STORE_URL` / `ZEROJ_YACI_ADMIN_URL` if DevKit uses non-default ports. The first
-run performs single-party development setups (cached in `data/`); this needs
-`-Dzeroj.allowInsecureTrustedSetup=true`, which the build passes for tests and `run`.
+You can also start it from the repository root with Docker: `./demo.sh pedersen` (add `--run`
+for a scripted happy path). The image needs a ZeroJ release that includes the Pedersen
+commitment profiles (ADR-0051). Until that release, use the jar above, which builds against the
+version in `version.properties`.
+
+On first start the app compiles the four circuits and runs single-party **development** setups,
+cached in `data/` and keyed by an R1CS digest. It also creates and funds its demo wallets with
+DevKit's top-up API. `/api/status` reports each demo as `ready`; the UI waits for that.
+
+What each tab does:
+
+| Tab | Steps | Try to cheat |
+|---|---|---|
+| A. Confidential points | The retailer issues points; holders transfer them (amounts hidden) and redeem at a public price (a receipt token goes to the retailer). | Transfer more than the largest note holds: no proof possible. Spend someone else's note: the script rejects it. |
+| B. Committed credential | The bureau issues a profile (four attributes, one commitment) and records it; Alice claims a badge against the lender's thresholds. | A threshold above her profile: no proof possible. Mallory presents Alice's commitment with a valid proof: the gate rejects it, because the record names Alice. |
+| C. Hidden-liability solvency | Edit the book (4 customers); attest with locked reserves for a period that starts about 45 s later and lasts 180 s; customers check; the auditor opens the total; release after the period. | Lock less than the book: no proof possible. Attest again, or release, inside the period: the vault rejects it. |
+
+Configuration (`application.yml`, or environment variables with Spring's relaxed binding):
+- `cardano.yaci.base-url` and `cardano.yaci.admin-url`;
+- `cardano.blockfrost.base-url`, which overrides the provider;
+- `solvency.period-lead-seconds` and `solvency.period-length-seconds`.
+
+**CLI walkthrough and tests.**
+
+```bash
+./gradlew walkthrough                # narrated run of all three demos on DevKit (no UI)
+./gradlew test                       # circuits, checks, Plutus VM mutation tests
+ZEROJ_YACI_E2E=true ./gradlew test   # + the three DevKit end-to-end tests
+```
+
+The walkthrough and the tests read `ZEROJ_YACI_STORE_URL` / `ZEROJ_YACI_ADMIN_URL` when DevKit
+uses non-default ports. Script rejections in the tests are the scripts failing in local Julc
+evaluation of the real transaction, as the node would run them; rejected transactions are not
+submitted.
 
 ## Measured
 
@@ -128,13 +164,19 @@ src/main/java/.../pedersen/
   points/       ConfidentialPoints; circuit/PointsTransferProof, PointsRedeemProof; onchain/PointsLedger
   credential/   CreditGate; circuit/CreditProfileProof; onchain/CreditGatePolicy
   solvency/     SolvencyAttestation; circuit/HiddenLiabilitySolvencyProof; onchain/SolvencyVault
-  PedersenDemos.java   the walkthrough (./gradlew run)
+  web/          Spring services and REST API behind the UI (PointsService, CreditService,
+                SolvencyService, DemoController, DemoErrors, Funding)
+  PedersenCommitmentsApplication.java   the web app (port 8093)
+  PedersenDemos.java                    the CLI walkthrough (./gradlew walkthrough)
+frontend/       Svelte 5 + Vite UI, built into src/main/resources/static
 ```
 
 ## Important
 
 - **Dev trusted setup only.** Whoever holds the toxic waste can forge proofs. Production needs
   an MPC ceremony.
-- **Openings are delivered off-chain.** The demos hand them over in-process.
+- **Openings are delivered off-chain.** The demos hand them over in-process. The web demo's
+  server holds every wallet's keys and openings on the users' behalf, and its API is
+  unauthenticated.
 - **Not audited.** These are demos of protocol patterns, not production systems; see the
   "Not provided" lists above and ADR-0006.
