@@ -1,14 +1,19 @@
 # ADR-0005: Private ballots with a homomorphic tally (private-voting)
 
 - **Status:** Proposed. Implementation is on `feat/pedersen-private-ballot-and-demos`.
-- **Date:** 2026-10-04 (r2: amended after the design review; r3: after the implementation review)
+- **Date:** 2026-10-04 (r2: amended after the design review; r3: after the implementation review;
+  r4, 2026-10-05: ElGamal moved to ZeroJ's `elgamal-jubjub-v1`, see
+  [On ZeroJ `elgamal-jubjub-v1`](#on-zeroj-elgamal-jubjub-v1-r4))
 - **Fixes:** [zeroj-usecases#7](https://github.com/bloxbean/zeroj-usecases/issues/7)
-- **Related:** ZeroJ ADR-0051 (Pedersen commitment profiles; finding F7, scope item D8),
-  ZeroJ ADR-0037/0038 (Jubjub gadget hardening), [ADR-0006](0006-pedersen-commitment-demos.md).
+- **Related:** ZeroJ ADR-0052 and `docs/specs/elgamal-jubjub-v1.md` (exponential ElGamal on
+  Jubjub; this demo is its milestone M3 consumer), ZeroJ ADR-0051 (Pedersen commitment profiles;
+  finding F7, scope item D8), ZeroJ ADR-0037/0038 (Jubjub gadget hardening),
+  [ADR-0006](0006-pedersen-commitment-demos.md).
 - **Risk:** R2. This is a protocol integration with on-chain binding. It uses
-  only primitives ZeroJ already implements and tests: Jubjub arithmetic, Poseidon, Groth16, and
-  the Plutus V3 Groth16 verifier. No new primitive is implemented. The ballot and decryption relations are new
-  to this repository, though, so they are specified exactly here and reviewed like R3 relations.
+  only primitives ZeroJ already implements and tests: Jubjub arithmetic, Poseidon, Groth16, the
+  Plutus V3 Groth16 verifier and, since r4, the `elgamal-jubjub-v1` relations and host API. No
+  new primitive is implemented here. The ballot relation is new to this repository, though, so it
+  is specified exactly here and reviewed like an R3 relation.
 
 ## Context
 
@@ -68,8 +73,8 @@ remove the blinding from the *sum*, because they hold the key behind that base.
 
 - `𝔾` is the Jubjub prime-order subgroup, of order `l`. `G` is `JubjubPoint.SUBGROUP_GENERATOR`,
   the value base of `pedersen-jubjub-v1`. `p` is the BLS12-381 scalar field.
-- Random scalars are 64 bytes reduced mod `l` (`PedersenCommitment.randomBlinding`, as in ZeroJ
-  ADR-0051 D2).
+- Random scalars are 64 bytes reduced mod `l` (`elgamal-jubjub-v1` §2, the `pedersen-jubjub-v1`
+  sampler; secret keys are resampled at zero).
 - `I2OSP32(x)` is the 32-byte big-endian encoding.
 
 ### Election key
@@ -92,7 +97,8 @@ across elections; that is the trustee's own choice and does not affect the other
 **script parameter**, never a value the prover supplies. That is why its subgroup membership can
 be discharged once, off-chain, by anyone who checks the manifest. A general on-chain consumer of
 a public point cannot rely on that; this case can, and only because the point is fixed by the
-script (cf. ZeroJ `ZkPedersenCommitment.fromVerifierCheckedPublic`).
+script. This is the verifier obligation of ZeroJ's `ZkElGamalPublicKey.fromVerifierFixedPublic`
+(`elgamal-jubjub-v1` §9.3, item 2).
 
 ### Election manifest
 
@@ -134,21 +140,23 @@ B = [v]·G + [k]·PK                 vote, blinded by the election key
 
 It proves:
 
-1. `v` is boolean (`ZkBool`).
+1. `v` is a 1-bit value (`@UInt(bits = 1) ZkUInt`; its decomposition's single bit).
 2. `k` is decomposed once, to 252 bits. **The same decomposition** drives `A = [k]·G` (fixed
    base) and `[k]·PK` (variable base). If `A` and `B` used different scalars, a voter could add
    an arbitrary offset to the decrypted sum. Both bases are in `𝔾`, so only `k mod l` matters,
    and `k ≥ l` is harmless.
 3. `[v]·G` is a selection between `G` and the identity. Then `B = [v]·G + [k]·PK`.
-4. `PK` is bound with the curve equation (`witnessAffine`) and is not the identity.
+4. `PK` is bound with the curve equation and is not the identity (`u ≠ 0`, which also excludes
+   the order-2 point `(0, −1)`).
 5. `Poseidon(s, 0)` is a member of `voterRoot` (depth-d Merkle path), and
    `N = Poseidon(s, electionId)`.
 6. `A` and `B` equal the public affine coordinates. Both are computed in-circuit from subgroup
    bases, so both are in `𝔾`.
 
-`k`, and the trustee secret `x` in `R_dleq`, are guarded as hiding scalars
-(`requireNotPublicOrConstant`, `requireHidingRange(252)`). A narrow `k` would let anyone
-brute-force `B`.
+Items 1–4 and 6 are exactly ZeroJ's `R_enc(1)` (`elgamal-jubjub-v1` §9.1), with `PK` entered as
+a verifier-fixed public key (`ZkElGamalPublicKey.fromVerifierFixedPublic`). `k`, and the trustee
+secret `x` in `R_dleq`, are guarded as hiding scalars (`requireNotPublicOrConstant`,
+`requireHidingRange(252)`, `requireHidingBits`). A narrow `k` would let anyone brute-force `B`.
 
 ### Tally
 
@@ -181,8 +189,9 @@ Votes cannot land after the deadline, because the ballot policy enforces the val
 M = ΣB − Σ_j D_j = [T]·G,     T = the unique t ∈ [0, |𝔅|] with [t]·G = M
 ```
 
-`T` is found by linear search. YES is `T` and NO is `|𝔅| − T`. If no `t` matches, the tally is
-refused. The published result carries a **ballot-set digest**, so anyone can confirm it was
+`T` is found by a bounded search over `[0, |𝔅|]` (`ElGamal.decrypt`; each admitted ballot
+carries the bound 1, so the sum carries `|𝔅|`). YES is `T` and NO is `|𝔅| − T`. If no `t`
+matches, the tally is refused. The published result carries a **ballot-set digest**, so anyone can confirm it was
 computed over the set they see:
 
 ```
@@ -199,7 +208,10 @@ entries are sorted by `N`. The chain tip time is read before the ballots, so the
 It proves `P = [x]·G` (fixed base) and `D = [x]·X` (variable base, the same decomposition), with
 `X` bound by the curve equation. `X` is chosen by the verifier: `G` for key proofs, and the
 recomputed `ΣA` for decryption. Each `A_i` is proved to be `[k_i]·G`, so `X ∈ 𝔾`. `X = O` is
-harmless, since `D` must then be `O`.
+harmless, since `D` must then be `O`. This is ZeroJ's `R_dleq` (`elgamal-jubjub-v1` §9.2,
+`ZkElGamal.assertDiscreteLogEquality`), which refuses at definition time any of the six
+coordinates that is not a public input. The host never assembles these six values itself: the
+library's `DleqStatement` supplies them.
 
 **Single decryption.** Trustees decrypt exactly once per election, over the final ballot set. The
 result is stored and re-served. A second decryption over a different set is refused (V7). In
@@ -299,6 +311,83 @@ each key once. The new key is derived from `N`, so each eligible voter can inser
   with prefix `"V"`. The root token is `"VROOT"`.
 - Public-input orders are as listed for `R_ballot` and `R_dleq`.
 
+These encodings did not change in r4. The ballot's affine coordinates are the `elgamal-jubjub-v1`
+ciphertext public inputs `A.u, A.v, B.u, B.v` (spec §8), and `R_ballot` keeps the key group
+`PK.u, PK.v` and the ciphertext group in spec order, with the application's inputs around them.
+
+### On ZeroJ `elgamal-jubjub-v1` (r4)
+
+r1–r3 implemented the ElGamal relation and its host arithmetic in this repository
+(`JubjubElGamalGadget`, `JubjubElGamal`). ZeroJ now ships them as the normative profile
+`elgamal-jubjub-v1` (ZeroJ ADR-0052, `docs/specs/elgamal-jubjub-v1.md`), and this demo is that
+ADR's milestone-M3 consumer. Both prototype classes are deleted. The relations and rules above
+are unchanged in substance; what moved is who implements them.
+
+| Step | Library |
+|---|---|
+| `R_ballot` items 1–4, 6 | `ZkElGamalPublicKey.fromVerifierFixedPublic` + `ZkElGamal.encrypt(vote, k, key).assertAffineEquals(A, B)`, the vote a `@UInt(bits = 1) ZkUInt` |
+| `R_dleq` | `ZkElGamal.assertDiscreteLogEquality` (all six coordinates public inputs) |
+| Trustee keys | `ElGamalSecretKey.generate`; key proof of `sk.possessionStatement()` with witness `sk.secretScalar()` |
+| Election key | each manifest key through `VerifiedKeyShare.verify(encoding, s -> s.kind() == POSSESSION && verifyDleq(proof, s.publicInputs()))`, then `ElGamalPublicKey.aggregate` → `NOfNKeyContext` |
+| Ballot | `ElGamal.encryptWithOpening(context, v, 1, rng)`; the opening is the witness |
+| Ledger read | `RawElGamalCiphertext.fromAffine` (canonical, on-curve, subgroup) |
+| Admission | `ElGamal.admit(raw, context, 1, verifier)`: delegated verification, below |
+| Sum | `ElGamalCiphertext.sum` (bound `|𝔅|`) |
+| Shares | `ElGamal.decryptionShare(sk_j, total)`; proof of `share.statement()`; published `share.encode()` |
+| Combination | `VerifiedDecryptionShare.verify(total, PK_j, D_j, s -> s.kind() == DECRYPTION_SHARE && verifyDleq(proof, s.publicInputs()))`, then `ElGamal.decrypt(total, shares, total.bound())` |
+
+**Admission by delegated verification.** `elgamal-jubjub-v1` §10.1 gives a ciphertext a key
+context and a plaintext bound only through local encryption, verified admission, or a sum of
+admitted ciphertexts. The tally admits the ledger's ballots with a verifier that does not
+re-verify the Groth16 proof. §10.1 names this delegation: an on-chain validator verified the
+statement before the ciphertext reached the ledger, and the caller establishes from chain data
+that the ciphertext is one such validator accepted. Here:
+
+1. The verifier is reachable only with an `OnChainVoteService.BallotNode`, whose constructor is
+   private to the list walk (V11). A node's ciphertext is the inline datum of a list node that
+   holds exactly one nullifier token minted under the ballot policy.
+2. The ledger mints that token only if the policy succeeds. The policy verifies `R_ballot`, which
+   embeds `R_enc(1)`, for its parameter key and the datum of the one output holding the token
+   (rule 3). The list validator keeps that datum afterwards (V3, V5).
+3. The verifier accepts a statement only if its width is 1, the node's policy id equals the
+   ballot-policy hash recomputed from the manifest (election id, voter root, key, deadline,
+   verification key), the statement's key is the policy's key parameter, and its ciphertext is the
+   node's datum.
+
+A ciphertext that reached the ledger any other way never gets a bound, so the bounded search
+cannot be fooled by a sum that wrapped mod `l`.
+
+**Verification rebuilds everything.** `TallyService.verify` uses no state of the tally that it
+checks. It rebuilds the key context from the manifest's key encodings and key proofs, recomputes
+the script hashes, re-walks and re-admits the ballots, accepts each share only through its
+proof, and decrypts again.
+
+**No ballots.** The library has no empty sum and no admitted zero ciphertext. With no ballots,
+nothing is decrypted, no shares are published, and YES = NO = 0. The verifier checks exactly
+that.
+
+**Compiled-system decision.** The circuits are new versions with new artifacts:
+
+| Circuit | Version | Constraints (r3 → r4) |
+|---|---|---|
+| `private-ballot`, depth 4 | 2 → 3 | 8,022 → 8,013 |
+| `private-ballot`, depth 10 | 2 → 3 | 9,486 → 9,477 |
+| `trustee-dleq` | 1 → 2 | 6,546 → 6,546 |
+
+- The ballot circuit has a new R1CS, so it gets a new setup, a new verification key and so a new
+  ballot-policy hash. The list policy is parameterised by the ballot-policy hash, so its hash
+  changes too.
+- The library's DLEQ relation compiles to the same R1CS as the prototype's (same constraint
+  digest). It still gets a new setup under its new version, so that each version has its own
+  artifacts.
+- The public-input order, the datum encoding and the validator source are unchanged.
+- An existing election would keep its old circuit: its scripts carry that circuit's verification
+  key, and its ballots can only be checked against it. The demo persists no election that must
+  survive a restart, so nothing is migrated.
+- The key caches are named by circuit version (`setup-private-ballot-d<depth>-v3-…`,
+  `setup-trustee-dleq-v2-…`). The old caches under `data/` (no version in the name) are stale:
+  they are never loaded again and can be deleted.
+
 ## Invariants
 
 | ID | Invariant | Enforced by |
@@ -310,8 +399,8 @@ each key once. The new key is derived from `N`, so each eligible voter can inser
 | V5 | Existing ballots are immutable, and nodes are unambiguous. | One list input per insert; anchor `userData` preserved; exact values (6, 8) |
 | V6 | No ballot after the deadline. | Validity-range check (2) |
 | V7 | One decryption, over the final set, after the deadline and finality. | Trustee service |
-| V8 | The decryption is correct. | `π_dec_j` per trustee; unique `T ∈ [0, |𝔅|]` |
-| V9 | The key setup is sound. | Proof of possession per `PK_j`; distinct keys; `PK ≠ O` |
+| V8 | The decryption is correct. | `π_dec_j` per trustee (`VerifiedDecryptionShare.verify`); every ballot admitted at width 1; unique `T ∈ [0, |𝔅|]` (`ElGamal.decrypt`) |
+| V9 | The key setup is sound. | Proof of possession per `PK_j` (`VerifiedKeyShare.verify`); distinct keys; `PK ≠ O` (`ElGamalPublicKey.aggregate`) |
 | V10 | On-chain integers are canonical. | Every public input and token-derived scalar is checked `< p` |
 | V11 | The ballot set is the whole list. | Root walk, full coverage, per-node checks, fail closed, published digest |
 | V12 | The scripts are the published election. | Manifest with full keys and scripts; hashes recomputed; root minted once by the seed's spender |
@@ -341,21 +430,29 @@ each key once. The new key is derived from `N`, so each eligible voter can inser
 | B1 | Ballot and DLEQ circuits, host ElGamal and tally, and circuit negatives. |
 | B2 | On-chain policy and list changes, and Plutus VM mutation tests for V1–V6 and V10. |
 | B3 | Services, manifest, ballot-set walk, API, UI and README; DevKit end-to-end run. |
+| B4 (r4) | Move to ZeroJ `elgamal-jubjub-v1` (ZeroJ ADR-0052 M3): library relations and host API, new circuit versions, the ciphertext-compatibility differential. |
 
 ## Verification
 
-- **Host:** encryption round trips, homomorphic sums and discrete-log search.
-- **Independent reference:** a standalone Python reimplementation of Jubjub ElGamal and tally,
-  from the curve definition, produces fixed vectors that the Java code must match.
+- **Host:** homomorphic sums and decryption through the library's safe layer; refusal of
+  duplicate, cancelling, identity and non-subgroup keys, of non-canonical, off-curve and
+  small-order ledger points, and of out-of-width votes.
+- **Ciphertext compatibility (r4).** A standalone Python reimplementation of Jubjub ElGamal and
+  the tally, from the curve definition, fixed the prototype's vectors. The library must accept
+  them: it builds the context from the vector secrets, admits each vector ciphertext (through
+  `RawElGamalCiphertext.fromAffine`) with a verifier that checks its opening, and its decryption
+  shares and tally must equal the vectors'. A wrong opening, a tampered `B`, another context and
+  a missing or repeated share are refused.
 - **Circuit negatives:**
   - `v = 2`;
   - `A` and `B` built from different `k`;
   - `B` under another key;
-  - an identity key;
+  - an identity key, and an off-curve key;
   - a wrong nullifier;
-  - a non-member leaf;
+  - a non-member leaf, and another root;
   - a public input changed after proving;
-  - a DLEQ statement with the wrong share, the wrong key or the wrong base.
+  - a DLEQ statement with the wrong share, the wrong key or the wrong base; a share proof
+    presented as a key proof; one trustee's key proof for another trustee's key.
 - **Plutus VM mutations:**
   - root, election id and key not from the parameters (G1);
   - list key not equal to the nullifier (G2);
@@ -369,8 +466,9 @@ each key once. The new key is derived from `N`, so each eligible voter can inser
   - non-canonical coordinates.
 - **DevKit:** cast ballots; script rejections (local Julc evaluation, as the node would run them;
   rejected transactions are not submitted) of a swapped ballot, a double vote
-  forced past the client, and a ballot valid past the deadline; close; walk the list; tally;
-  verify every share, the manifest and the seed binding.
+  forced past the client, and a ballot valid past the deadline; close; walk the list; admit and
+  tally; verify every share, the manifest and the seed binding; a forged share and a changed
+  count do not verify.
 - **Mutation checks:** removing the one-unit rule or the exact anchor datum makes a VM test fail.
 
 ## Production gates (not met by this demo)

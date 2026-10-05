@@ -1,7 +1,6 @@
 package com.bloxbean.cardano.zeroj.usecases.voting.onchain;
 
 import com.bloxbean.cardano.zeroj.usecases.voting.VotingFixture;
-import com.bloxbean.cardano.zeroj.usecases.voting.crypto.JubjubElGamal;
 import com.bloxbean.cardano.zeroj.usecases.voting.service.VoteCircuitService;
 import org.julclang.core.PlutusData;
 import org.julclang.core.Program;
@@ -29,8 +28,12 @@ import org.julclang.vm.EvalResult;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.zeroj.circuit.lib.jubjub.ElGamal;
+import org.zeroj.circuit.lib.jubjub.ElGamalCiphertext;
+import org.zeroj.circuit.lib.jubjub.ElGamalPublicKey;
 import org.zeroj.circuit.lib.jubjub.JubjubCurve;
 import org.zeroj.circuit.lib.jubjub.JubjubPoint;
+import org.zeroj.circuit.lib.jubjub.RawElGamalCiphertext;
 import org.zeroj.onchain.julc.groth16.codec.ProverToCardano;
 import org.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
 
@@ -80,12 +83,12 @@ class VoteScriptsVmTest extends ContractTest {
                 List.of(fx.circuits.computePublicKey(attacker)));
         BigInteger[][] p = VotingFixture.path(attackerTree, 0);
         foreignRoot = fx.circuits.proveBallot(new VoteCircuitService.BallotWitness(
-                VotingFixture.ELECTION_ID, attackerTree[VotingFixture.DEPTH][0], fx.electionKey, attacker,
-                1, JubjubElGamal.randomScalar(VotingFixture.RANDOM), p[0], p[1]));
+                VotingFixture.ELECTION_ID, attackerTree[VotingFixture.DEPTH][0], attacker,
+                fx.encrypt(1), p[0], p[1]));
 
         var t = new VoteScriptsVmTest();
         var vk = ProverToCardano.compressVk(fx.circuits.ballotSetup());
-        JubjubPoint key = fx.electionKey.normalized();
+        ElGamalPublicKey key = fx.electionKey;
         zkPolicy = t.compileValidator(VoteZkMintingPolicy.class, Path.of("src/main/java")).program().applyParams(
                 PlutusData.integer(VotingFixture.ELECTION_ID),
                 PlutusData.integer(fx.root()),
@@ -136,15 +139,15 @@ class VoteScriptsVmTest extends ContractTest {
         var proof = m == ZkMutation.FOREIGN_ROOT ? ProverToCardano.compressProof(foreignRoot.proof()) : honestProof;
         byte[] piA = m == ZkMutation.TAMPERED_PROOF ? flipped(proof.piA()) : proof.piA();
 
-        JubjubElGamal.Ciphertext stored = ballot.ciphertext();
+        ElGamalCiphertext stored = ballot.ciphertext();
         if (m == ZkMutation.DATUM_BALLOT_CHANGED || m == ZkMutation.PRE_MINTED_COPY
                 || m == ZkMutation.PRE_MINTED_COPY_AFTER_NODE) {
             // An unproved ballot: here, the honest ballot plus an encryption of 1 (a double vote).
-            stored = stored.add(JubjubElGamal.encrypt(1, BigInteger.TWO, fx.electionKey));
+            stored = stored.add(ElGamal.encrypt(fx.context, BigInteger.ONE, 1, VotingFixture.RANDOM));
         }
         PlutusData nodeDatum = m == ZkMutation.NON_CANONICAL_COORDINATE
-                ? listElement(ballotData(stored, true), new byte[0])
-                : listElement(ballotData(stored, false), new byte[0]);
+                ? listElement(ballotData(stored.raw(), true), new byte[0])
+                : listElement(ballotData(stored.raw(), false), new byte[0]);
 
         BigInteger units = m == ZkMutation.TWO_UNITS ? BigInteger.TWO : BigInteger.ONE;
         Value mint = Value.singleton(PolicyId.of(ZK_POLICY), TokenName.of(name), units);
@@ -161,7 +164,7 @@ class VoteScriptsVmTest extends ContractTest {
             builder.output(new TxOut(WALLET,
                     Value.lovelace(BigInteger.valueOf(2_000_000)).merge(
                             Value.singleton(PolicyId.of(ZK_POLICY), TokenName.of(name), BigInteger.ONE)),
-                    new OutputDatum.OutputDatumInline(listElement(ballotData(ballot.ciphertext(), false), new byte[0])),
+                    new OutputDatum.OutputDatumInline(listElement(ballotData(ballot.ciphertext().raw(), false), new byte[0])),
                     Optional.empty()));
         }
         OutputDatum datum = m == ZkMutation.HASHED_DATUM
@@ -174,7 +177,7 @@ class VoteScriptsVmTest extends ContractTest {
             builder.output(new TxOut(WALLET,
                     Value.lovelace(BigInteger.valueOf(2_000_000)).merge(
                             Value.singleton(PolicyId.of(ZK_POLICY), TokenName.of(name), BigInteger.ONE)),
-                    new OutputDatum.OutputDatumInline(listElement(ballotData(ballot.ciphertext(), false), new byte[0])),
+                    new OutputDatum.OutputDatumInline(listElement(ballotData(ballot.ciphertext().raw(), false), new byte[0])),
                     Optional.empty()));
         }
         return builder.buildPlutusData();
@@ -184,8 +187,8 @@ class VoteScriptsVmTest extends ContractTest {
     @DisplayName("Ballot policy: a valid ballot is rejected under another election id or election key (G1)")
     void foreignParameters() {
         var vk = ProverToCardano.compressVk(fx.circuits.ballotSetup());
-        JubjubPoint key = fx.electionKey.normalized();
-        JubjubPoint otherKey = fx.electionKey.add(JubjubElGamal.G).normalized();
+        JubjubPoint key = fx.electionKey.point();
+        JubjubPoint otherKey = key.add(JubjubPoint.SUBGROUP_GENERATOR).normalized();
         for (int variant = 0; variant < 2; variant++) {
             BigInteger id = variant == 0 ? VotingFixture.ELECTION_ID.add(BigInteger.ONE) : VotingFixture.ELECTION_ID;
             JubjubPoint k = variant == 1 ? otherKey : key;
@@ -261,7 +264,7 @@ class VoteScriptsVmTest extends ContractTest {
         byte[] anchorToken = concat(PREFIX, anchorKey);
         byte[] anchorNext = m == NonRootMutation.DUPLICATE_KEY ? key : new byte[0];
         byte[] nodeToken = concat(PREFIX, key);
-        PlutusData anchorBallot = ballotData(JubjubElGamal.encrypt(0, BigInteger.TEN, fx.electionKey), false);
+        PlutusData anchorBallot = ballotData(ElGamal.encrypt(fx.context, BigInteger.ZERO, 1, VotingFixture.RANDOM).raw(), false);
 
         Value anchorValue = nodeValueFor(anchorToken, anchorName);
         var builder = ScriptContextTestBuilder.minting(PolicyId.of(LIST_POLICY))
@@ -277,7 +280,7 @@ class VoteScriptsVmTest extends ContractTest {
         builder.output(new TxOut(LIST_ADDRESS, contValue,
                 new OutputDatum.OutputDatumInline(listElement(anchorBallot, key)), Optional.empty()));
         builder.output(new TxOut(LIST_ADDRESS, nodeValueFor(nodeToken, name),
-                new OutputDatum.OutputDatumInline(listElement(ballotData(honest.ciphertext(), false), anchorNext)),
+                new OutputDatum.OutputDatumInline(listElement(ballotData(honest.ciphertext().raw(), false), anchorNext)),
                 Optional.empty()));
         if (m == NonRootMutation.ANCHOR_DROPS_NULLIFIER) {
             builder.output(new TxOut(WALLET, Value.lovelace(BigInteger.valueOf(2_000_000))
@@ -336,7 +339,7 @@ class VoteScriptsVmTest extends ContractTest {
             byte[] otherName = filled(32, (byte) 3);
             Value otherValue = nodeValueFor(concat(PREFIX, Arrays.copyOfRange(otherName, 1, 32)), otherName);
             builder.input(new TxInInfo(TestDataBuilder.randomTxOutRef_typed(), new TxOut(LIST_ADDRESS, otherValue,
-                    new OutputDatum.OutputDatumInline(listElement(ballotData(honest.ciphertext(), false), new byte[0])),
+                    new OutputDatum.OutputDatumInline(listElement(ballotData(honest.ciphertext().raw(), false), new byte[0])),
                     Optional.empty())));
         }
 
@@ -345,7 +348,7 @@ class VoteScriptsVmTest extends ContractTest {
             contValue = contValue.merge(Value.singleton(PolicyId.of(filled(28, (byte) 0x33)), TokenName.of(new byte[] {1}), BigInteger.ONE));
         }
         PlutusData contData = m == ListMutation.ANCHOR_DATA_CHANGED
-                ? ballotData(honest.ciphertext(), false) : rootData;
+                ? ballotData(honest.ciphertext().raw(), false) : rootData;
         PlutusData contDatum = m == ListMutation.ANCHOR_DATUM_EXTRA_FIELD
                 ? PlutusData.constr(0, contData, PlutusData.bytes(key), PlutusData.integer(0))
                 : listElement(contData, key);
@@ -360,7 +363,7 @@ class VoteScriptsVmTest extends ContractTest {
             newValue = newValue.merge(Value.singleton(PolicyId.of(ZK_POLICY), TokenName.of(filled(32, (byte) 4)), BigInteger.ONE));
         }
         builder.output(new TxOut(m == ListMutation.STAKED_NEW_OUTPUT ? STAKED_LIST_ADDRESS : LIST_ADDRESS, newValue,
-                new OutputDatum.OutputDatumInline(listElement(ballotData(honest.ciphertext(), false), new byte[0])),
+                new OutputDatum.OutputDatumInline(listElement(ballotData(honest.ciphertext().raw(), false), new byte[0])),
                 Optional.empty()));
         if (m == ListMutation.NODE_WITHOUT_NULLIFIER) {
             builder.output(new TxOut(WALLET, Value.lovelace(BigInteger.valueOf(2_000_000))
@@ -414,12 +417,14 @@ class VoteScriptsVmTest extends ContractTest {
                 .merge(Value.singleton(PolicyId.of(ZK_POLICY), TokenName.of(nullifierName), BigInteger.ONE));
     }
 
-    private static PlutusData ballotData(JubjubElGamal.Ciphertext c, boolean nonCanonical) {
-        BigInteger au = c.handle().affineU();
+    /** {@code Constr 0 [A.u, A.v, B.u, B.v]}, the ciphertext's spec §8 affine inputs. */
+    private static PlutusData ballotData(RawElGamalCiphertext c, boolean nonCanonical) {
+        List<BigInteger> affine = c.publicInputs();
+        BigInteger au = affine.get(0);
         if (nonCanonical) au = au.add(JubjubCurve.BASE_FIELD_PRIME);
         return PlutusData.constr(0,
-                PlutusData.integer(au), PlutusData.integer(c.handle().affineV()),
-                PlutusData.integer(c.ballot().affineU()), PlutusData.integer(c.ballot().affineV()));
+                PlutusData.integer(au), PlutusData.integer(affine.get(1)),
+                PlutusData.integer(affine.get(2)), PlutusData.integer(affine.get(3)));
     }
 
     private static PlutusData listElement(PlutusData userData, byte[] nextKey) {

@@ -1,9 +1,13 @@
 package com.bloxbean.cardano.zeroj.usecases.voting;
 
-import com.bloxbean.cardano.zeroj.usecases.voting.crypto.JubjubElGamal;
 import com.bloxbean.cardano.zeroj.usecases.voting.service.VoteCircuitService;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.zeroj.circuit.lib.jubjub.JubjubPoint;
+import org.zeroj.circuit.lib.jubjub.ElGamal;
+import org.zeroj.circuit.lib.jubjub.ElGamalEncryption;
+import org.zeroj.circuit.lib.jubjub.ElGamalPublicKey;
+import org.zeroj.circuit.lib.jubjub.ElGamalSecretKey;
+import org.zeroj.circuit.lib.jubjub.NOfNKeyContext;
+import org.zeroj.circuit.lib.jubjub.VerifiedKeyShare;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
@@ -11,7 +15,8 @@ import java.util.List;
 
 /**
  * A small election shared by the voting tests: a depth-4 voter tree over {@link #SECRETS}, three
- * trustees and their joint key, and the compiled circuits with cached dev keys.
+ * trustees and their n-of-n {@code elgamal-jubjub-v1} key context, and the compiled circuits with
+ * cached dev keys.
  */
 public final class VotingFixture {
 
@@ -23,8 +28,10 @@ public final class VotingFixture {
 
     public final VoteCircuitService circuits;
     public final BigInteger[][] tree;
-    public final List<BigInteger> trusteeSecrets;
-    public final JubjubPoint electionKey;
+    public final List<ElGamalSecretKey> trustees;
+    /** The trustees' context. The fixture holds the secrets, which counts as possession (spec §3.3). */
+    public final NOfNKeyContext context;
+    public final ElGamalPublicKey electionKey;
 
     private static VotingFixture instance;
 
@@ -33,9 +40,10 @@ public final class VotingFixture {
         ReflectionTestUtils.setField(circuits, "treeDepth", DEPTH);
         circuits.init();
         tree = buildTree(circuits, SECRETS.stream().map(circuits::computePublicKey).toList());
-        trusteeSecrets = List.of(JubjubElGamal.randomNonZeroScalar(RANDOM),
-                JubjubElGamal.randomNonZeroScalar(RANDOM), JubjubElGamal.randomNonZeroScalar(RANDOM));
-        electionKey = JubjubElGamal.jointKey(trusteeSecrets.stream().map(JubjubElGamal.G::scalarMul).toList());
+        trustees = List.of(ElGamalSecretKey.generate(RANDOM), ElGamalSecretKey.generate(RANDOM),
+                ElGamalSecretKey.generate(RANDOM));
+        context = ElGamalPublicKey.aggregate(trustees.stream().map(VerifiedKeyShare::fromSecret).toList());
+        electionKey = context.jointKey();
     }
 
     public static synchronized VotingFixture get() {
@@ -52,10 +60,16 @@ public final class VotingFixture {
         return path(tree, index);
     }
 
+    /** A fresh ballot encryption of {@code vote} under the fixture's context, with its opening. */
+    public ElGamalEncryption encrypt(int vote) {
+        return ElGamal.encryptWithOpening(context, BigInteger.valueOf(vote),
+                VoteCircuitService.BALLOT_MESSAGE_BITS, RANDOM);
+    }
+
     public VoteCircuitService.BallotWitness witness(int index, int vote) {
         var p = path(index);
-        return new VoteCircuitService.BallotWitness(ELECTION_ID, root(), electionKey, SECRETS.get(index),
-                vote, JubjubElGamal.randomScalar(RANDOM), p[0], p[1]);
+        return new VoteCircuitService.BallotWitness(ELECTION_ID, root(), SECRETS.get(index),
+                encrypt(vote), p[0], p[1]);
     }
 
     public VoteCircuitService.BallotProof prove(int index, int vote) {

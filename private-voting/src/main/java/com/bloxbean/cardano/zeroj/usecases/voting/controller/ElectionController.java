@@ -8,6 +8,7 @@ import com.bloxbean.cardano.zeroj.usecases.voting.service.OnChainVoteService;
 import com.bloxbean.cardano.zeroj.usecases.voting.service.VoteCircuitService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.zeroj.circuit.lib.jubjub.ElGamal;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
@@ -36,8 +37,10 @@ public class ElectionController {
 
     /**
      * The election manifest (ADR-0005): everything a third party needs to check the deployed
-     * scripts and the tally. Recompute both script hashes from these parameters, check every key
-     * proof (base G), and check that the election key is the sum of the trustee keys.
+     * scripts and the tally. Recompute both script hashes from these parameters; register every
+     * trustee key from its {@code encoding} with its key proof (the possession statement,
+     * {@code X = G}); and aggregate them into the {@code elgamal-jubjub-v1} n-of-n key context, whose
+     * joint key must be the election key.
      */
     @GetMapping("/manifest")
     public ResponseEntity<?> manifest() {
@@ -52,10 +55,11 @@ public class ElectionController {
             body.put("electionId", config.electionId().toString(16));
             body.put("voterRoot", config.voterRoot().toString(16));
             body.put("votingDeadline", config.votingDeadlineMillis());
+            body.put("profile", ElGamal.PROFILE);
             body.put("electionKey", VoteController.point(config.electionKey()));
             body.put("trustees", config.trustees().stream().map(t -> Map.of(
                     "label", t.label(),
-                    "publicKey", VoteController.point(t.publicKey()),
+                    "publicKey", VoteController.encodedPoint(t.publicKeyHex()),
                     "keyProof", t.keyProofJson())).toList());
             body.put("ballotVerificationKey", circuitService.ballotVerificationKeyJson());
             body.put("ballotVerificationKeyHash", blake2b(circuitService.ballotVerificationKeyJson()));
@@ -99,7 +103,7 @@ public class ElectionController {
         body.put("electionKey", key == null ? Map.of() : VoteController.point(key));
         body.put("trustees", electionService.getTrusteeInfo().stream().map(t -> Map.of(
                 "label", t.label(),
-                "publicKey", VoteController.point(t.publicKey()),
+                "publicKey", VoteController.encodedPoint(t.publicKeyHex()),
                 "keyProof", t.keyProofJson())).toList());
         body.put("voters", voters);
         return ResponseEntity.ok(body);

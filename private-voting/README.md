@@ -10,6 +10,12 @@ Built with [ZeroJ](https://github.com/bloxbean/zeroj), a pure Java ZK toolkit fo
 Design: [ADR-0005](../docs/adr/0005-private-ballot-homomorphic-tally.md), which fixes
 [issue #7](https://github.com/bloxbean/zeroj-usecases/issues/7).
 
+The ElGamal itself is not implemented here. The encryption relation, the trustee DLEQ relation,
+and the host-side keys, admission, homomorphic sum and verified decryption all come from ZeroJ's
+`elgamal-jubjub-v1` profile (ZeroJ ADR-0052 and `docs/specs/elgamal-jubjub-v1.md`). This demo
+adds the voting rules around them: eligibility, nullifiers, the on-chain list and deadline, and
+decrypting once.
+
 ## What This Demo Does
 
 1. **Creates an election** with 5 test voters and **3 trustees**. Each trustee generates a share
@@ -17,9 +23,10 @@ Design: [ADR-0005](../docs/adr/0005-private-ballot-homomorphic-tally.md), which 
    the shares.
 2. **Builds a voter eligibility Merkle tree.** Its root, the election id, the election key and the
    voting deadline become parameters of the on-chain scripts.
-3. **Voters cast YES or NO.** The vote is encrypted with exponential ElGamal on the Jubjub curve:
-   `A = [k]·G`, `B = [vote]·G + [k]·PK`. A ZK proof shows that the voter is eligible, that the
-   nullifier is theirs, and that the ballot encrypts a 0 or a 1, without revealing which.
+3. **Voters cast YES or NO.** The vote is encrypted with exponential ElGamal on the Jubjub curve
+   (`elgamal-jubjub-v1`, width 1): `A = [k]·G`, `B = [vote]·G + [k]·PK`. A ZK proof shows that
+   the voter is eligible, that the nullifier is theirs, and that the ballot encrypts a 0 or a 1,
+   without revealing which.
 4. **On-chain verification.** The ballot policy verifies the proof, with every public input taken
    from its parameters or from the ledger. The vote list stores the ballot under the voter's
    nullifier, so each voter can vote once.
@@ -72,6 +79,10 @@ java --enable-native-access=ALL-UNNAMED \
 ```
 
 Startup takes about 2 minutes the first time (circuit compilation and the dev setup for both circuits); the keys are then cached under `data/`, and later starts are faster.
+
+The cache file names carry the circuit version (`setup-private-ballot-d10-v3-…`,
+`setup-trustee-dleq-v2-…`). Caches from before the move to `elgamal-jubjub-v1` (names without
+`-v3`/`-v2`) belong to the old circuits, are never loaded again, and can be deleted.
 
 ### 6. Open UI: **http://localhost:8086**
 
@@ -127,9 +138,10 @@ curl http://localhost:8086/api/election/manifest | python3 -m json.tool
 ## How It Works
 
 Each vote:
-1. Encrypts the vote under the election key with fresh randomness `k`.
-2. Generates a ZK proof of the ballot relation (`PrivateBallotProof`), about 9.5k constraints at
-   depth 10.
+1. Encrypts the vote under the election's key context with fresh randomness `k`
+   (`ElGamal.encryptWithOpening`, width 1). The opening `(v, k)` is the proof's witness.
+2. Generates a ZK proof of the ballot relation (`PrivateBallotProof`, built on
+   `ZkElGamal.encrypt`): 9,477 constraints at depth 10.
 3. Submits a Cardano transaction, valid only until the voting deadline, in which:
    - **VoteZkMintingPolicy** mints the nullifier token. It verifies the Groth16 proof against the
      election id, voter root and election key fixed in its parameters, and against the ballot
@@ -140,14 +152,29 @@ Each vote:
 4. The nullifier is `Poseidon(secretKey, electionId)`: the same voter and the same election always
    give the same nullifier.
 
+The election key (`ElectionService`): each trustee generates an `ElGamalSecretKey` and proves
+possession of it with `TrusteeShareProof`. Each key is registered with
+`VerifiedKeyShare.verify`, which hands the key proof's verifier the possession statement the
+library builds, and the keys are aggregated into an n-of-n key context
+(`ElGamalPublicKey.aggregate`). The manifest publishes every key encoding with its proof, so
+anyone rebuilds the same context.
+
 The tally (`TallyService`):
 1. Walks the vote list from its root. It fails closed if the list is broken, if any list token
-   lies outside the walk, or if any node is malformed.
-2. After the deadline (plus a settling margin), adds up the ballots and asks each trustee for its
-   decryption share. Each share carries a proof that it used the same secret as the trustee's
-   published key (`TrusteeShareProof`).
-3. Recovers the YES count from `ΣB − Σ shares = [YES]·G`, publishes it with a digest of the ballot
-   set, and re-verifies everything from public data.
+   lies outside the walk, or if any node is malformed. Each ballot is decoded with
+   `RawElGamalCiphertext.fromAffine` (canonical coordinates, prime-order subgroup).
+2. Admits every ballot into the election's key context with `ElGamal.admit` at width 1. The
+   ballot proof is not re-checked: the ballot policy verified it on-chain before minting the
+   node's nullifier token, and admission is reached only for ciphertexts read from such nodes
+   (spec `elgamal-jubjub-v1` §10.1, delegated verification). Then sums them
+   (`ElGamalCiphertext.sum`).
+3. After the deadline (plus a settling margin), asks each trustee for its decryption share
+   (`ElGamal.decryptionShare`) with a proof of the share's statement (`TrusteeShareProof`). A
+   share counts only after `VerifiedDecryptionShare.verify` accepts its proof.
+4. Recovers the YES count with `ElGamal.decrypt`, which needs one verified share per trustee and
+   searches `[0, |ballots|]`. Publishes it with a digest of the ballot set, then re-verifies
+   everything from public data: the key context from the manifest, the ballots re-admitted from
+   the chain, the share proofs, and the decryption.
 
 ## Tech Stack
 
@@ -168,10 +195,8 @@ private-voting/
 ├── build.gradle
 ├── src/main/java/.../voting/
 │   ├── PrivateVotingApplication.java
-│   ├── circuit/PrivateBallotProof.java      # Ballot relation (eligibility + ElGamal)
-│   ├── circuit/TrusteeShareProof.java       # Trustee key / decryption-share relation
-│   ├── circuit/JubjubElGamalGadget.java     # In-circuit ElGamal and DLEQ
-│   ├── crypto/JubjubElGamal.java            # Host-side ElGamal and tally
+│   ├── circuit/PrivateBallotProof.java      # Ballot relation (eligibility + ZkElGamal.encrypt)
+│   ├── circuit/TrusteeShareProof.java       # Key / decryption-share proofs (ZkElGamal DLEQ)
 │   ├── config/CardanoConfig.java            # Network config
 │   ├── controller/
 │   │   ├── ElectionController.java          # Election management API
@@ -225,10 +250,12 @@ private-voting/
 ## Tests
 
 ```bash
-./gradlew test                          # circuits, host ElGamal, Plutus VM mutation tests
+./gradlew test                          # circuits, ElGamal compatibility, Plutus VM mutation tests
 ZEROJ_YACI_E2E=true ./gradlew test      # + a full election on a running Yaci DevKit
 ```
 
-`JubjubElGamalTest` checks the Java implementation against an independent Python reference
-(`src/test/resources/elgamal-reference/`), which re-implements Jubjub and the tally from the curve
-definition.
+`ElGamalCompatibilityTest` is the ciphertext-compatibility differential: the ballots fixed by an
+independent Python reference (`src/test/resources/elgamal-reference/`, which re-implements
+Jubjub and the tally from the curve definition without ZeroJ) are admitted, summed and decrypted
+by ZeroJ's `elgamal-jubjub-v1` API, and the library's decryption shares and tally must equal the
+reference's.

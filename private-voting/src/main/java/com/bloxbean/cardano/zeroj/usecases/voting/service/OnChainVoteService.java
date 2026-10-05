@@ -20,7 +20,6 @@ import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
 import com.bloxbean.cardano.client.quicktx.ScriptTx;
 import com.bloxbean.cardano.client.transaction.spec.Asset;
 import com.bloxbean.cardano.client.util.HexUtil;
-import com.bloxbean.cardano.zeroj.usecases.voting.crypto.JubjubElGamal;
 import com.bloxbean.cardano.zeroj.usecases.voting.onchain.VoteListValidator;
 import com.bloxbean.cardano.zeroj.usecases.voting.onchain.VoteZkMintingPolicy;
 import org.julclang.clientlib.JulcScriptLoader;
@@ -28,6 +27,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.zeroj.circuit.lib.jubjub.ElGamalPublicKey;
+import org.zeroj.circuit.lib.jubjub.RawElGamalCiphertext;
 import org.zeroj.onchain.julc.groth16.codec.ProverToCardano;
 
 import java.math.BigInteger;
@@ -83,8 +84,44 @@ public class OnChainVoteService {
     record Deployment(BigInteger electionId, PlutusScript zkScript, String zkPolicyHex,
                       PlutusScript listScript, String listPolicyHex, String registryAddr, byte[] seedRef) {}
 
-    /** A ballot read back from the vote list. */
-    public record BallotNode(byte[] nullifier, JubjubElGamal.Ciphertext ciphertext) {}
+    /**
+     * A ballot read back from the vote list by {@link #getBallots}: the name of the node's
+     * nullifier token, the ballot policy that token is under, and the ciphertext from the node's
+     * inline datum, decoded with {@link RawElGamalCiphertext#fromAffine} (canonical coordinates,
+     * on the curve, in the prime-order subgroup).
+     *
+     * <p>Only the list walk constructs one: the constructor is private. Holding a
+     * {@code BallotNode} therefore means that its ciphertext was read from chain data, from a
+     * node of this election's list that holds exactly one nullifier token minted under
+     * {@link #ballotPolicyId()}. {@code TallyService} relies on that when it admits the ciphertext
+     * (spec {@code elgamal-jubjub-v1} §10.1).
+     */
+    public static final class BallotNode {
+        private final byte[] nullifier;
+        private final String ballotPolicyId;
+        private final RawElGamalCiphertext ciphertext;
+
+        private BallotNode(byte[] nullifier, String ballotPolicyId, RawElGamalCiphertext ciphertext) {
+            this.nullifier = nullifier.clone();
+            this.ballotPolicyId = ballotPolicyId;
+            this.ciphertext = ciphertext;
+        }
+
+        /** {@code I2OSP32(N)}, the nullifier token's name. */
+        public byte[] nullifier() {
+            return nullifier.clone();
+        }
+
+        /** The policy id (hex) the node's nullifier token was minted under. */
+        public String ballotPolicyId() {
+            return ballotPolicyId;
+        }
+
+        /** {@code (A, B)} from the node's datum. Raw: no key and no plaintext bound yet. */
+        public RawElGamalCiphertext ciphertext() {
+            return ciphertext;
+        }
+    }
 
     /**
      * Derives the election's scripts from its configuration and creates the list root, once.
@@ -153,9 +190,8 @@ public class OnChainVoteService {
                 BigIntPlutusData.of(0),
                 BigIntPlutusData.of(1))).build();
 
-        var c = ballot.ciphertext();
         var contAnchorDatum = listElementDatum(anchor.userData(), nullKey);
-        var newNodeDatum = listElementDatum(ballotDatum(c), anchor.oldNextKey());
+        var newNodeDatum = listElementDatum(ballotDatum(ballot.ciphertext().raw()), anchor.oldNextKey());
 
         var tx = new ScriptTx()
                 .collectFrom(anchor.utxo(), ConstrPlutusData.of(0))
@@ -246,8 +282,16 @@ public class OnChainVoteService {
                 throw new IllegalStateException("vote node " + HexUtil.encodeHexString(next) + " has no ballot");
             }
             var f = ballot.getData().getPlutusDataList();
-            nodes.add(new BallotNode(nullifiers.getFirst().name(), JubjubElGamal.Ciphertext.fromAffine(
-                    integer(f.get(0)), integer(f.get(1)), integer(f.get(2)), integer(f.get(3)))));
+            RawElGamalCiphertext ciphertext;
+            try {
+                // elgamal-jubjub-v1 §7.4: canonical in [0, p) without reduction, on the curve, in 𝔾.
+                ciphertext = RawElGamalCiphertext.fromAffine(
+                        integer(f.get(0)), integer(f.get(1)), integer(f.get(2)), integer(f.get(3)));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalStateException("vote node " + HexUtil.encodeHexString(next)
+                        + " holds an invalid ballot: " + e.getMessage(), e);
+            }
+            nodes.add(new BallotNode(nullifiers.getFirst().name(), d.zkPolicyHex(), ciphertext));
             previous = next;
             next = datum.nextKey();
         }
@@ -373,7 +417,7 @@ public class OnChainVoteService {
 
     private PlutusScript ballotPolicy(ElectionService.ElectionConfig config) {
         var vk = ProverToCardano.compressVk(circuitService.ballotSetup());
-        var key = config.electionKey().normalized();
+        ElGamalPublicKey key = config.electionKey();
         return JulcScriptLoader.load(VoteZkMintingPolicy.class,
                 BigIntPlutusData.of(config.electionId()),
                 BigIntPlutusData.of(config.voterRoot()),
@@ -561,13 +605,17 @@ public class OnChainVoteService {
         throw new IllegalArgumentException("expected an integer field");
     }
 
-    /** {@code Ballot(Au, Av, Bu, Bv)} = {@code Constr 0 [I, I, I, I]}. */
-    static ConstrPlutusData ballotDatum(JubjubElGamal.Ciphertext c) {
+    /**
+     * {@code Ballot(Au, Av, Bu, Bv)} = {@code Constr 0 [I, I, I, I]}: the ciphertext's affine public
+     * inputs in spec §8 order ({@code A.u, A.v, B.u, B.v}).
+     */
+    static ConstrPlutusData ballotDatum(RawElGamalCiphertext c) {
+        List<BigInteger> affine = c.publicInputs();
         return ConstrPlutusData.builder().alternative(0).data(ListPlutusData.of(
-                BigIntPlutusData.of(c.handle().affineU()),
-                BigIntPlutusData.of(c.handle().affineV()),
-                BigIntPlutusData.of(c.ballot().affineU()),
-                BigIntPlutusData.of(c.ballot().affineV()))).build();
+                BigIntPlutusData.of(affine.get(0)),
+                BigIntPlutusData.of(affine.get(1)),
+                BigIntPlutusData.of(affine.get(2)),
+                BigIntPlutusData.of(affine.get(3)))).build();
     }
 
     /** {@code ListElement(userData, nextKey)} = {@code Constr 0 [userData, B nextKey]}. */

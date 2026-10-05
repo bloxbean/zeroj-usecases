@@ -4,9 +4,11 @@ import com.bloxbean.cardano.client.account.Account;
 import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService;
 import com.bloxbean.cardano.client.common.model.Networks;
 import com.bloxbean.cardano.zeroj.usecases.voting.VotingFixture;
-import com.bloxbean.cardano.zeroj.usecases.voting.crypto.JubjubElGamal;
+import com.bloxbean.cardano.client.util.HexUtil;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.zeroj.circuit.lib.jubjub.ElGamal;
+import org.zeroj.circuit.lib.jubjub.JubjubPoint;
 
 import java.math.BigInteger;
 import java.net.URI;
@@ -14,6 +16,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -34,8 +37,10 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *       nullifier (vote list) and, after the deadline, a ballot whose validity range ends past
  *       it (ballot policy).</li>
  *   <li>Before the deadline the tally reveals nothing but the ballot count.</li>
- *   <li>After the deadline the sum is decrypted once: 2 YES, 1 NO; the published tally
- *       re-verifies from chain data and the manifest.</li>
+ *   <li>After the deadline the on-chain ballots are admitted into the {@code elgamal-jubjub-v1}
+ *       safe layer, and their sum is decrypted once from verified trustee shares: 2 YES, 1 NO.
+ *       The published tally re-verifies from chain data and the manifest; a forged share or a
+ *       changed count does not.</li>
  * </ol>
  *
  * Runs only with {@code ZEROJ_YACI_E2E=true}; uses {@code ZEROJ_YACI_STORE_URL} /
@@ -89,7 +94,8 @@ class PrivateVotingYaciE2ETest {
         // A valid proof with a swapped (unproved) ballot in the datum: the ballot policy rejects it.
         var honest = prove(circuits, election, config, "voter3", 0);
         var swapped = new VoteCircuitService.BallotProof(honest.proof(), honest.nullifier(),
-                JubjubElGamal.encrypt(1, JubjubElGamal.randomScalar(new SecureRandom()), config.electionKey()),
+                ElGamal.encrypt(config.keyContext(), BigInteger.ONE, VoteCircuitService.BALLOT_MESSAGE_BITS,
+                        new SecureRandom()),
                 honest.publicInputs());
         assertScriptRejected(() -> onChain.submitBallot(config, swapped), "a valid proof with a swapped ballot");
         assertFalse(onChain.isNullifierUsed(config, honest.nullifier()), "the rejected ballot left no trace");
@@ -113,6 +119,22 @@ class PrivateVotingYaciE2ETest {
         assertTrue(verification.valid(), "published tally must re-verify");
         assertTrue(tally.tally() == result, "the tally is decrypted once and re-served");
 
+        // A forged share (D_1 + G, with trustee 1's real proof) and a changed count do not verify.
+        var forgedShares = new ArrayList<>(result.shares());
+        var first = forgedShares.getFirst();
+        JubjubPoint forged = JubjubPoint.fromBytes(HexUtil.decodeHexString(first.shareHex()))
+                .add(JubjubPoint.SUBGROUP_GENERATOR).normalized();
+        forgedShares.set(0, new TallyService.Share(first.trustee(), first.publicKeyHex(),
+                HexUtil.encodeHexString(forged.toBytes()), first.proofJson()));
+        var forgedResult = new TallyService.TallyResult(result.electionId(), true, result.votingDeadlineMillis(),
+                result.ballots(), result.yes(), result.no(), result.aggregate(), forgedShares,
+                result.ballotNodes(), result.ballotSetDigest());
+        assertFalse(tally.verify(forgedResult).valid(), "a forged decryption share must not verify");
+        var wrongCount = new TallyService.TallyResult(result.electionId(), true, result.votingDeadlineMillis(),
+                result.ballots(), result.no(), result.yes(), result.aggregate(), result.shares(),
+                result.ballotNodes(), result.ballotSetDigest());
+        assertFalse(tally.verify(wrongCount).valid(), "a changed count must not verify");
+
         // After the deadline: the client refuses, and a ballot forced in with a validity range
         // past the deadline is rejected by the ballot policy.
         var late = prove(circuits, election, config, "voter3", 1);
@@ -128,9 +150,10 @@ class PrivateVotingYaciE2ETest {
         BigInteger secret = election.getSecretKey(voter);
         int index = election.findVoterIndex(circuits.computePublicKey(secret));
         var path = election.getProof(index);
+        var encryption = ElGamal.encryptWithOpening(config.keyContext(), BigInteger.valueOf(vote),
+                VoteCircuitService.BALLOT_MESSAGE_BITS, new SecureRandom());
         return circuits.proveBallot(new VoteCircuitService.BallotWitness(config.electionId(), config.voterRoot(),
-                config.electionKey(), secret, vote, JubjubElGamal.randomScalar(new SecureRandom()),
-                path.siblings(), path.pathBits()));
+                secret, encryption, path.siblings(), path.pathBits()));
     }
 
     private interface Submission {

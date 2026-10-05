@@ -2,13 +2,17 @@ package com.bloxbean.cardano.zeroj.usecases.voting.service;
 
 import com.bloxbean.cardano.zeroj.usecases.voting.circuit.PrivateBallotProofCircuit;
 import com.bloxbean.cardano.zeroj.usecases.voting.circuit.TrusteeShareProofCircuit;
-import com.bloxbean.cardano.zeroj.usecases.voting.crypto.JubjubElGamal;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.zeroj.circuit.lib.jubjub.JubjubPoint;
+import org.zeroj.circuit.lib.jubjub.DleqStatement;
+import org.zeroj.circuit.lib.jubjub.ElGamalCiphertext;
+import org.zeroj.circuit.lib.jubjub.ElGamalEncryption;
+import org.zeroj.circuit.lib.jubjub.ElGamalPublicKey;
+import org.zeroj.circuit.lib.jubjub.EncryptionStatement;
+import org.zeroj.circuit.lib.jubjub.RawElGamalCiphertext;
 import org.zeroj.circuit.lib.poseidon.PoseidonHash;
 import org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 import org.zeroj.crypto.groth16.Groth16ProofBLS381;
@@ -17,23 +21,30 @@ import org.zeroj.crypto.snarkjs.SnarkjsGroth16Json;
 
 import java.math.BigInteger;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 /**
  * The two circuits of ADR-0005 and their keys:
  * <ul>
- *   <li>{@code private-ballot}: a voter's ballot is an ElGamal encryption of 0 or 1 under the
- *       election key, cast by an eligible voter under its nullifier. Verified on-chain.</li>
- *   <li>{@code trustee-dleq}: a trustee's key proof and decryption-share proof. Verified
- *       off-chain by anyone.</li>
+ *   <li>{@code private-ballot}: a voter's ballot is an {@code elgamal-jubjub-v1} encryption of a
+ *       1-bit vote under the election key, cast by an eligible voter under its nullifier.
+ *       Verified on-chain.</li>
+ *   <li>{@code trustee-dleq}: the {@code elgamal-jubjub-v1} DLEQ relation, for a trustee's key
+ *       proof and decryption-share proof. Verified off-chain by anyone.</li>
  * </ul>
+ * Statements come from ZeroJ's ElGamal API ({@link EncryptionStatement}, {@link DleqStatement});
+ * this service proves them and verifies proofs against their public inputs verbatim.
  */
 @Service
 public class VoteCircuitService {
 
     private static final Logger log = LoggerFactory.getLogger(VoteCircuitService.class);
     private static final Path CACHE_DIR = Path.of("./data");
+
+    /** The ballot's message width: {@code R_ballot} embeds {@code R_enc(1)}. */
+    public static final int BALLOT_MESSAGE_BITS = 1;
 
     @Value("${zk.tree-depth}")
     private int treeDepth;
@@ -44,9 +55,12 @@ public class VoteCircuitService {
     @PostConstruct
     public void init() {
         log.info("Compiling private ballot and trustee circuits (treeDepth={})...", treeDepth);
-        ballot = KeyedCircuit.compile("private-ballot-d" + treeDepth,
+        // The circuit version is part of the key-cache name: a new circuit version never loads the
+        // setup of an older one, even if the cache directory still holds it.
+        ballot = KeyedCircuit.compile("private-ballot-d" + treeDepth + "-v" + PrivateBallotProofCircuit.CIRCUIT_VERSION,
                 PrivateBallotProofCircuit.build(treeDepth), CACHE_DIR);
-        dleq = KeyedCircuit.compile("trustee-dleq", TrusteeShareProofCircuit.build(), CACHE_DIR);
+        dleq = KeyedCircuit.compile("trustee-dleq-v" + TrusteeShareProofCircuit.CIRCUIT_VERSION,
+                TrusteeShareProofCircuit.build(), CACHE_DIR);
         log.info("Circuits ready.");
     }
 
@@ -54,48 +68,74 @@ public class VoteCircuitService {
     //  Ballots
     // ------------------------------------------------------------------
 
-    /** Everything a voter needs to prove a ballot; {@code k} must be fresh per ballot. */
-    public record BallotWitness(BigInteger electionId, BigInteger voterRoot, JubjubPoint electionKey,
-                                BigInteger secretKey, int vote, BigInteger k,
-                                BigInteger[] siblings, BigInteger[] pathBits) {}
+    /**
+     * Everything a voter needs to prove a ballot. {@code encryption} is the voter's own
+     * {@code ElGamal.encryptWithOpening} result: the ciphertext under the election's key context
+     * and its secret opening {@code (m, k)}, which becomes the witness.
+     */
+    public record BallotWitness(BigInteger electionId, BigInteger voterRoot, BigInteger secretKey,
+                                ElGamalEncryption encryption, BigInteger[] siblings, BigInteger[] pathBits) {
+        @Override
+        public String toString() {
+            return "BallotWitness{electionId=" + electionId + ", secrets=<redacted>}";
+        }
+    }
 
     /** A proved ballot: the ciphertext and nullifier it binds, and the proof's public inputs. */
     public record BallotProof(Groth16ProofBLS381 proof, BigInteger nullifier,
-                              JubjubElGamal.Ciphertext ciphertext, List<BigInteger> publicInputs) {}
+                              ElGamalCiphertext ciphertext, List<BigInteger> publicInputs) {}
 
     public BallotProof proveBallot(BallotWitness w) {
         if (w.siblings().length != treeDepth || w.pathBits().length != treeDepth) {
             throw new IllegalArgumentException("siblings and pathBits must have length " + treeDepth);
         }
+        ElGamalEncryption encryption = w.encryption();
+        if (encryption.width() != BALLOT_MESSAGE_BITS) {
+            throw new IllegalArgumentException("a ballot encrypts a " + BALLOT_MESSAGE_BITS + "-bit vote");
+        }
         BigInteger nullifier = computeNullifier(w.secretKey(), w.electionId());
-        JubjubPoint key = w.electionKey().normalized();
-        JubjubElGamal.Ciphertext c = JubjubElGamal.encrypt(w.vote(), w.k(), key);
+        EncryptionStatement statement = encryption.statement();
+        List<BigInteger> key = statement.keyPublicInputs();
+        List<BigInteger> ciphertext = statement.ciphertextPublicInputs();
         var inputs = PrivateBallotProofCircuit.inputs(treeDepth)
                 .electionId(w.electionId())
                 .voterRoot(w.voterRoot())
-                .electionKeyU(key.affineU())
-                .electionKeyV(key.affineV())
+                .electionKeyU(key.get(0))
+                .electionKeyV(key.get(1))
                 .nullifier(nullifier)
-                .handleU(c.handle().affineU())
-                .handleV(c.handle().affineV())
-                .ballotU(c.ballot().affineU())
-                .ballotV(c.ballot().affineV())
-                .vote(w.vote())
-                .randomness(w.k())
+                .handleU(ciphertext.get(0))
+                .handleV(ciphertext.get(1))
+                .ballotU(ciphertext.get(2))
+                .ballotV(ciphertext.get(3))
+                .vote(encryption.message())
+                .randomness(encryption.randomness())
                 .secretKey(w.secretKey())
                 .siblings(Arrays.asList(w.siblings()))
                 .pathBits(Arrays.asList(w.pathBits()));
         Groth16ProofBLS381 proof = ballot.prove(inputs.toWitnessMap());
-        return new BallotProof(proof, nullifier, c, PrivateBallotProofCircuit.publicInputs(inputs));
+        List<BigInteger> publicInputs = PrivateBallotProofCircuit.publicInputs(inputs);
+        if (!publicInputs.equals(ballotPublicInputs(w.electionId(), w.voterRoot(), statement.key(), nullifier,
+                encryption.ciphertext().raw()))) {
+            throw new IllegalStateException("ballot public inputs are not in R_ballot order");
+        }
+        return new BallotProof(proof, nullifier, encryption.ciphertext(), publicInputs);
     }
 
-    /** The ballot statement's public inputs, in circuit order (ADR-0005 {@code R_ballot}). */
+    /**
+     * The ballot statement's public inputs, in circuit order (ADR-0005 {@code R_ballot}): the
+     * election id and voter root, the key group {@code PK.u, PK.v}, the nullifier, and the
+     * ciphertext group {@code A.u, A.v, B.u, B.v} (spec §8 order within each group).
+     */
     public static List<BigInteger> ballotPublicInputs(BigInteger electionId, BigInteger voterRoot,
-                                                      JubjubPoint electionKey, BigInteger nullifier,
-                                                      JubjubElGamal.Ciphertext c) {
-        JubjubPoint key = electionKey.normalized();
-        return List.of(electionId, voterRoot, key.affineU(), key.affineV(), nullifier,
-                c.handle().affineU(), c.handle().affineV(), c.ballot().affineU(), c.ballot().affineV());
+                                                      ElGamalPublicKey electionKey, BigInteger nullifier,
+                                                      RawElGamalCiphertext ciphertext) {
+        List<BigInteger> out = new ArrayList<>(9);
+        out.add(electionId);
+        out.add(voterRoot);
+        out.addAll(electionKey.publicInputs());
+        out.add(nullifier);
+        out.addAll(ciphertext.publicInputs());
+        return List.copyOf(out);
     }
 
     public boolean verifyBallot(Groth16ProofBLS381 proof, List<BigInteger> publicInputs) {
@@ -109,35 +149,36 @@ public class VoteCircuitService {
     /** A proof of {@code R_dleq} with its public inputs and snarkjs-format JSON. */
     public record DleqProof(List<BigInteger> publicInputs, String proofJson) {}
 
-    /** Proves {@code P = [x]·G} and {@code D = [x]·X} for the verifier-chosen base {@code X}. */
-    public DleqProof proveDleq(JubjubPoint base, BigInteger secret) {
-        JubjubPoint x = base.normalized();
-        JubjubPoint publicKey = JubjubElGamal.G.scalarMul(secret).normalized();
-        JubjubPoint share = x.scalarMul(secret).normalized();
+    /**
+     * Proves a DLEQ statement the library built ({@code ElGamalSecretKey.possessionStatement()}
+     * or {@code VerifiedDecryptionShare.statement()}), with the trustee's secret scalar as the
+     * witness. The statement's six public inputs are used verbatim.
+     */
+    public DleqProof proveDleq(DleqStatement statement, BigInteger secret) {
+        List<BigInteger> pub = statement.publicInputs();
         var inputs = TrusteeShareProofCircuit.inputs()
-                .baseU(x.affineU()).baseV(x.affineV())
-                .publicKeyU(publicKey.affineU()).publicKeyV(publicKey.affineV())
-                .shareU(share.affineU()).shareV(share.affineV())
+                .baseU(pub.get(0)).baseV(pub.get(1))
+                .publicKeyU(pub.get(2)).publicKeyV(pub.get(3))
+                .shareU(pub.get(4)).shareV(pub.get(5))
                 .secretShare(secret);
         Groth16ProofBLS381 proof = dleq.prove(inputs.toWitnessMap());
-        return new DleqProof(TrusteeShareProofCircuit.publicInputs(inputs), SnarkjsGroth16Json.proofJson(proof));
-    }
-
-    /** {@code [X.u, X.v, P.u, P.v, D.u, D.v]}, the order {@code R_dleq} fixes. */
-    public static List<BigInteger> dleqPublicInputs(JubjubPoint base, JubjubPoint publicKey, JubjubPoint share) {
-        JubjubPoint x = base.normalized();
-        JubjubPoint p = publicKey.normalized();
-        JubjubPoint d = share.normalized();
-        return List.of(x.affineU(), x.affineV(), p.affineU(), p.affineV(), d.affineU(), d.affineV());
+        List<BigInteger> publicInputs = TrusteeShareProofCircuit.publicInputs(inputs);
+        if (!publicInputs.equals(pub)) {
+            throw new IllegalStateException("DLEQ public inputs are not in spec §8 order");
+        }
+        return new DleqProof(publicInputs, SnarkjsGroth16Json.proofJson(proof));
     }
 
     /**
-     * Verifies a DLEQ proof against public inputs the <b>verifier</b> derived: the base it chose,
-     * the trustee's published key and the claimed share. Never against inputs taken from the
-     * prover.
+     * Verifies a DLEQ proof against {@code publicInputs}. Callers pass a library-built
+     * {@code DleqStatement.publicInputs()} unchanged (the delegated-verifier obligation of
+     * {@code DleqStatementVerifier}), never values taken from the prover.
      */
-    public boolean verifyDleq(String proofJson, JubjubPoint base, JubjubPoint publicKey, JubjubPoint share) {
-        return dleq.verify(proofJson, dleqPublicInputs(base, publicKey, share));
+    public boolean verifyDleq(String proofJson, List<BigInteger> publicInputs) {
+        if (proofJson == null || publicInputs == null || publicInputs.size() != 6) {
+            return false;
+        }
+        return dleq.verify(proofJson, publicInputs);
     }
 
     // ------------------------------------------------------------------
@@ -176,6 +217,10 @@ public class VoteCircuitService {
 
     public int ballotConstraints() {
         return ballot.numConstraints();
+    }
+
+    public int dleqConstraints() {
+        return dleq.numConstraints();
     }
 
     public int getTreeDepth() {

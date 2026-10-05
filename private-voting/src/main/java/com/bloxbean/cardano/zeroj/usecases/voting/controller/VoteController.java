@@ -1,6 +1,6 @@
 package com.bloxbean.cardano.zeroj.usecases.voting.controller;
 
-import com.bloxbean.cardano.zeroj.usecases.voting.crypto.JubjubElGamal;
+import com.bloxbean.cardano.client.util.HexUtil;
 import com.bloxbean.cardano.zeroj.usecases.voting.service.ElectionService;
 import com.bloxbean.cardano.zeroj.usecases.voting.service.OnChainVoteService;
 import com.bloxbean.cardano.zeroj.usecases.voting.service.TallyService;
@@ -9,7 +9,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.zeroj.circuit.lib.jubjub.ElGamal;
+import org.zeroj.circuit.lib.jubjub.ElGamalPublicKey;
 import org.zeroj.circuit.lib.jubjub.JubjubPoint;
+import org.zeroj.circuit.lib.jubjub.RawElGamalCiphertext;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
@@ -77,20 +80,22 @@ public class VoteController {
 
             log.info("Proving a ballot for {}...", voterLabel);
             long start = System.currentTimeMillis();
+            // elgamal-jubjub-v1 encryption under the election's key context; the opening (m, k) is
+            // the proof's witness and is not kept.
+            var encryption = ElGamal.encryptWithOpening(config.keyContext(), BigInteger.valueOf(vote),
+                    VoteCircuitService.BALLOT_MESSAGE_BITS, RANDOM);
             var ballot = circuitService.proveBallot(new VoteCircuitService.BallotWitness(
-                    config.electionId(), config.voterRoot(), config.electionKey(),
-                    secretKey, vote, JubjubElGamal.randomScalar(RANDOM),
+                    config.electionId(), config.voterRoot(), secretKey, encryption,
                     merkleProof.siblings(), merkleProof.pathBits()));
             long elapsed = System.currentTimeMillis() - start;
             log.info("Ballot proof generated in {}ms", elapsed);
 
             String txHash = onChainVoteService.submitBallot(config, ballot);
 
-            var c = ballot.ciphertext();
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("voterLabel", voterLabel);
             body.put("nullifier", ballot.nullifier().toString(16));
-            body.put("ballot", Map.of("A", point(c.handle()), "B", point(c.ballot())));
+            body.put("ballot", ciphertext(ballot.ciphertext().raw()));
             body.put("txHash", txHash);
             body.put("provingTimeMs", elapsed);
             return ResponseEntity.ok(body);
@@ -116,11 +121,16 @@ public class VoteController {
             body.put("phase", tally.decrypted() ? "decrypted" : "voting-open");
             body.put("votingDeadline", tally.votingDeadlineMillis());
             body.put("ballots", tally.ballots());
-            body.put("encryptedBallots", tally.ballotNodes().stream().map(n -> Map.of(
-                    "nullifier", hexPrefix(n.nullifier()),
-                    "A", point(n.ciphertext().handle()),
-                    "B", point(n.ciphertext().ballot()))).toList());
-            body.put("aggregate", Map.of("A", point(tally.aggregate().handle()), "B", point(tally.aggregate().ballot())));
+            body.put("profile", ElGamal.PROFILE);
+            body.put("encryptedBallots", tally.ballotNodes().stream().map(n -> {
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("nullifier", hexPrefix(n.nullifier()));
+                entry.putAll(ciphertext(n.ciphertext()));
+                return entry;
+            }).toList());
+            if (tally.aggregate() != null) {
+                body.put("aggregate", ciphertext(tally.aggregate()));
+            }
             if (tally.decrypted()) {
                 var verification = tallyService.verify(tally);
                 body.put("yes", tally.yes());
@@ -128,8 +138,8 @@ public class VoteController {
                 body.put("total", tally.ballots());
                 body.put("shares", tally.shares().stream().map(s -> Map.of(
                         "trustee", s.trustee(),
-                        "publicKey", point(s.publicKey()),
-                        "share", point(s.share()),
+                        "publicKey", encodedPoint(s.publicKeyHex()),
+                        "share", encodedPoint(s.shareHex()),
                         "proof", s.proofJson())).toList());
                 body.put("verified", verification.valid());
                 body.put("checks", verification.checks());
@@ -167,9 +177,30 @@ public class VoteController {
                         "mode", "on-chain, encrypted")));
     }
 
+    /** A point as affine {@code u}, {@code v} (hex) and its 32-byte encoding (spec §7.1, hex). */
     static Map<String, String> point(JubjubPoint p) {
         JubjubPoint n = p.normalized();
-        return Map.of("u", n.affineU().toString(16), "v", n.affineV().toString(16));
+        return Map.of("u", n.affineU().toString(16), "v", n.affineV().toString(16),
+                "encoding", HexUtil.encodeHexString(n.toBytes()));
+    }
+
+    /** A public key, shown as a point. */
+    static Map<String, String> point(ElGamalPublicKey key) {
+        return point(key.point());
+    }
+
+    /** A published 32-byte point encoding (hex), shown as a point. Display only. */
+    static Map<String, String> encodedPoint(String hex) {
+        return point(JubjubPoint.fromBytes(HexUtil.decodeHexString(hex)));
+    }
+
+    /** A ciphertext: {@code A}, {@code B} and its 64-byte encoding (spec §7.2, hex). */
+    static Map<String, Object> ciphertext(RawElGamalCiphertext c) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("A", point(c.handle()));
+        out.put("B", point(c.blinded()));
+        out.put("encoding", HexUtil.encodeHexString(c.encode()));
+        return out;
     }
 
     private static String hexPrefix(byte[] bytes) {

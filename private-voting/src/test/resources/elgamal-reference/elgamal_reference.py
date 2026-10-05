@@ -2,7 +2,8 @@
 """Independent reference for the private-ballot tally (zeroj-usecases ADR-0005).
 
 Re-implements Jubjub and exponential ElGamal from the curve definition alone, without ZeroJ, and
-prints fixed vectors for ElGamalReferenceVectorsTest to compare against the Java implementation.
+prints fixed vectors. ElGamalCompatibilityTest admits these ciphertexts through ZeroJ's
+elgamal-jubjub-v1 API and checks the library's shares and tally against them.
 
 Curve: twisted Edwards  -u^2 + v^2 = 1 + d*u^2*v^2  over the BLS12-381 scalar field p,
        d = -(10240/10241) mod p (Zcash protocol specification, section 5.4.9.3).

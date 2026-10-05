@@ -1,12 +1,16 @@
 package com.bloxbean.cardano.zeroj.usecases.voting.service;
 
 import com.bloxbean.cardano.client.crypto.Blake2bUtil;
-import com.bloxbean.cardano.zeroj.usecases.voting.crypto.JubjubElGamal;
+import com.bloxbean.cardano.client.util.HexUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.zeroj.circuit.lib.jubjub.JubjubPoint;
+import org.zeroj.circuit.lib.jubjub.DleqStatement;
+import org.zeroj.circuit.lib.jubjub.ElGamalPublicKey;
+import org.zeroj.circuit.lib.jubjub.ElGamalSecretKey;
+import org.zeroj.circuit.lib.jubjub.NOfNKeyContext;
+import org.zeroj.circuit.lib.jubjub.VerifiedKeyShare;
 
 import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
@@ -25,7 +29,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * Election lifecycle (ADR-0005): voter registration and the eligibility tree, the trustees and
  * their joint ElGamal key, and the voting deadline.
  *
- * <p><b>Demo shortcut.</b> The trustees' key shares and the voters' secrets live in this service
+ * <p>The election key is an n-of-n {@code elgamal-jubjub-v1} key context built by ZeroJ
+ * ({@link ElGamalPublicKey#aggregate}) from trustee key shares that were each registered through
+ * a proof of possession ({@link VerifiedKeyShare#verify}). The manifest keeps every trustee's key
+ * encoding and key proof, so anyone rebuilds the same context with {@link #keyContext}.
+ *
+ * <p><b>Demo shortcut.</b> The trustees' secret keys and the voters' secrets live in this service
  * so the demo can run unattended. In a real election each trustee and each voter holds their own
  * secret, and nobody holds them all.
  */
@@ -54,7 +63,7 @@ public class ElectionService {
     private final List<BigInteger> voterPublicKeys = Collections.synchronizedList(new ArrayList<>());
     private BigInteger[][] tree;
     private List<Trustee> trustees = List.of();
-    private JubjubPoint electionKey;
+    private NOfNKeyContext keyContext;
     private ElectionConfig config;
 
     // Voter secret keys (demo only — in production, voters hold their own keys)
@@ -65,24 +74,31 @@ public class ElectionService {
         this.treeDepth = circuitService.getTreeDepth();
     }
 
-    /** A trustee: label, secret key share, public key share and its proof of possession. */
-    public record Trustee(String label, BigInteger secretShare, JubjubPoint publicKey,
-                          VoteCircuitService.DleqProof keyProof) {
+    /** A trustee: label, secret key share and its proof of possession. */
+    public record Trustee(String label, ElGamalSecretKey secretKey, VoteCircuitService.DleqProof keyProof) {
         public TrusteeInfo info() {
-            return new TrusteeInfo(label, publicKey, keyProof.proofJson());
+            return new TrusteeInfo(label, HexUtil.encodeHexString(secretKey.publicKey().encode()), keyProof.proofJson());
         }
     }
 
-    /** What anyone may see of a trustee. */
-    public record TrusteeInfo(String label, JubjubPoint publicKey, String keyProofJson) {}
+    /**
+     * What anyone may see of a trustee, as the manifest publishes it: the key share's 32-byte
+     * {@code elgamal-jubjub-v1} encoding (spec §7.3), hex, and the proof of possession of it.
+     */
+    public record TrusteeInfo(String label, String publicKeyHex, String keyProofJson) {}
 
     /**
-     * The fixed parameters of a finalized election. These become the on-chain script parameters,
-     * so they never change once voting starts.
+     * The fixed parameters of a finalized election. The election id, voter root, election key and
+     * deadline become the on-chain script parameters, so they never change once voting starts.
      */
     public record ElectionConfig(String name, BigInteger electionId, BigInteger voterRoot,
-                                 JubjubPoint electionKey, List<TrusteeInfo> trustees,
-                                 long votingDeadlineMillis, int voterCount) {}
+                                 NOfNKeyContext keyContext, List<TrusteeInfo> trustees,
+                                 long votingDeadlineMillis, int voterCount) {
+        /** The joint election key {@code PK = Σ PK_j}: a parameter of the ballot policy. */
+        public ElGamalPublicKey electionKey() {
+            return keyContext.jointKey();
+        }
+    }
 
     public synchronized void createElection(String name) {
         this.electionName = name;
@@ -92,26 +108,50 @@ public class ElectionService {
         this.tree = null;
         this.config = null;
         this.trustees = generateTrustees();
-        this.electionKey = JubjubElGamal.jointKey(trustees.stream().map(Trustee::publicKey).toList());
-        log.info("Election created: '{}' (id={}...), {} trustees, joint key u={}...", name,
-                electionId.toString(16).substring(0, 12), trustees.size(),
-                electionKey.affineU().toString(16).substring(0, 12));
+        // Registered the way any verifier registers them: each key through its proof of possession.
+        this.keyContext = keyContext(circuitService, trustees.stream().map(Trustee::info).toList());
+        log.info("Election created: '{}' (id={}...), {} trustees, joint key {}", name,
+                electionId.toString(16).substring(0, 12), trustees.size(), keyContext.jointKey());
     }
 
     /** Each trustee samples a key share and proves possession of it (ADR-0005 V9). */
     private List<Trustee> generateTrustees() {
         List<Trustee> out = new ArrayList<>();
         for (int j = 1; j <= trusteeCount; j++) {
-            BigInteger sk = JubjubElGamal.randomNonZeroScalar(RANDOM);
-            JubjubPoint pk = JubjubElGamal.G.scalarMul(sk).normalized();
-            // Key proof: R_dleq with X = G, so D = P = PK_j.
-            var proof = circuitService.proveDleq(JubjubElGamal.G, sk);
-            if (!circuitService.verifyDleq(proof.proofJson(), JubjubElGamal.G, pk, pk)) {
-                throw new IllegalStateException("trustee " + j + " key proof does not verify");
-            }
-            out.add(new Trustee("trustee" + j, sk, pk, proof));
+            ElGamalSecretKey sk = ElGamalSecretKey.generate(RANDOM);
+            // Key proof: R_dleq for the library's possession statement, X = G and D = P = PK_j.
+            var proof = circuitService.proveDleq(sk.possessionStatement(), sk.secretScalar());
+            out.add(new Trustee("trustee" + j, sk, proof));
         }
         return List.copyOf(out);
+    }
+
+    /**
+     * Registers one trustee key from the manifest ({@code elgamal-jubjub-v1} §3.3): the encoding
+     * must decode to a non-identity subgroup point, and the key proof must verify for exactly the
+     * possession statement the library builds for it ({@code X = G}, {@code P = D = PK_j}).
+     *
+     * @throws IllegalArgumentException if the encoding is invalid or the proof is rejected
+     */
+    public static VerifiedKeyShare verifiedKeyShare(VoteCircuitService circuits, TrusteeInfo trustee) {
+        return VerifiedKeyShare.verify(HexUtil.decodeHexString(trustee.publicKeyHex()), statement ->
+                statement.kind() == DleqStatement.Kind.POSSESSION
+                        && circuits.verifyDleq(trustee.keyProofJson(), statement.publicInputs()));
+    }
+
+    /**
+     * The n-of-n key context rebuilt from the manifest's trustee keys and key proofs: every key
+     * registered through {@link #verifiedKeyShare}, then {@link ElGamalPublicKey#aggregate}
+     * (distinct shares, sum not the identity).
+     *
+     * @throws IllegalArgumentException if any key or proof is rejected, or aggregation refuses
+     */
+    public static NOfNKeyContext keyContext(VoteCircuitService circuits, List<TrusteeInfo> trustees) {
+        List<VerifiedKeyShare> shares = new ArrayList<>(trustees.size());
+        for (TrusteeInfo trustee : trustees) {
+            shares.add(verifiedKeyShare(circuits, trustee));
+        }
+        return ElGamalPublicKey.aggregate(shares);
     }
 
     /** Register a voter by their secret key. Returns the voter's public key hash. */
@@ -151,7 +191,7 @@ public class ElectionService {
         }
 
         long deadline = System.currentTimeMillis() + votingWindowSeconds * 1000;
-        config = new ElectionConfig(electionName, electionId, tree[treeDepth][0], electionKey,
+        config = new ElectionConfig(electionName, electionId, tree[treeDepth][0], keyContext,
                 trustees.stream().map(Trustee::info).toList(), deadline, voterPublicKeys.size());
         log.info("Election finalized: {} voters, root={}..., voting closes at {}",
                 voterPublicKeys.size(), config.voterRoot().toString(16).substring(0, 8),
@@ -203,13 +243,14 @@ public class ElectionService {
     public int getVoterCount() { return voterPublicKeys.size(); }
     public boolean isFinalized() { return config != null; }
     public Set<String> getVoterLabels() { return voterSecretKeys.keySet(); }
-    public JubjubPoint getElectionKey() { return electionKey; }
+    /** The joint election key, or {@code null} before {@link #createElection}. */
+    public ElGamalPublicKey getElectionKey() { return keyContext == null ? null : keyContext.jointKey(); }
     public List<TrusteeInfo> getTrusteeInfo() { return trustees.stream().map(Trustee::info).toList(); }
 
     /** The finalized configuration, or {@code null} before {@link #finalizeElection()}. */
     public ElectionConfig getConfig() { return config; }
 
-    /** The trustees with their secret shares; only the in-process trustees of the demo use this. */
+    /** The trustees with their secret keys; only the in-process trustees of the demo use this. */
     List<Trustee> trustees() { return trustees; }
 
     public record MerkleProof(BigInteger[] siblings, BigInteger[] pathBits, int leafIndex) {}
