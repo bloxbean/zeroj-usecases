@@ -65,6 +65,7 @@ zeroj-usecases/
   digital-product-passport/       Spring Boot E2E, CircuitSpec reference
   selective-disclosure/           Spring Boot E2E
   reusable-kyc/                   Spring Boot E2E, BBS selective disclosure
+  pedersen-commitments/           Spring Boot E2E, three Pedersen commitment demos
 
   examples/
     minimal-circuits/
@@ -82,11 +83,12 @@ zeroj-usecases/
 | [proof-of-reserves](proof-of-reserves/README.md) | Reserves cover liabilities without exposing balances | 8089 | Symbolic annotations |
 | [identity-kyc](identity-kyc/README.md) | Age and country eligibility without revealing personal data | 8087 | Symbolic annotations |
 | [nft-ownership](nft-ownership/README.md) | NFT ownership without revealing wallet or token | 8085 | Symbolic annotations |
-| [private-voting](private-voting/README.md) | Eligible voter, one private vote, no double-vote | 8086 | Symbolic annotations |
+| [private-voting](private-voting/README.md) | Eligible voter, one encrypted vote, no double-vote; only the total is ever decrypted | 8086 | Symbolic annotations |
 | [personhood-airdrop](personhood-airdrop/SYBIL_AIRDROP_TUTORIAL.md) | One claim per person per epoch | 8083 | Symbolic annotations |
 | [digital-product-passport](digital-product-passport/README.md) | Product compliance without exposing supply-chain data | 8088 | `CircuitSpec` |
 | [selective-disclosure](selective-disclosure/SELECTIVE_DISCLOSURE_TUTORIAL.md) | Multiple predicates from one signed credential | 8091 | Symbolic annotations |
 | [reusable-kyc](reusable-kyc/README.md) | KYC once, reveal only the attributes each service needs — **BBS proof verified natively on-chain** | 8092 | BBS (no circuit) |
+| [pedersen-commitments](pedersen-commitments/README.md) | Confidential points that still add up; one committed credential, prove only a predicate; solvency with hidden liabilities | 8093 | Symbolic annotations |
 
 Some apps have native Spring ports that overlap, such as 8085. The Docker demo
 maps them to distinct host ports so multiple profiles can exist without port

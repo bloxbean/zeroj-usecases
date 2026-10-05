@@ -7,6 +7,7 @@ projects=(
   nft-ownership
   personhood-airdrop
   private-voting
+  pedersen-commitments
   proof-of-reserves
   selective-disclosure
   examples/minimal-circuits/batch-threshold-matrix

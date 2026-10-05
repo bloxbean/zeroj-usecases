@@ -167,6 +167,23 @@ services:
     volumes:
       - reusable-kyc-data:/app/data
 
+  pedersen-commitments:
+    profiles: ["pedersen-commitments", "spring"]
+    <<: *host-provider
+    build:
+      <<: *spring-build
+      args:
+        USECASE_DIR: pedersen-commitments
+        ZEROJ_VERSION: ${ZEROJ_VERSION:-0.1.0-pre12}
+        PUBLISH_LOCAL_ZEROJ: ${PUBLISH_LOCAL_ZEROJ:-false}
+    environment:
+      <<: *spring-env
+      SERVER_PORT: 8080
+    ports:
+      - "${PEDERSEN_COMMITMENTS_PORT:-8093}:8080"
+    volumes:
+      - pedersen-commitments-data:/app/data
+
 volumes:
   proof-of-reserves-data:
   identity-kyc-data:
@@ -176,3 +193,4 @@ volumes:
   dpp-data:
   selective-disclosure-data:
   reusable-kyc-data:
+  pedersen-commitments-data:
