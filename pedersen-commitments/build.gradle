@@ -1,6 +1,7 @@
 plugins {
     id 'java'
-    id 'application'
+    id 'org.springframework.boot' version '3.5.0-M3'
+    id 'io.spring.dependency-management' version '1.1.7'
 }
 
 group = 'com.bloxbean.cardano.zeroj.usecases'
@@ -18,12 +19,19 @@ java {
     }
 }
 
+springBoot {
+    mainClass = 'com.bloxbean.cardano.zeroj.usecases.pedersen.PedersenCommitmentsApplication'
+}
+
 repositories {
     mavenCentral()
     mavenLocal()
     maven {
         url = uri("https://central.sonatype.com/repository/maven-snapshots")
         content { snapshotsOnly() }
+    }
+    maven {
+        url = uri("https://repo.spring.io/milestone")
     }
 }
 
@@ -41,6 +49,9 @@ def usecaseVersionsScript = {
 apply from: usecaseVersionsScript
 
 dependencies {
+    // Spring Boot — the web UI and its REST API
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
     // ZeroJ — circuits, Pedersen gadgets, Groth16 prover/verifier, on-chain verifier library
     implementation "org.zeroj:zeroj-api:${zerojVersion}"
     implementation "org.zeroj:zeroj-circuit-dsl:${zerojVersion}"
@@ -62,7 +73,6 @@ dependencies {
     // Cardano Client Lib — transactions against Yaci DevKit
     implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
     implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
-    runtimeOnly 'org.slf4j:slf4j-simple:2.0.16'
 
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
@@ -71,9 +81,17 @@ dependencies {
     testRuntimeOnly "org.julclang:julc-vm-java:${julcVersion}"
 }
 
-application {
+// The narrated CLI walkthrough of all three demos on a running Yaci DevKit (no UI).
+tasks.register('walkthrough', JavaExec) {
+    group = 'application'
+    description = 'Runs the three Pedersen demos end to end on Yaci DevKit from the command line.'
+    classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.bloxbean.cardano.zeroj.usecases.pedersen.PedersenDemos'
-    applicationDefaultJvmArgs = ['--enable-native-access=ALL-UNNAMED', '-Dzeroj.allowInsecureTrustedSetup=true']
+    jvmArgs '--enable-native-access=ALL-UNNAMED', '-Dzeroj.allowInsecureTrustedSetup=true'
+}
+
+bootRun {
+    jvmArgs '--enable-native-access=ALL-UNNAMED', '-Dzeroj.allowInsecureTrustedSetup=true'
 }
 
 // Fork the compiler for the Julc annotation processor on Java 25
@@ -99,4 +117,27 @@ test {
         events "passed", "failed", "skipped"
         showStandardStreams = true
     }
+}
+
+// === Frontend build (Svelte + Vite) ===
+
+def frontendDir = file('frontend')
+
+tasks.register('npmInstall', Exec) {
+    workingDir frontendDir
+    commandLine 'npm', 'install'
+    inputs.file(new File(frontendDir, 'package.json'))
+    outputs.dir(new File(frontendDir, 'node_modules'))
+}
+
+tasks.register('buildFrontend', Exec) {
+    dependsOn 'npmInstall'
+    workingDir frontendDir
+    commandLine 'npm', 'run', 'build'
+    inputs.dir(new File(frontendDir, 'src'))
+    outputs.dir(file('src/main/resources/static'))
+}
+
+if (project.hasProperty('withFrontend')) {
+    processResources.dependsOn buildFrontend
 }
