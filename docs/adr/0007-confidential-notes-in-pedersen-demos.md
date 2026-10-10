@@ -451,7 +451,7 @@ their own inputs"):
 
 | ID | Scope |
 |---|---|
-| M0 | ZeroJ snapshot `0.1.0-pre13-1e78c6f-SNAPSHOT`; the existing tests stay green. |
+| M0 | ZeroJ snapshot `0.1.0-pre13-1e78c6f-SNAPSHOT` (now `0.1.0-pre13-458bfb1-SNAPSHOT` from the BloxBean snapshot repository: same library classes, only ZeroJ's snapshot workflow changed); the existing tests stay green. |
 | M1 | This ADR and ADR-0008. |
 | M2 | `AuditorRegistry`, `KeyPossessionProof`, and the key, wallet and auditor helpers. |
 | M3a | `NoteLedger`, the version 2 circuits, the points migration, and the layout gate. |

@@ -265,6 +265,10 @@ with `-p`, for example the Pedersen demo UI:
 ./gradlew -p pedersen-commitments bootRun -PwithFrontend   # http://localhost:8093
 ```
 
+`zerojVersion` in `version.properties` may name a ZeroJ commit snapshot
+(`<version>-<commit>-SNAPSHOT`); builds resolve those from
+`https://repo.bloxbean.org/maven/snapshots` (restricted to the `org.zeroj` group).
+
 To test against a local ZeroJ build:
 
 ```bash
