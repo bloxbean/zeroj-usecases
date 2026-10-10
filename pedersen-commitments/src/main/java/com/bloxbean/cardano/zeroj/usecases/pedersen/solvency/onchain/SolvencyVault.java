@@ -126,10 +126,11 @@ public class SolvencyVault {
         PlutusData cursor = entries;
         while (!Builtins.nullList(cursor)) {
             PlutusData entry = Builtins.headList(cursor);
+            CustomerFields cf = PlutusData.cast(entry, CustomerFields.class);
             boolean ok = isEntry(entry);
             wellFormed = wellFormed && ok;
-            reversedU = Builtins.mkCons(Builtins.iData(entryField(entry, 1)), reversedU);
-            reversedV = Builtins.mkCons(Builtins.iData(entryField(entry, 2)), reversedV);
+            reversedU = Builtins.mkCons(Builtins.iData(Builtins.unIData(cf.u())), reversedU);
+            reversedV = Builtins.mkCons(Builtins.iData(Builtins.unIData(cf.v())), reversedV);
             count = count + 1;
             cursor = Builtins.tailList(cursor);
         }
@@ -186,15 +187,11 @@ public class SolvencyVault {
                 && Builtins.lengthOfByteString(Builtins.unBData(Builtins.headList(f3))) == 89;
     }
 
-    private static BigInteger entryField(PlutusData entry, int index) {
-        PlutusData f = Builtins.constrFields(entry);
-        int i = 0;
-        while (i < index) {
-            f = Builtins.tailList(f);
-            i = i + 1;
-        }
-        return Builtins.unIData(Builtins.headList(f));
-    }
+    /**
+     * A typed view of a customer entry {@code Entry(idHash, u, v, delivery)} for constant-cost
+     * field access. Components stay raw {@code Data}; callers decode as before.
+     */
+    record CustomerFields(PlutusData idHash, PlutusData u, PlutusData v, PlutusData delivery) {}
 
     private static int countInputs(JulcList<TxInInfo> inputs, Credential own) {
         int n = 0;

@@ -143,7 +143,7 @@ a **singleton** registry token that the registry's own script moves forward on r
 The parameters are:
 - the issuer's pkh, the token name and the issuance mode;
 - the registry policy and token;
-- the `blake2b_256(serialiseData(vk))` hashes of the verification keys: transfer, redeem, and proved issuance for one and for two notes (each redeemer carries its key; see the r2 note on script size).
+- the `blake2b_256(serialiseData(vk))` hashes of the verification keys: transfer, redeem, and proved issuance for one and for two notes (the keys themselves are in the ledger's key carrier; see the r2 note on script size and r3).
 
 **Datum:** `Note(owner: B28, u: I, v: I, generation: I, audit: [I × 8], deliveries: [B89 × 2])`.
 - `audit` holds the two `elgamal-jubjub-v1` limb ciphertexts at width 32, `A.u, A.v, B.u, B.v`
@@ -410,10 +410,30 @@ their own inputs"):
     budgets are per thread (R10).
   - Verification keys are pinned by hash: a script embedding four verification keys measured
     18.1–18.9 KB, beyond the 16 KB transaction limit even for deploying a reference script.
-    `NoteLedger` takes `blake2b_256(serialiseData(vk))` per key, and each proof's redeemer
-    carries its key (on-chain `VkLib`). The ledger is deployed once as a reference script into an
-    output at its own address that holds no note token, so it can never be spent.
+    `NoteLedger` takes `blake2b_256(serialiseData(vk))` per key (on-chain `VkLib`). The ledger is
+    deployed once as a reference script into an output at its own address that holds no note
+    token, so it can never be spent. Since r3 the keys are in a second such output, the key
+    carrier, instead of each redeemer.
   - F10 (script size) stays a measurement at M3a.
+
+- **r3** (2026-10-10; fee optimization, no change to what any script accepts):
+  - **Key carrier.** The verification keys moved from every proof redeemer to the inline datum of
+    a key carrier: an output at the script's own address with no reference script and no note
+    token, deployed once next to the reference script. `VkLib.referenceVk` reads key `i` from the
+    reference input at the script's payment credential without a reference script; the hash check
+    against the pinned parameter is unchanged, so where the key comes from does not affect
+    soundness. A reference input's datum is not part of the transaction, so the transaction is
+    about 1.1 to 1.6 KB smaller. VM tests: no carrier, a carrier of another script, and a wrong or
+    rogue key in the carrier are refused.
+  - **Constant-cost datum access.** Typed views (`EntryFields`, `CustomerFields`) replace
+    loop-based field access; `NoteLib.isNoteDatum` checks its fixed-length lists (8 audit integers,
+    2 deliveries) unrolled. Same accepted shapes; fewer CEK steps.
+  - **Evaluator margin** 25% → 5%: evaluation is deterministic, and the margin is paid for on
+    every transaction.
+  - The on-chain Groth16 verifier's double decompression is ZeroJ issue #84.
+  - Measured fees on DevKit (mainnet protocol parameters), before → after: transfer 1.415 →
+    1.163 ADA; redeem 1.167 → 0.984; trusted issue 0.505 → 0.469; payroll pay run of two
+    salaries 1.345 → 1.111; registry init 1.381 → 1.216, rotate 1.396 → 1.226.
 
 ## Invariants
 
@@ -505,24 +525,24 @@ their own inputs"):
 
 Julc VM, Plutus V3 cost model (protocol version 11), against `maxTxExecutionUnits` (10e9 steps,
 16.5e6 memory). Each figure is the **complete** transaction: every script purpose it runs, added up.
-Verification keys are pinned by hash and carried in the redeemer (r2).
+Verification keys are pinned by hash (r2) and read from the key carrier (r3).
 
 | Transaction | Circuit constraints | Public inputs | Julc VM steps | VM memory | DevKit steps | DevKit memory |
 |---|---|---|---|---|---|---|
-| Transfer (spend + Split mint), direct layout | 34,184 | 24 | 76.8% | 16.2% | 76.8% | 16.2% |
-| Redeem (spend + Receipt mint), direct layout | 18,366 | 15 | 58.3% | 12.7% | 58.3% | 12.7% |
-| Proved issue, one note (mint) | 15,890 | 12 | 50.8% | 9.0% | — | — |
-| Proved issue, two notes (mint) | 31,773 | 22 | 71.8% | 13.7% | see the payroll E2E | |
-| Trusted issue (mint) | — | — | 3.7% (two notes) | 7.8% | 2.6% (one note) | 5.3% |
-| Registry Init / Rotate (two possession proofs, 7 public inputs each) | 6,548 per proof | 7 | 77.7% / 78.2% | 8.6% / 9.4% | 77.8% / 78.3% | 8.6% / 9.5% |
+| Transfer (spend + Split mint), direct layout | 34,184 | 24 | 75.9% | 14.4% | 75.8% | 13.8% |
+| Redeem (spend + Receipt mint), direct layout | 18,366 | 15 | 58.0% | 12.1% | 57.8% | 11.5% |
+| Proved issue, one note (mint) | 15,890 | 12 | 50.5% | 8.3% | — | — |
+| Proved issue, two notes (mint) | 31,773 | 22 | 71.0% | 11.8% | 71.3% | 12.2% |
+| Trusted issue (mint) | — | — | 2.7% (two notes) | 5.7% | 2.1% (one note) | 4.3% |
+| Registry Init / Rotate (two possession proofs, 7 public inputs each) | 6,548 per proof | 7 | 76.8% / 77.1% | 6.4% / 7.0% | 76.8% / 77.2% | 6.2% / 6.9% |
 
-The VM contexts include the ledger's reference-script input, a fee-payer input and a change
-output; the DevKit figures are the Julc evaluator's unpadded units for the real submitted
+Figures as of r3 (2026-10-10). The VM contexts include the ledger's reference-script input, its
+key carrier, a fee-payer input and a change output; the DevKit figures are the Julc evaluator's unpadded units for the real submitted
 transaction. Both are asserted at ≤ 80% (registry transactions are outside ADR-0055's note gate).
-The evaluator pads by up to 25% but never beyond `maxTxExecutionUnits`.
+The evaluator pads by up to 5% (25% before r3) but never beyond `maxTxExecutionUnits`.
 
 **Gate outcome:** every note transaction is within ADR-0055's 80% gate with the **direct layout**
-(spec §8.2), so the hash-compressed layout is not used. The transfer leaves 3.2 points of margin.
+(spec §8.2), so the hash-compressed layout is not used. The transfer leaves 4.1 points of margin.
 The transfer and redeem circuits are exactly the size of ZeroJ's reference D3a circuits (34,184
 and 18,366 constraints), an independent cross-check of the composition. The on-DevKit figures
 (from the Julc evaluator on the real transactions) are recorded at M3a's end-to-end run.

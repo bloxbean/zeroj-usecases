@@ -1,5 +1,6 @@
 package com.bloxbean.cardano.zeroj.usecases.pedersen.auction;
 
+import com.bloxbean.cardano.zeroj.usecases.pedersen.common.CostProfiler;
 import com.bloxbean.cardano.client.crypto.Blake2bUtil;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.auction.circuit.BidProofCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.auction.onchain.SealedBidAuction;
@@ -10,6 +11,7 @@ import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.KeyPossession;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.RegistryEntry;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.RegistryTestData;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.VerificationKeys;
+import org.julclang.compiler.CompileResult;
 import org.julclang.core.PlutusData;
 import org.julclang.core.Program;
 import org.julclang.ledger.Address;
@@ -91,6 +93,7 @@ class SealedBidAuctionVmTest extends ContractTest {
 
     static AuctionProofs proofs;
     static Program program;
+    static CompileResult compiled;
     static AuditorKeys auctioneerKeys;
     static RegistryEntry entry;
     static AdmittedAuditor auctioneer;
@@ -106,7 +109,8 @@ class SealedBidAuctionVmTest extends ContractTest {
         auctioneerKeys = AuditorKeys.generate(RANDOM);
         entry = auctioneerKeys.entry(REGISTRY_POLICY, AUCTIONEER, 0, possession);
         auctioneer = AdmittedAuditor.admit(REGISTRY_POLICY, entry, possession);
-        program = new SealedBidAuctionVmTest().compileValidator(SealedBidAuction.class, Path.of("src/main/java")).program()
+        compiled = new SealedBidAuctionVmTest().compileValidatorWithSourceMap(SealedBidAuction.class, Path.of("src/main/java"));
+        program = compiled.program()
                 .applyParams(PlutusData.bytes(REGISTRY_POLICY), PlutusData.bytes("REG".getBytes()),
                         PlutusData.integer(BigInteger.valueOf(MIN_WINDOW)), PlutusData.integer(BigInteger.valueOf(2_000_000)),
                         PlutusData.bytes(VerificationKeys.hash(proofs.bid().compressedVk())),
@@ -120,6 +124,32 @@ class SealedBidAuctionVmTest extends ContractTest {
                     auctioneer.pkU(), auctioneer.pkV(), e)));
         }
         specials();
+    }
+
+    /**
+     * The carrier's key list: slot 0 the bid key, slots 1 to 3 the settlement keys for 1 to 3 bids.
+     * Each argument names the circuit placed in that slot (0 = bid, 1 to 3 = settle n), so a test
+     * can put a wrong key in a slot.
+     */
+    static PlutusData keys(int... circuits) {
+        PlutusData[] list = new PlutusData[circuits.length];
+        for (int i = 0; i < circuits.length; i++) {
+            list[i] = VerificationKeys.julcData(circuits[i] == 0 ? proofs.bid().compressedVk() : proofs.settle(circuits[i]).compressedVk());
+        }
+        return PlutusData.list(list);
+    }
+
+    /**
+     * The auction's key carrier: an output at the script's address, without a reference script,
+     * with the verification keys in its datum (VkLib.referenceVk). Also references the auction's
+     * reference-script output, as a real transaction does.
+     */
+    static void carrier(ScriptContextTestBuilder b, PlutusData keys) {
+        b.referenceInput(new TxInInfo(TestDataBuilder.randomTxOutRef_typed(), new TxOut(LOT_ADDRESS,
+                Value.lovelace(BigInteger.valueOf(30_000_000)), new OutputDatum.OutputDatumInline(PlutusData.constr(0)),
+                Optional.of(ScriptHash.of(POLICY)))));
+        b.referenceInput(new TxInInfo(TestDataBuilder.randomTxOutRef_typed(), new TxOut(LOT_ADDRESS,
+                Value.lovelace(BigInteger.valueOf(25_000_000)), new OutputDatum.OutputDatumInline(keys), Optional.empty())));
     }
 
     /** A bid with a valid proof for exactly its bidder and ciphertext. */
@@ -250,7 +280,9 @@ class SealedBidAuctionVmTest extends ContractTest {
     @Test
     @DisplayName("Open: a seller mints a one-shot lot token and locks the item; every mutation is rejected")
     void open() {
-        var honest = evaluate(program, openContext(OpenMutation.NONE));
+        var openCtx = openContext(OpenMutation.NONE);
+        var honest = evaluate(program, openCtx);
+        CostProfiler.profile("auction open", program, compiled, openCtx);
         assertInstanceOf(EvalResult.Success.class, honest);
         report("open (mint)", honest, null);
         for (OpenMutation m : OpenMutation.values()) {
@@ -306,7 +338,7 @@ class SealedBidAuctionVmTest extends ContractTest {
     enum BidMutation {
         NONE, LATE, NO_UPPER_BOUND, UNSIGNED, BY_SELLER, BY_AUCTIONEER, REPEATED_BIDDER, FOURTH_BID, DEPOSIT_OFF_BY_ONE,
         EARLIER_BID_CHANGED, COPIED_HANDLE, IDENTITY_HANDLE, STAKED_OUTPUT, TOKENLESS_INPUT, EXTRA_ASSET, MINT_DURING_BID,
-        PROOF_FOR_OTHER_BIDDER, WRONG_VK, TWO_LOTS, DEPOSIT_TOO_MUCH, REFERENCE_SCRIPT_ON_LOT,
+        PROOF_FOR_OTHER_BIDDER, WRONG_VK, NO_VK_CARRIER, VK_CARRIER_OTHER_SCRIPT, TWO_LOTS, DEPOSIT_TOO_MUCH, REFERENCE_SCRIPT_ON_LOT,
         // boundary cases, checked separately (AT_DEADLINE is accepted)
         AT_DEADLINE, JUST_LATE
     }
@@ -314,7 +346,9 @@ class SealedBidAuctionVmTest extends ContractTest {
     @Test
     @DisplayName("Bid: the third bid is appended with its deposit and proof; every mutation is rejected")
     void placeBid() {
-        var honest = evaluate(program, bidContext(BidMutation.NONE));
+        var bidCtx = bidContext(BidMutation.NONE);
+        var honest = evaluate(program, bidCtx);
+        CostProfiler.profile("auction bid", program, compiled, bidCtx);
         assertInstanceOf(EvalResult.Success.class, honest);
         report("bid (spend, third bid)", honest, null);
         for (BidMutation m : BidMutation.values()) {
@@ -342,12 +376,20 @@ class SealedBidAuctionVmTest extends ContractTest {
         SnarkjsToCardano.ProofCompressed p = sp.proof();
         PlutusData newBid = PlutusData.constr(0, PlutusData.bytes(bidder), PlutusData.integer(aU), PlutusData.integer(aV),
                 PlutusData.integer(bU), PlutusData.integer(bV));
-        PlutusData vk = m == BidMutation.WRONG_VK ? VerificationKeys.julcData(proofs.settle(1).compressedVk())
-                : VerificationKeys.julcData(proofs.bid().compressedVk());
         PlutusData redeemer = PlutusData.constr(0, PlutusData.bytes(bidder), PlutusData.integer(aU), PlutusData.integer(aV),
                 PlutusData.integer(bU), PlutusData.integer(bV),
-                PlutusData.bytes(p.piA()), PlutusData.bytes(p.piB()), PlutusData.bytes(p.piC()), vk);
+                PlutusData.bytes(p.piA()), PlutusData.bytes(p.piB()), PlutusData.bytes(p.piC()));
         var b = ScriptContextTestBuilder.spending(ownRef, before).redeemer(redeemer);
+        // WRONG_VK: a settlement key in the bid slot of the carrier.
+        if (m == BidMutation.VK_CARRIER_OTHER_SCRIPT) {
+            // The right keys, but in a carrier at another script's address.
+            b.referenceInput(new TxInInfo(TestDataBuilder.randomTxOutRef_typed(), new TxOut(
+                    new Address(new Credential.ScriptCredential(ScriptHash.of(filled(28, (byte) 0x66))), Optional.empty()),
+                    Value.lovelace(BigInteger.valueOf(25_000_000)), new OutputDatum.OutputDatumInline(keys(0, 1, 2, 3)),
+                    Optional.empty())));
+        } else if (m != BidMutation.NO_VK_CARRIER) {
+            carrier(b, m == BidMutation.WRONG_VK ? keys(1, 1, 2, 3) : keys(0, 1, 2, 3));
+        }
         b.validRange(switch (m) {
             case LATE -> upTo(BIDDING_ENDS + 1000);
             case NO_UPPER_BOUND -> always();
@@ -395,7 +437,9 @@ class SealedBidAuctionVmTest extends ContractTest {
     @DisplayName("Settle: n = 1, 2, 3 accepted with cost measured; every mutation is rejected")
     void settle() {
         for (int n = 1; n <= 3; n++) {
-            var spend = evaluate(program, settleContext(SettleMutation.NONE, n, true));
+            var settleCtx = settleContext(SettleMutation.NONE, n, true);
+            var spend = evaluate(program, settleCtx);
+            CostProfiler.profile("auction settle n=" + n, program, compiled, settleCtx);
             assertInstanceOf(EvalResult.Success.class, spend);
             var burn = evaluate(program, settleContext(SettleMutation.NONE, n, false));
             assertInstanceOf(EvalResult.Success.class, burn);
@@ -426,13 +470,16 @@ class SealedBidAuctionVmTest extends ContractTest {
                 auctioneerKeys.elgamal().secretScalar(), AMOUNTS.subList(0, proofBids)));
         long claimedW = m == SettleMutation.W_OUT_OF_RANGE ? n + 1 : w;
         long claimedP = m == SettleMutation.P_BELOW_RESERVE ? RESERVE - 1 : p;
-        PlutusData vk = VerificationKeys.julcData(proofs.settle(m == SettleMutation.WRONG_VK ? (n == 1 ? 2 : 1) : proofBids).compressedVk());
         PlutusData redeemer = PlutusData.constr(1, PlutusData.integer(BigInteger.valueOf(claimedW)),
                 PlutusData.integer(BigInteger.valueOf(claimedP)), PlutusData.bytes(proof.piA()), PlutusData.bytes(proof.piB()),
-                PlutusData.bytes(proof.piC()), vk);
+                PlutusData.bytes(proof.piC()));
         var b = spending
                 ? ScriptContextTestBuilder.spending(ownRef, datum).redeemer(redeemer)
                 : ScriptContextTestBuilder.minting(PolicyId.of(POLICY)).redeemer(PlutusData.constr(1, PlutusData.integer(0)));
+        // WRONG_VK: another settlement size's key in this size's slot of the carrier.
+        int other = n == 1 ? 2 : 1;
+        carrier(b, m != SettleMutation.WRONG_VK ? keys(0, 1, 2, 3)
+                : keys(0, n == 1 ? other : 1, n == 2 ? other : 2, n == 3 ? other : 3));
         b.validRange(switch (m) {
             case EARLY -> between(BIDDING_ENDS - 1000, SETTLE_BY - 1000);
             case LATE -> between(BIDDING_ENDS + 1000, SETTLE_BY + 1000);
@@ -496,7 +543,9 @@ class SealedBidAuctionVmTest extends ContractTest {
     @Test
     @DisplayName("Refund after settleBy and NoBids after the window are accepted; their mutations are rejected")
     void refundAndNoBids() {
-        var refund = evaluate(program, refundContext(CloseMutation.NONE));
+        var refundCtx = refundContext(CloseMutation.NONE);
+        var refund = evaluate(program, refundCtx);
+        CostProfiler.profile("auction refund", program, compiled, refundCtx);
         assertInstanceOf(EvalResult.Success.class, refund);
         report("refund (spend, 3 bids)", refund, null);
         for (CloseMutation m : CloseMutation.values()) {

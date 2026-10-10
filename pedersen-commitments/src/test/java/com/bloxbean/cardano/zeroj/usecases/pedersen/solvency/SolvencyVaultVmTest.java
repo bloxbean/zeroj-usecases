@@ -1,9 +1,11 @@
 package com.bloxbean.cardano.zeroj.usecases.pedersen.solvency;
 
+import com.bloxbean.cardano.zeroj.usecases.pedersen.common.CostProfiler;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.solvency.SolvencyAttestation.Customer;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.solvency.SolvencyAttestation.Entry;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.solvency.onchain.SolvencyVault;
 import org.zeroj.circuit.lib.jubjub.NoteViewingKey;
+import org.julclang.compiler.CompileResult;
 import org.julclang.core.PlutusData;
 import org.julclang.core.Program;
 import org.julclang.ledger.Address;
@@ -63,6 +65,7 @@ class SolvencyVaultVmTest extends ContractTest {
             Optional.of(new StakingCredential.StakingHash(new Credential.PubKeyCredential(PubKeyHash.of(filled(28, (byte) 0x5a))))));
 
     private static Program program;
+    private static CompileResult compiled;
     private static List<Entry> entries;
     private static SnarkjsToCardano.ProofCompressed proof;
 
@@ -73,8 +76,8 @@ class SolvencyVaultVmTest extends ContractTest {
         entries = SolvencyAttestation.entries(book);
         proof = ProverToCardano.compressProof(solvency.prove(RESERVES, book));
         var vk = solvency.circuit().compressedVk();
-        program = new SolvencyVaultVmTest().compileValidator(SolvencyVault.class, Path.of("src/main/java"))
-                .program().applyParams(
+        compiled = new SolvencyVaultVmTest().compileValidatorWithSourceMap(SolvencyVault.class, Path.of("src/main/java"));
+        program = compiled.program().applyParams(
                         PlutusData.bytes(EXCHANGE), PlutusData.bytes(TOKEN),
                         PlutusData.integer(BigInteger.valueOf(SolvencyCircuitTest.N)),
                         PlutusData.integer(BigInteger.valueOf(PERIOD_START)),
@@ -97,7 +100,9 @@ class SolvencyVaultVmTest extends ContractTest {
     @Test
     @DisplayName("Attest: an honest attestation locks the reserve; every mutation is rejected")
     void attest() {
-        var ok = evaluate(program, attestContext(Attest.NONE));
+        var ctx = attestContext(Attest.NONE);
+        var ok = evaluate(program, ctx);
+        CostProfiler.profile("solvency attest", program, compiled, ctx);
         assertSuccess(ok);
         System.out.println("[SolvencyVault attest] budget: " + ok.budgetConsumed());
         for (Attest m : Attest.values()) {

@@ -76,11 +76,11 @@ public class NoteLedger {
     record Issue(BigInteger count) implements NoteMint {}
     record Split(BigInteger count) implements NoteMint {}
     record Receipt(BigInteger count) implements NoteMint {}
-    record ProvedIssue(byte[] piA, byte[] piB, byte[] piC, PlutusData vk) implements NoteMint {}
+    record ProvedIssue(byte[] piA, byte[] piB, byte[] piC) implements NoteMint {}
 
     sealed interface NoteSpend permits Transfer, Redeem {}
-    record Transfer(byte[] piA, byte[] piB, byte[] piC, PlutusData vk) implements NoteSpend {}
-    record Redeem(BigInteger price, byte[] piA, byte[] piB, byte[] piC, PlutusData vk) implements NoteSpend {}
+    record Transfer(byte[] piA, byte[] piB, byte[] piC) implements NoteSpend {}
+    record Redeem(BigInteger price, byte[] piA, byte[] piB, byte[] piC) implements NoteSpend {}
 
     // ------------------------------------------------------------------
     //  Minting
@@ -166,7 +166,7 @@ public class NoteLedger {
                     Builtins.mkCons(Builtins.iData(NoteLib.noteU(first)),
                     Builtins.mkCons(Builtins.iData(NoteLib.noteV(first)),
                             appendList(pk, NoteLib.prependAudit(a1, Builtins.mkNilData())))));
-            return VkLib.verify(inputs, p.piA(), p.piB(), p.piC(), p.vk(), issue1VkHash);
+            return VkLib.verify(inputs, p.piA(), p.piB(), p.piC(), VkLib.referenceVk(txInfo, own, 2), issue1VkHash);
         }
         PlutusData a2 = NoteLib.noteAudit(second);
         if (!NoteLib.ownHandlesDistinct(a2) || !NoteLib.handlesDisjoint(a1, a2)) return false;
@@ -176,7 +176,7 @@ public class NoteLedger {
                 Builtins.mkCons(Builtins.iData(NoteLib.noteV(first)),
                 Builtins.mkCons(Builtins.iData(NoteLib.noteV(second)),
                         appendList(pk, NoteLib.prependAudit(a1, NoteLib.prependAudit(a2, Builtins.mkNilData()))))))));
-        return VkLib.verify(inputs, p.piA(), p.piB(), p.piC(), p.vk(), issue2VkHash);
+        return VkLib.verify(inputs, p.piA(), p.piB(), p.piC(), VkLib.referenceVk(txInfo, own, 3), issue2VkHash);
     }
 
     /** The two-element list {@code pair} followed by {@code rest}. */
@@ -257,7 +257,7 @@ public class NoteLedger {
                 Builtins.mkCons(Builtins.iData(RegistryLib.entryPkU(entry)),
                 Builtins.mkCons(Builtins.iData(RegistryLib.entryPkV(entry)),
                         NoteLib.prependAudit(a1, NoteLib.prependAudit(a2, Builtins.mkNilData())))))))))));
-        return VkLib.verify(publicInputs, t.piA(), t.piB(), t.piC(), t.vk(), transferVkHash);
+        return VkLib.verify(publicInputs, t.piA(), t.piB(), t.piC(), VkLib.referenceVk(txInfo, own, 0), transferVkHash);
     }
 
     private static boolean redeem(Redeem r, Note in, TxInInfo ownInput, TxInfo txInfo, Credential own,
@@ -307,6 +307,6 @@ public class NoteLedger {
                 Builtins.mkCons(Builtins.iData(RegistryLib.entryPkU(entry)),
                 Builtins.mkCons(Builtins.iData(RegistryLib.entryPkV(entry)),
                         NoteLib.prependAudit(audit, Builtins.mkNilData())))))))));
-        return VkLib.verify(publicInputs, r.piA(), r.piB(), r.piC(), r.vk(), redeemVkHash);
+        return VkLib.verify(publicInputs, r.piA(), r.piB(), r.piC(), VkLib.referenceVk(txInfo, own, 1), redeemVkHash);
     }
 }

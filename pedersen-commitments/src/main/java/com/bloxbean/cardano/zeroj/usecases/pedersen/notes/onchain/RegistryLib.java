@@ -81,43 +81,46 @@ public class RegistryLib {
     }
 
     public static BigInteger entryGeneration(PlutusData entry) {
-        return Builtins.unIData(field(entry, 1));
+        EntryFields ef = PlutusData.cast(entry, EntryFields.class);
+        return Builtins.unIData(ef.generation());
     }
 
     public static BigInteger entryPkU(PlutusData entry) {
-        return Builtins.unIData(field(entry, 2));
+        EntryFields ef = PlutusData.cast(entry, EntryFields.class);
+        return Builtins.unIData(ef.pkU());
     }
 
     public static BigInteger entryPkV(PlutusData entry) {
-        return Builtins.unIData(field(entry, 3));
+        EntryFields ef = PlutusData.cast(entry, EntryFields.class);
+        return Builtins.unIData(ef.pkV());
     }
 
     public static BigInteger entryViewU(PlutusData entry) {
-        return Builtins.unIData(field(entry, 5));
+        EntryFields ef = PlutusData.cast(entry, EntryFields.class);
+        return Builtins.unIData(ef.viewU());
     }
 
     public static BigInteger entryViewV(PlutusData entry) {
-        return Builtins.unIData(field(entry, 6));
+        EntryFields ef = PlutusData.cast(entry, EntryFields.class);
+        return Builtins.unIData(ef.viewV());
     }
 
     public static byte[] entryPkProof(PlutusData entry) {
-        return Builtins.unBData(field(entry, 8));
+        EntryFields ef = PlutusData.cast(entry, EntryFields.class);
+        return Builtins.unBData(ef.pkProof());
     }
 
     public static byte[] entryViewProof(PlutusData entry) {
-        return Builtins.unBData(field(entry, 9));
+        EntryFields ef = PlutusData.cast(entry, EntryFields.class);
+        return Builtins.unBData(ef.viewProof());
     }
 
-    /** Field {@code index} of a constructor. */
-    private static PlutusData field(PlutusData entry, int index) {
-        PlutusData rest = Builtins.constrFields(entry);
-        int i = 0;
-        while (i < index) {
-            rest = Builtins.tailList(rest);
-            i = i + 1;
-        }
-        return Builtins.headList(rest);
-    }
+    /**
+     * A typed view of a registry entry for constant-cost field access (a fixed {@code tailList}
+     * chain instead of a loop). Components stay raw {@code Data}; callers decode as before.
+     */
+    record EntryFields(PlutusData auditor, PlutusData generation, PlutusData pkU, PlutusData pkV, PlutusData pkEnc,
+                       PlutusData viewU, PlutusData viewV, PlutusData viewKey, PlutusData pkProof, PlutusData viewProof) {}
 
     /**
      * The entry of the <b>exactly one</b> reference input that holds the registry token

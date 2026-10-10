@@ -22,7 +22,6 @@ import com.bloxbean.cardano.client.transaction.spec.Asset;
 import com.bloxbean.cardano.client.util.HexUtil;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.common.DevKit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.common.Fields;
-import com.bloxbean.cardano.zeroj.usecases.pedersen.common.KeyedCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.common.Plutus;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.onchain.NoteLedger;
 import org.julclang.clientlib.JulcScriptLoader;
@@ -52,6 +51,7 @@ public final class NoteLedgerScript {
     private final String policyId;
     private final String address;
     private Utxo reference;
+    private Utxo keyCarrier;
 
     public NoteLedgerScript(byte[] issuerPkh, byte[] token, NoteProofs proofs, Registry registry) {
         this.issuerPkh = issuerPkh.clone();
@@ -99,28 +99,53 @@ public final class NoteLedgerScript {
         return reference;
     }
 
-    /** Deploys the script as a reference script at the ledger's own address (never spendable). */
+    /**
+     * Deploys the script as a reference script at the ledger's own address, then the key carrier:
+     * an output there with the verification keys in its datum and no script (VkLib.referenceVk).
+     * Neither holds a note token, so neither can ever be spent, and wallets ignore both. Two
+     * transactions, because the script and the keys together exceed the transaction size limit.
+     */
     public Result<String> deploy(BackendService backend, Account payer) {
         try {
-            var tx = new Tx()
-                    .payToContract(address, List.of(Amount.ada(40)), PlutusData.unit(), script)
-                    .from(payer.baseAddress());
-            var result = new QuickTxBuilder(backend).compose(tx)
+            var result = new QuickTxBuilder(backend).compose(new Tx()
+                            .payToContract(address, List.of(Amount.ada(40)), PlutusData.unit(), script)
+                            .from(payer.baseAddress()))
                     .withSigner(SignerProviders.signerFrom(payer))
                     .complete();
-            if (result.isSuccessful()) {
-                DevKit.waitForTx(backend, result.getValue());
-                reference = DevKit.utxosOf(backend, address, result.getValue()).getFirst();
-            }
+            if (!result.isSuccessful()) return result;
+            DevKit.waitForTx(backend, result.getValue());
+            reference = DevKit.utxosOf(backend, address, result.getValue()).getFirst();
+            var keys = verificationKeys();
+            BigInteger lovelace = Plutus.minAda(backend, address, List.of(), keys).add(BigInteger.valueOf(1_000_000));
+            var carried = new QuickTxBuilder(backend).compose(new Tx()
+                            .payToContract(address, List.of(new Amount("lovelace", lovelace)), keys)
+                            .from(payer.baseAddress()))
+                    .withSigner(SignerProviders.signerFrom(payer))
+                    .complete();
+            if (!carried.isSuccessful()) return carried;
+            DevKit.waitForTx(backend, carried.getValue());
+            keyCarrier = DevKit.utxosOf(backend, address, carried.getValue()).getFirst();
             return result;
         } catch (Exception e) {
             return Result.error(e.getMessage());
         }
     }
 
-    /** Uses an already deployed reference script. */
-    public void useReference(Utxo deployed) {
+    /** {@code [transfer, redeem]} and, with proved issuance, {@code issue n=1, issue n=2}: NoteLedger's key indices. */
+    ListPlutusData verificationKeys() {
+        List<PlutusData> keys = new ArrayList<>(List.of(VerificationKeys.data(proofs.transfer().compressedVk()),
+                VerificationKeys.data(proofs.redeem().compressedVk())));
+        if (provedIssuance) {
+            keys.add(VerificationKeys.data(proofs.issue(1).compressedVk()));
+            keys.add(VerificationKeys.data(proofs.issue(2).compressedVk()));
+        }
+        return ListPlutusData.of(keys.toArray(new PlutusData[0]));
+    }
+
+    /** Uses an already deployed reference script and key carrier. */
+    public void useReference(Utxo deployed, Utxo carrier) {
         this.reference = deployed;
+        this.keyCarrier = carrier;
     }
 
     // ------------------------------------------------------------------ issuance
@@ -140,10 +165,9 @@ public final class NoteLedgerScript {
     public Result<String> provedIssue(BackendService backend, Account issuer, List<AuditedNote> notes,
                                       Groth16ProofBLS381 proof) {
         if (!provedIssuance) throw new IllegalStateException("this ledger issues without a proof");
-        KeyedCircuit circuit = proofs.issue(notes.size());
         var tx = new ScriptTx()
                 .mintAsset(policyId, List.of(new Asset(tokenHex(), BigInteger.valueOf(notes.size()))),
-                        proofRedeemer(3, null, proof, circuit))
+                        proofRedeemer(3, null, proof))
                 .readFrom(registry.currentUtxo(backend));
         for (AuditedNote n : notes) tx = tx.payToContract(address, noteValue(backend, n), n.datum());
         return submit(backend, tx, issuer);
@@ -155,7 +179,7 @@ public final class NoteLedgerScript {
     public Result<String> transfer(BackendService backend, Account owner, Utxo note, AuditedNote out1,
                                    AuditedNote out2, Groth16ProofBLS381 proof) {
         var tx = new ScriptTx()
-                .collectFrom(note, proofRedeemer(0, null, proof, proofs.transfer()))
+                .collectFrom(note, proofRedeemer(0, null, proof))
                 .mintAsset(policyId, List.of(new Asset(tokenHex(), BigInteger.ONE)),
                         ConstrPlutusData.builder().alternative(1).data(ListPlutusData.of(BigIntPlutusData.of(0))).build())
                 .readFrom(registry.currentUtxo(backend))
@@ -178,7 +202,7 @@ public final class NoteLedgerScript {
             throw new IllegalStateException(e);
         }
         var tx = new ScriptTx()
-                .collectFrom(note, proofRedeemer(0, null, proof, proofs.transfer()))
+                .collectFrom(note, proofRedeemer(0, null, proof))
                 .mintAsset(policyId, List.of(new Asset(tokenHex(), BigInteger.ONE)),
                         ConstrPlutusData.builder().alternative(1).data(ListPlutusData.of(BigIntPlutusData.of(0))).build())
                 .readFrom(registry.currentUtxo(backend))
@@ -192,7 +216,7 @@ public final class NoteLedgerScript {
                                  AuditedNote change, long price, Groth16ProofBLS381 proof) {
         byte[] receipt = receiptName(note);
         var tx = new ScriptTx()
-                .collectFrom(note, proofRedeemer(1, BigInteger.valueOf(price), proof, proofs.redeem()))
+                .collectFrom(note, proofRedeemer(1, BigInteger.valueOf(price), proof))
                 .mintAsset(policyId, List.of(new Asset("0x" + HexUtil.encodeHexString(receipt), BigInteger.ONE)),
                         ConstrPlutusData.builder().alternative(2).data(ListPlutusData.of(BigIntPlutusData.of(0))).build())
                 .readFrom(registry.currentUtxo(backend))
@@ -205,15 +229,14 @@ public final class NoteLedgerScript {
 
     // ------------------------------------------------------------------ encodings
 
-    /** {@code Constr tag [price?, piA, piB, piC, vk]}. */
-    private static ConstrPlutusData proofRedeemer(int tag, BigInteger price, Groth16ProofBLS381 proof, KeyedCircuit circuit) {
+    /** {@code Constr tag [price?, piA, piB, piC]}; the key is in the reference-script output. */
+    private static ConstrPlutusData proofRedeemer(int tag, BigInteger price, Groth16ProofBLS381 proof) {
         var p = ProverToCardano.compressProof(proof);
         List<PlutusData> fields = new ArrayList<>();
         if (price != null) fields.add(BigIntPlutusData.of(price));
         fields.add(new BytesPlutusData(p.piA()));
         fields.add(new BytesPlutusData(p.piB()));
         fields.add(new BytesPlutusData(p.piC()));
-        fields.add(VerificationKeys.data(circuit.compressedVk()));
         return ConstrPlutusData.builder().alternative(tag).data(ListPlutusData.of(fields.toArray(new PlutusData[0]))).build();
     }
 
@@ -244,7 +267,7 @@ public final class NoteLedgerScript {
 
     private Result<String> submit(BackendService backend, ScriptTx tx, Account signer) {
         try {
-            return new QuickTxBuilder(backend).compose(tx.readFrom(reference()))
+            return new QuickTxBuilder(backend).compose(tx.readFrom(reference(), keyCarrier))
                     .withReferenceScripts(script)
                     .withTxEvaluator(DevKit.evaluator(backend))
                     .withSigner(SignerProviders.signerFrom(signer))

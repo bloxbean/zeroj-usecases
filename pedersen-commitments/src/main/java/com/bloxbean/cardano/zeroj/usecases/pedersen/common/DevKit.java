@@ -80,8 +80,13 @@ public final class DevKit {
 
     /**
      * A Julc evaluator with slot-to-POSIX conversion anchored at the latest block (one-second
-     * slots), padded by 25% so fee estimates do not under-shoot, but never beyond the protocol's
+     * slots), padded by 5% so fee estimates do not under-shoot, but never beyond the protocol's
      * per-transaction maximum. The unpadded total is kept in {@link #lastBudget()}.
+     *
+     * <p>Script evaluation is deterministic: the margin only covers the difference between the
+     * transaction the units are measured on and the balanced one that is submitted (its fee and
+     * change amounts). The units are part of the fee, so a larger margin is paid on every
+     * transaction.
      */
     public static TransactionEvaluator evaluator(BackendService backend) {
         var latest = call(() -> backend.getBlockService().getLatestBlock());
@@ -104,7 +109,7 @@ public final class DevKit {
                 var params = call(() -> backend.getEpochService().getProtocolParameters());
                 long maxSteps = Long.parseLong(params.getMaxTxExSteps());
                 long maxMem = Long.parseLong(params.getMaxTxExMem());
-                // Spread at most the remaining headroom over the redeemers, up to +25% each.
+                // Spread at most the remaining headroom over the redeemers, up to +5% each.
                 long stepRoom = Math.max(0, maxSteps - steps);
                 long memRoom = Math.max(0, maxMem - memory);
                 for (EvaluationResult eval : result.getValue()) {
@@ -112,8 +117,8 @@ public final class DevKit {
                     long s0 = u.getSteps().longValueExact();
                     long m0 = u.getMem().longValueExact();
                     // stepRoom · s0 overflows a long (about 2e9 · 8e9), so share the headroom in BigInteger.
-                    long padSteps = Math.min(s0 / 4, share(stepRoom, s0, steps));
-                    long padMem = Math.min(Math.max(m0 / 4, 50_000), share(memRoom, m0, memory));
+                    long padSteps = Math.min(s0 / 20, share(stepRoom, s0, steps));
+                    long padMem = Math.min(Math.max(m0 / 20, 10_000), share(memRoom, m0, memory));
                     eval.setExUnits(new ExUnits(BigInteger.valueOf(m0 + padMem), BigInteger.valueOf(s0 + padSteps)));
                 }
             }

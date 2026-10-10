@@ -59,6 +59,7 @@ public final class AuctionScript {
     private final String policyId;
     private final String address;
     private Utxo reference;
+    private Utxo keyCarrier;
 
     public AuctionScript(AuctionProofs proofs, Registry registry, long minWindowMillis, long minLotLovelace) {
         this.proofs = proofs;
@@ -92,18 +93,39 @@ public final class AuctionScript {
 
     public long minWindow() { return minWindow; }
 
+    /**
+     * Deploys the script as a reference script at its own address, then the key carrier (the
+     * verification keys in the datum, no script; VkLib.referenceVk). Neither is an authentic lot,
+     * so neither can ever be spent. Two transactions: together they exceed the size limit.
+     */
     public Result<String> deploy(BackendService backend, Account payer) {
         try {
-            var tx = new Tx().payToContract(address, List.of(Amount.ada(30)), PlutusData.unit(), script).from(payer.baseAddress());
-            var result = new QuickTxBuilder(backend).compose(tx).withSigner(SignerProviders.signerFrom(payer)).complete();
-            if (result.isSuccessful()) {
-                DevKit.waitForTx(backend, result.getValue());
-                reference = DevKit.utxosOf(backend, address, result.getValue()).getFirst();
-            }
+            var result = new QuickTxBuilder(backend).compose(new Tx()
+                            .payToContract(address, List.of(Amount.ada(30)), PlutusData.unit(), script).from(payer.baseAddress()))
+                    .withSigner(SignerProviders.signerFrom(payer)).complete();
+            if (!result.isSuccessful()) return result;
+            DevKit.waitForTx(backend, result.getValue());
+            reference = DevKit.utxosOf(backend, address, result.getValue()).getFirst();
+            var keys = verificationKeys();
+            BigInteger lovelace = Plutus.minAda(backend, address, List.of(), keys).add(BigInteger.valueOf(1_000_000));
+            var carried = new QuickTxBuilder(backend).compose(new Tx()
+                            .payToContract(address, List.of(new Amount("lovelace", lovelace)), keys).from(payer.baseAddress()))
+                    .withSigner(SignerProviders.signerFrom(payer)).complete();
+            if (!carried.isSuccessful()) return carried;
+            DevKit.waitForTx(backend, carried.getValue());
+            keyCarrier = DevKit.utxosOf(backend, address, carried.getValue()).getFirst();
             return result;
         } catch (Exception e) {
             return Result.error(e.getMessage());
         }
+    }
+
+    /** {@code [bid, settle n=1, settle n=2, settle n=3]}, the order SealedBidAuction indexes. */
+    ListPlutusData verificationKeys() {
+        return ListPlutusData.of(VerificationKeys.data(proofs.bid().compressedVk()),
+                VerificationKeys.data(proofs.settle(1).compressedVk()),
+                VerificationKeys.data(proofs.settle(2).compressedVk()),
+                VerificationKeys.data(proofs.settle(3).compressedVk()));
     }
 
     // ------------------------------------------------------------------ reading
@@ -212,8 +234,7 @@ public final class AuctionScript {
         var redeemer = ConstrPlutusData.builder().alternative(0).data(ListPlutusData.of(
                 new BytesPlutusData(bid.bidder()), BigIntPlutusData.of(bid.aU()), BigIntPlutusData.of(bid.aV()),
                 BigIntPlutusData.of(bid.bU()), BigIntPlutusData.of(bid.bV()),
-                new BytesPlutusData(p.piA()), new BytesPlutusData(p.piB()), new BytesPlutusData(p.piC()),
-                VerificationKeys.data(proofs.bid().compressedVk()))).build();
+                new BytesPlutusData(p.piA()), new BytesPlutusData(p.piB()), new BytesPlutusData(p.piC()))).build();
         List<Amount> value = new ArrayList<>();
         for (Amount a : lot.utxo().getAmount()) {
             value.add(a.getUnit().equals("lovelace")
@@ -230,8 +251,7 @@ public final class AuctionScript {
         var p = ProverToCardano.compressProof(proof);
         var redeemer = ConstrPlutusData.builder().alternative(1).data(ListPlutusData.of(
                 BigIntPlutusData.of(w), BigIntPlutusData.of(price),
-                new BytesPlutusData(p.piA()), new BytesPlutusData(p.piB()), new BytesPlutusData(p.piC()),
-                VerificationKeys.data(proofs.settle(lot.bids().size()).compressedVk()))).build();
+                new BytesPlutusData(p.piA()), new BytesPlutusData(p.piB()), new BytesPlutusData(p.piC()))).build();
         var tx = closing(lot, redeemer);
         BigInteger deposit = BigInteger.valueOf(lot.deposit()).multiply(LOVELACE);
         tx = tx.payToContract(enterprise(lot.seller()), List.of(new Amount("lovelace", BigInteger.valueOf(price).multiply(LOVELACE))),
@@ -317,7 +337,7 @@ public final class AuctionScript {
 
     private Result<String> submit(BackendService backend, ScriptTx tx, Account signer, Long validFrom, Long validTo) {
         try {
-            var ctx = new QuickTxBuilder(backend).compose(tx.readFrom(reference))
+            var ctx = new QuickTxBuilder(backend).compose(tx.readFrom(reference, keyCarrier))
                     .withReferenceScripts(script)
                     .withTxEvaluator(DevKit.evaluator(backend))
                     .withSigner(SignerProviders.signerFrom(signer))

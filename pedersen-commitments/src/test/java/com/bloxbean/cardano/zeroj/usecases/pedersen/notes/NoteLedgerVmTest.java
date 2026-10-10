@@ -1,11 +1,13 @@
 package com.bloxbean.cardano.zeroj.usecases.pedersen.notes;
 
+import com.bloxbean.cardano.zeroj.usecases.pedersen.common.CostProfiler;
 import com.bloxbean.cardano.client.crypto.Blake2bUtil;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.common.KeyedCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.circuit.NoteIssueProofCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.circuit.NoteRedeemProofCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.circuit.NoteTransferProofCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.onchain.NoteLedger;
+import org.julclang.compiler.CompileResult;
 import org.julclang.core.PlutusData;
 import org.julclang.core.Program;
 import org.julclang.ledger.Address;
@@ -81,6 +83,7 @@ class NoteLedgerVmTest extends ContractTest {
     static NoteProofs proofs;
     static Program points;
     static Program payroll;
+    static CompileResult compiled;
     static KeyPossession possession;
     static RegistryEntry entry;
     static RegistryEntry otherEntry;
@@ -104,9 +107,9 @@ class NoteLedgerVmTest extends ContractTest {
         otherEntry = AuditorKeys.generate(RANDOM).entry(REGISTRY_POLICY, AUDITOR, GENERATION, possession);
         auditor = AdmittedAuditor.admit(REGISTRY_POLICY, entry, possession);
         otherAuditor = AdmittedAuditor.admit(REGISTRY_POLICY, otherEntry, possession);
-        var compiled = new NoteLedgerVmTest().compileValidator(NoteLedger.class, Path.of("src/main/java")).program();
-        points = compiled.applyParams(params(false));
-        payroll = compiled.applyParams(params(true));
+        compiled = new NoteLedgerVmTest().compileValidatorWithSourceMap(NoteLedger.class, Path.of("src/main/java"));
+        points = compiled.program().applyParams(params(false));
+        payroll = compiled.program().applyParams(params(true));
 
         long balance = 0x1_0000_1000L; // above 2^32: both limbs non-zero
         in = spent(balance);
@@ -174,11 +177,32 @@ class NoteLedgerVmTest extends ContractTest {
         return VerificationKeys.julcData(vk);
     }
 
+    /** The carrier's key list in NoteLedger's index order: transfer, redeem, issue n=1, issue n=2. */
+    static PlutusData keys(SnarkjsToCardano.VkCompressed transfer, SnarkjsToCardano.VkCompressed redeem,
+                           SnarkjsToCardano.VkCompressed issue1, SnarkjsToCardano.VkCompressed issue2) {
+        return PlutusData.list(vk(transfer), vk(redeem), vk(issue1), vk(issue2));
+    }
+
+    static PlutusData honestKeys() {
+        return keys(proofs.transfer().compressedVk(), proofs.redeem().compressedVk(),
+                proofs.issue(1).compressedVk(), proofs.issue(2).compressedVk());
+    }
+
+    /**
+     * The ledger's key carrier: an output at the script's address ({@code scriptHash}), without a
+     * reference script, with the verification keys in its datum (VkLib.referenceVk).
+     */
+    static void carrier(ScriptContextTestBuilder b, PlutusData keys, byte[] scriptHash) {
+        Address at = new Address(new Credential.ScriptCredential(ScriptHash.of(scriptHash)), Optional.empty());
+        b.referenceInput(new TxInInfo(TestDataBuilder.randomTxOutRef_typed(), new TxOut(at, ada(25),
+                new OutputDatum.OutputDatumInline(keys), Optional.empty())));
+    }
+
     // ------------------------------------------------------------------ Transfer
 
     enum TransferMutation {
         NONE, NO_SIGNER, TAMPERED_PROOF, WRONG_VK, SWAPPED_OUTPUTS, EXTRA_SCRIPT_INPUT, EXTRA_STAKED_SCRIPT_INPUT,
-        THREE_OUTPUTS, MINT_TWO, OUTPUT_TWO_TOKENS, OUTPUT_EXTRA_ASSET, NON_CANONICAL_OUTPUT, INPUT_WITHOUT_TOKEN,
+        NO_VK_CARRIER, VK_CARRIER_OTHER_SCRIPT, THREE_OUTPUTS, MINT_TWO, OUTPUT_TWO_TOKENS, OUTPUT_EXTRA_ASSET, NON_CANONICAL_OUTPUT, INPUT_WITHOUT_TOKEN,
         STAKE_VARIANT_EXTRA_OUTPUT, STAKE_VARIANT_NOTE,
         AUDIT_ABSENT, AUDIT_WRONG_OUT1, AUDIT_WRONG_OUT2, AUDIT_SWAPPED_BETWEEN_OUTPUTS, AUDIT_LIMBS_SWAPPED,
         AUDIT_NON_CANONICAL, AUDIT_SEVEN_ENTRIES, DELIVERY_SHORT, DELIVERY_MISSING, DELIVERY_EXTRA, STALE_GENERATION,
@@ -189,9 +213,13 @@ class NoteLedgerVmTest extends ContractTest {
     @Test
     @DisplayName("Transfer: accepted by both purposes, complete cost measured; every mutation is rejected")
     void transfer() {
-        var spend = evaluate(points, transferSpend(TransferMutation.NONE, out1, out2, transferProof));
+        var transferCtx = transferSpend(TransferMutation.NONE, out1, out2, transferProof);
+        var spend = evaluate(points, transferCtx);
+        CostProfiler.profile("note transfer (spend)", points, compiled, transferCtx);
         assertInstanceOf(EvalResult.Success.class, spend);
-        var mint = evaluate(points, transferMint(TransferMutation.NONE));
+        var splitCtx = transferMint(TransferMutation.NONE);
+        var mint = evaluate(points, splitCtx);
+        CostProfiler.profile("note transfer (Split mint)", points, compiled, splitCtx);
         assertInstanceOf(EvalResult.Success.class, mint);
         report("transfer (spend + Split mint)", spend, mint, proofs.transfer());
         for (TransferMutation m : TransferMutation.values()) {
@@ -241,20 +269,27 @@ class NoteLedgerVmTest extends ContractTest {
     private PlutusData transferSpend(TransferMutation m, PlutusData a, PlutusData b, SnarkjsToCardano.ProofCompressed p) {
         TxOutRef ownRef = new TxOutRef(TxId.of(filled(32, (byte) 0x44)), BigInteger.ZERO);
         byte[] piA = m == TransferMutation.TAMPERED_PROOF ? flipped(p.piA()) : p.piA();
-        PlutusData key = m == TransferMutation.WRONG_VK ? vk(proofs.redeem().compressedVk()) : vk(proofs.transfer().compressedVk());
         var builder = ScriptContextTestBuilder.spending(ownRef, inDatum()).redeemer(PlutusData.constr(0,
-                PlutusData.bytes(piA), PlutusData.bytes(p.piB()), PlutusData.bytes(p.piC()), key));
-        return transferTx(m, builder, ownRef, a, b).buildPlutusData();
+                PlutusData.bytes(piA), PlutusData.bytes(p.piB()), PlutusData.bytes(p.piC())));
+        return transferTx(m, builder, ownRef, a, b, transferKeys(m)).buildPlutusData();
+    }
+
+    /** The carrier's keys for a transfer mutation: the redeem key in the transfer slot for WRONG_VK. */
+    private static PlutusData transferKeys(TransferMutation m) {
+        return m == TransferMutation.WRONG_VK
+                ? keys(proofs.redeem().compressedVk(), proofs.redeem().compressedVk(), proofs.issue(1).compressedVk(),
+                        proofs.issue(2).compressedVk())
+                : honestKeys();
     }
 
     private PlutusData transferMint(TransferMutation m) {
         TxOutRef ownRef = new TxOutRef(TxId.of(filled(32, (byte) 0x44)), BigInteger.ZERO);
         var builder = ScriptContextTestBuilder.minting(PolicyId.of(POLICY)).redeemer(PlutusData.constr(1, PlutusData.integer(0)));
-        return transferTx(m, builder, ownRef, noteDatum(out1), noteDatum(out2)).buildPlutusData();
+        return transferTx(m, builder, ownRef, noteDatum(out1), noteDatum(out2), honestKeys()).buildPlutusData();
     }
 
     private ScriptContextTestBuilder transferTx(TransferMutation m, ScriptContextTestBuilder b, TxOutRef ownRef,
-                                                PlutusData first, PlutusData second) {
+                                                PlutusData first, PlutusData second, PlutusData keys) {
         b.mint(token(PTS, m == TransferMutation.MINT_TWO ? 2 : 1));
         if (m != TransferMutation.NO_SIGNER) b.signer(ALICE);
         if (m == TransferMutation.NO_NOTE_SPENT) {
@@ -309,7 +344,14 @@ class NoteLedgerVmTest extends ContractTest {
         if (m == TransferMutation.THREE_OUTPUTS) b.output(noteOut(LEDGER, noteDatum(note(ALICE, 0, aliceView)), 1));
         if (m == TransferMutation.STAKE_VARIANT_EXTRA_OUTPUT) b.output(noteOut(STAKED_LEDGER, noteDatum(out1), 0));
         registry(b, m.name());
-        realistic(b);
+        if (m == TransferMutation.NO_VK_CARRIER) {
+            realistic(b, null);
+        } else if (m == TransferMutation.VK_CARRIER_OTHER_SCRIPT) {
+            carrier(b, keys, filled(28, (byte) 0x66));
+            realistic(b, null);
+        } else {
+            realistic(b, keys);
+        }
         return b;
     }
 
@@ -317,9 +359,11 @@ class NoteLedgerVmTest extends ContractTest {
      * What a real transaction also carries, for honest costs: the ledger's own reference-script
      * output (at the ledger address, no token), the fee payer's input and its change output.
      */
-    private static void realistic(ScriptContextTestBuilder b) {
+    private static void realistic(ScriptContextTestBuilder b, PlutusData keys) {
+        // The reference-script output (no keys) and, unless a mutation drops it, the key carrier.
         b.referenceInput(new TxInInfo(TestDataBuilder.randomTxOutRef_typed(), new TxOut(LEDGER, ada(40),
                 new OutputDatum.OutputDatumInline(PlutusData.integer(BigInteger.ZERO)), Optional.of(ScriptHash.of(POLICY)))));
+        if (keys != null) carrier(b, keys, POLICY);
         b.input(new TxInInfo(TestDataBuilder.randomTxOutRef_typed(), new TxOut(ALICE_WALLET, ada(50),
                 new OutputDatum.NoOutputDatum(), Optional.empty())));
         b.output(new TxOut(ALICE_WALLET, ada(45), new OutputDatum.NoOutputDatum(), Optional.empty()));
@@ -359,7 +403,9 @@ class NoteLedgerVmTest extends ContractTest {
     @Test
     @DisplayName("Redeem: accepted by both purposes, complete cost measured; every mutation is rejected")
     void redeem() {
-        var spend = evaluate(points, redeemSpend(RedeemMutation.NONE));
+        var redeemCtx = redeemSpend(RedeemMutation.NONE);
+        var spend = evaluate(points, redeemCtx);
+        CostProfiler.profile("note redeem (spend)", points, compiled, redeemCtx);
         assertInstanceOf(EvalResult.Success.class, spend);
         var mint = evaluate(points, redeemMint());
         assertInstanceOf(EvalResult.Success.class, mint);
@@ -383,11 +429,14 @@ class NoteLedgerVmTest extends ContractTest {
             case PRICE_TOO_LARGE -> 1L << 32;
             default -> PRICE;
         };
-        PlutusData key = m == RedeemMutation.WRONG_VK ? vk(proofs.transfer().compressedVk()) : vk(proofs.redeem().compressedVk());
         var b = ScriptContextTestBuilder.spending(ownRef, inDatum()).redeemer(PlutusData.constr(1,
                 PlutusData.integer(BigInteger.valueOf(price)), PlutusData.bytes(redeemProof.piA()),
-                PlutusData.bytes(redeemProof.piB()), PlutusData.bytes(redeemProof.piC()), key));
-        return redeemTx(m, b, ownRef).buildPlutusData();
+                PlutusData.bytes(redeemProof.piB()), PlutusData.bytes(redeemProof.piC())));
+        PlutusData keys = m == RedeemMutation.WRONG_VK
+                ? keys(proofs.transfer().compressedVk(), proofs.transfer().compressedVk(), proofs.issue(1).compressedVk(),
+                        proofs.issue(2).compressedVk())
+                : honestKeys();
+        return redeemTx(m, b, ownRef, keys).buildPlutusData();
     }
 
     private PlutusData redeemMint() {
@@ -397,10 +446,10 @@ class NoteLedgerVmTest extends ContractTest {
     private PlutusData redeemMint(RedeemMutation m) {
         TxOutRef ownRef = new TxOutRef(TxId.of(filled(32, (byte) 0x45)), BigInteger.ONE);
         var b = ScriptContextTestBuilder.minting(PolicyId.of(POLICY)).redeemer(PlutusData.constr(2, PlutusData.integer(0)));
-        return redeemTx(m, b, ownRef).buildPlutusData();
+        return redeemTx(m, b, ownRef, honestKeys()).buildPlutusData();
     }
 
-    private ScriptContextTestBuilder redeemTx(RedeemMutation m, ScriptContextTestBuilder b, TxOutRef ownRef) {
+    private ScriptContextTestBuilder redeemTx(RedeemMutation m, ScriptContextTestBuilder b, TxOutRef ownRef, PlutusData keys) {
         byte[] receipt = switch (m) {
             case RECEIPT_NAME_NOT_DERIVED -> filled(32, (byte) 0x77);
             case RECEIPT_NAME_NOT_32_BYTES -> filled(31, (byte) 0x77);
@@ -437,7 +486,7 @@ class NoteLedgerVmTest extends ContractTest {
         b.output(new TxOut(to, ada(2).merge(token(receipt, 1)), new OutputDatum.OutputDatumInline(PlutusData.constr(0,
                 PlutusData.bytes(ALICE), PlutusData.integer(BigInteger.valueOf(receiptPrice)))), Optional.empty()));
         registry(b, m.name());
-        realistic(b);
+        realistic(b, keys);
         return b;
     }
 
@@ -451,7 +500,9 @@ class NoteLedgerVmTest extends ContractTest {
     @Test
     @DisplayName("Trusted issue (points): the issuer mints notes of the current generation; every mutation is rejected")
     void trustedIssue() {
-        var honest = evaluate(points, issueContext(IssueMutation.NONE));
+        var issueCtx = issueContext(IssueMutation.NONE);
+        var honest = evaluate(points, issueCtx);
+        CostProfiler.profile("note trusted issue", points, compiled, issueCtx);
         assertInstanceOf(EvalResult.Success.class, honest);
         System.out.println("[NoteLedger issue (trusted, 2 notes)] budget: " + honest.budgetConsumed());
         for (IssueMutation m : IssueMutation.values()) {
@@ -464,7 +515,7 @@ class NoteLedgerVmTest extends ContractTest {
     private PlutusData issueContext(IssueMutation m) {
         PlutusData redeemer = m == IssueMutation.PROVED_ISSUE_IN_TRUSTED_MODE
                 ? PlutusData.constr(3, PlutusData.bytes(transferProof.piA()), PlutusData.bytes(transferProof.piB()),
-                        PlutusData.bytes(transferProof.piC()), vk(proofs.transfer().compressedVk()))
+                        PlutusData.bytes(transferProof.piC()))
                 : PlutusData.constr(0, PlutusData.integer(0));
         var b = ScriptContextTestBuilder.minting(PolicyId.of(POLICY)).mint(token(PTS, 2)).redeemer(redeemer);
         if (m != IssueMutation.NO_SIGNER) b.signer(ISSUER);
@@ -493,7 +544,9 @@ class NoteLedgerVmTest extends ContractTest {
         for (int n = 1; n <= 2; n++) {
             List<AuditedNote> notes = n == 1 ? List.of(out1) : List.of(out1, out2);
             var proof = compress(proofs.proveIssue(notes, auditor));
-            var honest = evaluate(payroll, provedIssueContext(ProvedIssueMutation.NONE, notes, proof));
+            var provedCtx = provedIssueContext(ProvedIssueMutation.NONE, notes, proof);
+            var honest = evaluate(payroll, provedCtx);
+            CostProfiler.profile("note proved issue n=" + n, payroll, compiled, provedCtx);
             assertInstanceOf(EvalResult.Success.class, honest);
             report("proved issue n=" + n + " (mint only)", honest, null, proofs.issue(n));
         }
@@ -560,8 +613,12 @@ class NoteLedgerVmTest extends ContractTest {
                                                         SnarkjsToCardano.VkCompressed key) {
         var b = ScriptContextTestBuilder.minting(PolicyId.of(POLICY)).mint(token(PTS, datums.size()))
                 .redeemer(PlutusData.constr(3, PlutusData.bytes(proof.piA()), PlutusData.bytes(proof.piB()),
-                        PlutusData.bytes(proof.piC()), vk(key)));
+                        PlutusData.bytes(proof.piC())));
         for (PlutusData d : datums) b.output(noteOut(LEDGER, d, 1));
+        // {@code key} goes in the slot of this note count (index 2 for n = 1, 3 for n = 2).
+        carrier(b, datums.size() == 1
+                ? keys(proofs.transfer().compressedVk(), proofs.redeem().compressedVk(), key, proofs.issue(2).compressedVk())
+                : keys(proofs.transfer().compressedVk(), proofs.redeem().compressedVk(), proofs.issue(1).compressedVk(), key), POLICY);
         return b;
     }
 
@@ -582,19 +639,21 @@ class NoteLedgerVmTest extends ContractTest {
         assertTrue(rogueTransfer.verify(tProof, NoteTransferProofCircuit.publicInputs(t)), "positive control: valid under the rogue key");
         var tp = compress(tProof);
         var spend = ScriptContextTestBuilder.spending(new TxOutRef(TxId.of(filled(32, (byte) 0x44)), BigInteger.ZERO), inDatum())
-                .redeemer(PlutusData.constr(0, PlutusData.bytes(tp.piA()), PlutusData.bytes(tp.piB()), PlutusData.bytes(tp.piC()),
-                        vk(rogueTransfer.compressedVk())));
+                .redeemer(PlutusData.constr(0, PlutusData.bytes(tp.piA()), PlutusData.bytes(tp.piB()), PlutusData.bytes(tp.piC())));
         var ctx = transferTx(TransferMutation.NONE, spend, new TxOutRef(TxId.of(filled(32, (byte) 0x44)), BigInteger.ZERO),
-                noteDatum(out1), noteDatum(out2)).buildPlutusData();
+                noteDatum(out1), noteDatum(out2), keys(rogueTransfer.compressedVk(), proofs.redeem().compressedVk(),
+                        proofs.issue(1).compressedVk(), proofs.issue(2).compressedVk())).buildPlutusData();
         assertTrue(evaluate(points, ctx) instanceof EvalResult.Failure, "a transfer proof under a rogue key is refused");
 
         var r = NoteProofs.redeemInputs(in, change, PRICE, auditor);
         var rp = compress(rogueRedeem.prove(r.toWitnessMap()));
         var rSpend = ScriptContextTestBuilder.spending(new TxOutRef(TxId.of(filled(32, (byte) 0x45)), BigInteger.ONE), inDatum())
                 .redeemer(PlutusData.constr(1, PlutusData.integer(BigInteger.valueOf(PRICE)), PlutusData.bytes(rp.piA()),
-                        PlutusData.bytes(rp.piB()), PlutusData.bytes(rp.piC()), vk(rogueRedeem.compressedVk())));
+                        PlutusData.bytes(rp.piB()), PlutusData.bytes(rp.piC())));
         assertTrue(evaluate(points, redeemTx(RedeemMutation.NONE, rSpend,
-                new TxOutRef(TxId.of(filled(32, (byte) 0x45)), BigInteger.ONE)).buildPlutusData()) instanceof EvalResult.Failure,
+                new TxOutRef(TxId.of(filled(32, (byte) 0x45)), BigInteger.ONE), keys(proofs.transfer().compressedVk(),
+                        rogueRedeem.compressedVk(), proofs.issue(1).compressedVk(), proofs.issue(2).compressedVk()))
+                .buildPlutusData()) instanceof EvalResult.Failure,
                 "a redeem proof under a rogue key is refused");
 
         var ip = compress(rogueIssue.prove(NoteProofs.issueInputs(List.of(out1), auditor).toWitnessMap()));

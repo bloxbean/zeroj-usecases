@@ -1,9 +1,11 @@
 package com.bloxbean.cardano.zeroj.usecases.pedersen.notes;
 
+import com.bloxbean.cardano.zeroj.usecases.pedersen.common.CostProfiler;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.common.Fields;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.common.ProofBytes;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.circuit.KeyPossessionProofCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.onchain.AuditorRegistry;
+import org.julclang.compiler.CompileResult;
 import org.julclang.core.PlutusData;
 import org.julclang.core.Program;
 import org.julclang.ledger.Address;
@@ -64,6 +66,7 @@ class AuditorRegistryVmTest extends ContractTest {
     static final SecureRandom RANDOM = new SecureRandom();
 
     private static Program program;
+    private static CompileResult compiled;
     private static KeyPossession possession;
     private static AuditorKeys keys0;
     private static RegistryEntry gen0;
@@ -80,8 +83,8 @@ class AuditorRegistryVmTest extends ContractTest {
         var vk = possession.circuit().compressedVk();
         JubjubPoint g = JubjubPoint.SUBGROUP_GENERATOR.normalized();
         PlutusData[] ic = vk.ic().stream().map(PlutusData::bytes).toArray(PlutusData[]::new);
-        program = new AuditorRegistryVmTest().compileValidator(AuditorRegistry.class, Path.of("src/main/java"))
-                .program().applyParams(PlutusData.bytes(seedRef), PlutusData.bytes(TOKEN),
+        compiled = new AuditorRegistryVmTest().compileValidatorWithSourceMap(AuditorRegistry.class, Path.of("src/main/java"));
+        program = compiled.program().applyParams(PlutusData.bytes(seedRef), PlutusData.bytes(TOKEN),
                         PlutusData.bytes(KeyPossession.ctxPrefix(KeyPossession.KeyType.ELGAMAL)),
                         PlutusData.bytes(KeyPossession.ctxPrefix(KeyPossession.KeyType.VIEWING)),
                         PlutusData.integer(g.affineU()), PlutusData.integer(g.affineV()),
@@ -208,7 +211,9 @@ class AuditorRegistryVmTest extends ContractTest {
     @Test
     @DisplayName("Init: the seed-bound singleton is minted once into a well-formed, possession-verified entry; every mutation is rejected")
     void init() {
-        var honest = evaluate(program, initContext(InitMutation.NONE, EntryMutation.NONE));
+        var initCtx = initContext(InitMutation.NONE, EntryMutation.NONE);
+        var honest = evaluate(program, initCtx);
+        CostProfiler.profile("registry init", program, compiled, initCtx);
         assertInstanceOf(EvalResult.Success.class, honest);
         System.out.println("[AuditorRegistry init] budget: " + honest.budgetConsumed());
         for (InitMutation m : InitMutation.values()) {
@@ -265,7 +270,9 @@ class AuditorRegistryVmTest extends ContractTest {
     @Test
     @DisplayName("Rotate: the entry moves forward one generation under both auditors' signatures; every mutation is rejected")
     void rotate() {
-        var honest = evaluate(program, rotateContext(RotateMutation.NONE, EntryMutation.NONE));
+        var rotateCtx = rotateContext(RotateMutation.NONE, EntryMutation.NONE);
+        var honest = evaluate(program, rotateCtx);
+        CostProfiler.profile("registry rotate", program, compiled, rotateCtx);
         assertInstanceOf(EvalResult.Success.class, honest);
         System.out.println("[AuditorRegistry rotate] budget: " + honest.budgetConsumed());
         for (RotateMutation m : RotateMutation.values()) {

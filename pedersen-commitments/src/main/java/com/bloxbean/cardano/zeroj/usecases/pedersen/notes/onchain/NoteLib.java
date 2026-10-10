@@ -62,24 +62,32 @@ public class NoteLib {
         if (!ChainLib.canonicalField(Builtins.unIData(Builtins.headList(f1)))) return false;
         if (!ChainLib.canonicalField(Builtins.unIData(Builtins.headList(f2)))) return false;
         if (Builtins.unIData(Builtins.headList(f3)).compareTo(generation) != 0) return false;
-        int count = 0;
-        boolean canonical = true;
-        PlutusData rest = Builtins.unListData(Builtins.headList(f4));
-        while (!Builtins.nullList(rest)) {
-            canonical = canonical && ChainLib.canonicalField(Builtins.unIData(Builtins.headList(rest)));
-            count = count + 1;
-            rest = Builtins.tailList(rest);
+        // Exactly 8 canonical audit integers and exactly 2 deliveries of 89 bytes. Unrolled: the
+        // lengths are fixed, and a Julc loop costs far more per element than the checks themselves.
+        PlutusData a0 = Builtins.unListData(Builtins.headList(f4));
+        PlutusData a1 = Builtins.tailList(a0);
+        PlutusData a2 = Builtins.tailList(a1);
+        PlutusData a3 = Builtins.tailList(a2);
+        PlutusData a4 = Builtins.tailList(a3);
+        PlutusData a5 = Builtins.tailList(a4);
+        PlutusData a6 = Builtins.tailList(a5);
+        PlutusData a7 = Builtins.tailList(a6);
+        if (!Builtins.nullList(Builtins.tailList(a7))) return false;
+        if (!ChainLib.canonicalField(Builtins.unIData(Builtins.headList(a0)))
+                || !ChainLib.canonicalField(Builtins.unIData(Builtins.headList(a1)))
+                || !ChainLib.canonicalField(Builtins.unIData(Builtins.headList(a2)))
+                || !ChainLib.canonicalField(Builtins.unIData(Builtins.headList(a3)))
+                || !ChainLib.canonicalField(Builtins.unIData(Builtins.headList(a4)))
+                || !ChainLib.canonicalField(Builtins.unIData(Builtins.headList(a5)))
+                || !ChainLib.canonicalField(Builtins.unIData(Builtins.headList(a6)))
+                || !ChainLib.canonicalField(Builtins.unIData(Builtins.headList(a7)))) {
+            return false;
         }
-        if (!canonical || count != 8) return false;
-        int deliveries = 0;
-        boolean lengths = true;
-        PlutusData each = Builtins.unListData(Builtins.headList(f5));
-        while (!Builtins.nullList(each)) {
-            lengths = lengths && Builtins.lengthOfByteString(Builtins.unBData(Builtins.headList(each))) == 89;
-            deliveries = deliveries + 1;
-            each = Builtins.tailList(each);
-        }
-        return lengths && deliveries == 2;
+        PlutusData d0 = Builtins.unListData(Builtins.headList(f5));
+        PlutusData d1 = Builtins.tailList(d0);
+        return Builtins.nullList(Builtins.tailList(d1))
+                && Builtins.lengthOfByteString(Builtins.unBData(Builtins.headList(d0))) == 89
+                && Builtins.lengthOfByteString(Builtins.unBData(Builtins.headList(d1))) == 89;
     }
 
     public static BigInteger noteU(PlutusData note) {

@@ -57,8 +57,8 @@ public class SealedBidAuction {
 
     sealed interface LotSpend permits PlaceBid, Settle, NoBids, Refund {}
     record PlaceBid(byte[] bidder, BigInteger aU, BigInteger aV, BigInteger bU, BigInteger bV,
-                    byte[] piA, byte[] piB, byte[] piC, PlutusData vk) implements LotSpend {}
-    record Settle(BigInteger w, BigInteger p, byte[] piA, byte[] piB, byte[] piC, PlutusData vk) implements LotSpend {}
+                    byte[] piA, byte[] piB, byte[] piC) implements LotSpend {}
+    record Settle(BigInteger w, BigInteger p, byte[] piA, byte[] piB, byte[] piC) implements LotSpend {}
     record NoBids(BigInteger unused) implements LotSpend {}
     record Refund(BigInteger unused) implements LotSpend {}
 
@@ -93,29 +93,30 @@ public class SealedBidAuction {
         }
         TxOut lot = onlyOwnOutput(txInfo, own);
         PlutusData d = ChainLib.inlineDatum(lot);
-        if (!isLot(d) || !Builtins.nullList(Builtins.unListData(field(d, 12)))) return false;
+        LotFields ld = PlutusData.cast(d, LotFields.class);
+        if (!isLot(d) || !Builtins.nullList(Builtins.unListData(ld.bids()))) return false;
         if (!authentic(lot, new Address(own, Optional.empty()), policy, token, d)
-                || ValuesLib.lovelaceOf(lot.value()).compareTo(Builtins.unIData(field(d, 4))) != 0) {
+                || ValuesLib.lovelaceOf(lot.value()).compareTo(Builtins.unIData(ld.lotAda())) != 0) {
             return false;
         }
-        BigInteger lotAda = Builtins.unIData(field(d, 4));
-        BigInteger deposit = Builtins.unIData(field(d, 5));
-        BigInteger reserve = Builtins.unIData(field(d, 6));
-        BigInteger biddingEnds = Builtins.unIData(field(d, 7));
-        BigInteger settleBy = Builtins.unIData(field(d, 8));
+        BigInteger lotAda = Builtins.unIData(ld.lotAda());
+        BigInteger deposit = Builtins.unIData(ld.deposit());
+        BigInteger reserve = Builtins.unIData(ld.reserve());
+        BigInteger biddingEnds = Builtins.unIData(ld.biddingEnds());
+        BigInteger settleBy = Builtins.unIData(ld.settleBy());
         BigInteger upper = IntervalLib.finiteUpperBound(txInfo.validRange());
         PlutusData entry = RegistryLib.currentEntry(txInfo, registryPolicy, registryToken);
-        return ChainLib.signedBy(txInfo, Builtins.unBData(field(d, 0)))
-                && !Builtins.equalsByteString(Builtins.unBData(field(d, 2)), policy)
+        return ChainLib.signedBy(txInfo, Builtins.unBData(ld.seller()))
+                && !Builtins.equalsByteString(Builtins.unBData(ld.itemPolicy()), policy)
                 && lotAda.compareTo(minLotAda) >= 0
                 && reserve.compareTo(BigInteger.TWO) >= 0 && reserve.compareTo(deposit) <= 0
                 && deposit.compareTo(BigInteger.valueOf(4294967296L)) < 0
                 && settleBy.subtract(biddingEnds).compareTo(minWindow) >= 0
                 && upper.compareTo(BigInteger.ZERO) >= 0 && upper.compareTo(biddingEnds) <= 0
-                && Builtins.equalsByteString(RegistryLib.entryAuditor(entry), Builtins.unBData(field(d, 1)))
-                && RegistryLib.entryPkU(entry).compareTo(Builtins.unIData(field(d, 9))) == 0
-                && RegistryLib.entryPkV(entry).compareTo(Builtins.unIData(field(d, 10))) == 0
-                && RegistryLib.entryGeneration(entry).compareTo(Builtins.unIData(field(d, 11))) == 0;
+                && Builtins.equalsByteString(RegistryLib.entryAuditor(entry), Builtins.unBData(ld.auctioneer()))
+                && RegistryLib.entryPkU(entry).compareTo(Builtins.unIData(ld.pkU())) == 0
+                && RegistryLib.entryPkV(entry).compareTo(Builtins.unIData(ld.pkV())) == 0
+                && RegistryLib.entryGeneration(entry).compareTo(Builtins.unIData(ld.generation())) == 0;
     }
 
     // ------------------------------------------------------------------
@@ -124,6 +125,7 @@ public class SealedBidAuction {
 
     @Entrypoint(purpose = Purpose.SPEND)
     public static boolean spend(PlutusData datum, LotSpend redeemer, ScriptContext ctx) {
+        LotFields ld = PlutusData.cast(datum, LotFields.class);
         TxInfo txInfo = ctx.txInfo();
         byte[] policy = ContextsLib.ownHash(ctx);
         Credential own = new Credential.ScriptCredential(PlutusData.cast(policy, ScriptHash.class));
@@ -138,27 +140,28 @@ public class SealedBidAuction {
             case PlaceBid bid -> placeBid(bid, datum, lotIn, txInfo, own, exact, policy, token);
             case Settle settle -> settle(settle, datum, txInfo, own, policy, token);
             case NoBids noBids -> closing(txInfo, own, policy, token, datum)
-                    && lowerAtLeast(txInfo, field(datum, 7))
-                    && Builtins.nullList(Builtins.unListData(field(datum, 12)))
-                    && ChainLib.signedBy(txInfo, Builtins.unBData(field(datum, 0)))
-                    && paid(txInfo, Builtins.unBData(field(datum, 0)), Builtins.unIData(field(datum, 4)), true, datum, policy, token);
+                    && lowerAtLeast(txInfo, ld.biddingEnds())
+                    && Builtins.nullList(Builtins.unListData(ld.bids()))
+                    && ChainLib.signedBy(txInfo, Builtins.unBData(ld.seller()))
+                    && paid(txInfo, Builtins.unBData(ld.seller()), Builtins.unIData(ld.lotAda()), true, datum, policy, token);
             case Refund refund -> closing(txInfo, own, policy, token, datum)
-                    && lowerAtLeast(txInfo, field(datum, 8))
-                    && paid(txInfo, Builtins.unBData(field(datum, 0)), Builtins.unIData(field(datum, 4)), true, datum, policy, token)
-                    && refunded(txInfo, Builtins.unListData(field(datum, 12)), deposit(datum), BigInteger.ZERO, datum, policy, token);
+                    && lowerAtLeast(txInfo, ld.settleBy())
+                    && paid(txInfo, Builtins.unBData(ld.seller()), Builtins.unIData(ld.lotAda()), true, datum, policy, token)
+                    && refunded(txInfo, Builtins.unListData(ld.bids()), deposit(datum), BigInteger.ZERO, datum, policy, token);
         };
     }
 
     private static boolean placeBid(PlaceBid b, PlutusData d, TxOut lotIn, TxInfo txInfo, Credential own,
                                     Address exact, byte[] policy, byte[] token) {
-        PlutusData bids = Builtins.unListData(field(d, 12));
+        LotFields ld = PlutusData.cast(d, LotFields.class);
+        PlutusData bids = Builtins.unListData(ld.bids());
         BigInteger upper = IntervalLib.finiteUpperBound(txInfo.validRange());
-        if (upper.compareTo(BigInteger.ZERO) < 0 || upper.compareTo(Builtins.unIData(field(d, 7))) > 0
+        if (upper.compareTo(BigInteger.ZERO) < 0 || upper.compareTo(Builtins.unIData(ld.biddingEnds())) > 0
                 || ChainLib.policyEntryCount(txInfo.mint(), policy) != 0
                 || Builtins.lengthOfByteString(b.bidder()) != 28
                 || !ChainLib.signedBy(txInfo, b.bidder())
-                || Builtins.equalsByteString(b.bidder(), Builtins.unBData(field(d, 0)))
-                || Builtins.equalsByteString(b.bidder(), Builtins.unBData(field(d, 1)))
+                || Builtins.equalsByteString(b.bidder(), Builtins.unBData(ld.seller()))
+                || Builtins.equalsByteString(b.bidder(), Builtins.unBData(ld.auctioneer()))
                 || ChainLib.countOutputs(txInfo.outputs(), own) != 1
                 || !ChainLib.canonicalField(b.aU()) || !ChainLib.canonicalField(b.aV())
                 || !ChainLib.canonicalField(b.bU()) || !ChainLib.canonicalField(b.bV())
@@ -195,20 +198,21 @@ public class SealedBidAuction {
         }
         PlutusData publicInputs = Builtins.listData(
                 Builtins.mkCons(Builtins.iData(Builtins.byteStringToInteger(true, b.bidder())),
-                Builtins.mkCons(field(d, 5),
-                Builtins.mkCons(field(d, 6),
-                Builtins.mkCons(field(d, 9),
-                Builtins.mkCons(field(d, 10),
+                Builtins.mkCons(ld.deposit(),
+                Builtins.mkCons(ld.reserve(),
+                Builtins.mkCons(ld.pkU(),
+                Builtins.mkCons(ld.pkV(),
                 Builtins.mkCons(Builtins.iData(b.aU()),
                 Builtins.mkCons(Builtins.iData(b.aV()),
                 Builtins.mkCons(Builtins.iData(b.bU()),
                 Builtins.mkCons(Builtins.iData(b.bV()),
                         Builtins.mkNilData()))))))))));
-        return VkLib.verify(publicInputs, b.piA(), b.piB(), b.piC(), b.vk(), bidVkHash);
+        return VkLib.verify(publicInputs, b.piA(), b.piB(), b.piC(), VkLib.referenceVk(txInfo, own, 0), bidVkHash);
     }
 
     private static boolean settle(Settle s, PlutusData d, TxInfo txInfo, Credential own, byte[] policy, byte[] token) {
-        PlutusData bids = Builtins.unListData(field(d, 12));
+        LotFields ld = PlutusData.cast(d, LotFields.class);
+        PlutusData bids = Builtins.unListData(ld.bids());
         int n = 0;
         PlutusData rest = bids;
         while (!Builtins.nullList(rest)) {
@@ -216,10 +220,10 @@ public class SealedBidAuction {
             rest = Builtins.tailList(rest);
         }
         BigInteger upper = IntervalLib.finiteUpperBound(txInfo.validRange());
-        BigInteger reserve = Builtins.unIData(field(d, 6));
+        BigInteger reserve = Builtins.unIData(ld.reserve());
         if (n < 1 || !closing(txInfo, own, policy, token, d)
-                || !lowerAtLeast(txInfo, field(d, 7))
-                || upper.compareTo(BigInteger.ZERO) < 0 || upper.compareTo(Builtins.unIData(field(d, 8))) > 0
+                || !lowerAtLeast(txInfo, ld.biddingEnds())
+                || upper.compareTo(BigInteger.ZERO) < 0 || upper.compareTo(Builtins.unIData(ld.settleBy())) > 0
                 || s.w().compareTo(BigInteger.ONE) < 0 || s.w().compareTo(BigInteger.valueOf(n)) > 0
                 || s.p().compareTo(reserve) < 0 || s.p().compareTo(deposit(d)) > 0) {
             return false;
@@ -228,16 +232,16 @@ public class SealedBidAuction {
         PlutusData publicInputs = Builtins.listData(
                 Builtins.mkCons(Builtins.iData(s.w()),
                 Builtins.mkCons(Builtins.iData(s.p()),
-                Builtins.mkCons(field(d, 9),
-                Builtins.mkCons(field(d, 10),
+                Builtins.mkCons(ld.pkU(),
+                Builtins.mkCons(ld.pkV(),
                         ciphertexts(bids))))));
-        if (!VkLib.verify(publicInputs, s.piA(), s.piB(), s.piC(), s.vk(), vkHash)) return false;
-        byte[] seller = Builtins.unBData(field(d, 0));
+        if (!VkLib.verify(publicInputs, s.piA(), s.piB(), s.piC(), VkLib.referenceVk(txInfo, own, n), vkHash)) return false;
+        byte[] seller = Builtins.unBData(ld.seller());
         BigInteger lovelace = BigInteger.valueOf(1000000);
         return paid(txInfo, seller, s.p().multiply(lovelace), false, d, policy, token)
                 && refunded(txInfo, bids, deposit(d), s.w(), d, policy, token)
                 && paid(txInfo, bidder(bids, s.w()),
-                        Builtins.unIData(field(d, 4)).add(deposit(d).subtract(s.p()).multiply(lovelace)), true, d, policy, token);
+                        Builtins.unIData(ld.lotAda()).add(deposit(d).subtract(s.p()).multiply(lovelace)), true, d, policy, token);
     }
 
     // ------------------------------------------------------------------
@@ -263,11 +267,12 @@ public class SealedBidAuction {
      */
     private static boolean paid(TxInfo txInfo, byte[] pkh, BigInteger lovelace, boolean withItem, PlutusData d,
                                 byte[] policy, byte[] token) {
+        LotFields ld = PlutusData.cast(d, LotFields.class);
         Address to = new Address(new Credential.PubKeyCredential(PlutusData.cast(pkh, PubKeyHash.class)), Optional.empty());
         PlutusData tag = Builtins.constrData(0, Builtins.mkCons(Builtins.bData(policy),
                 Builtins.mkCons(Builtins.bData(token), Builtins.mkNilData())));
-        byte[] itemPolicy = Builtins.unBData(field(d, 2));
-        byte[] itemName = Builtins.unBData(field(d, 3));
+        byte[] itemPolicy = Builtins.unBData(ld.itemPolicy());
+        byte[] itemName = Builtins.unBData(ld.itemName());
         boolean found = false;
         for (TxOut output : txInfo.outputs()) {
             found = found || (Builtins.equalsData(output.address(), to)
@@ -340,6 +345,7 @@ public class SealedBidAuction {
      * lovelace, one unit of the item and one {@code token} under {@code policy}.
      */
     private static boolean authentic(TxOut out, Address exact, byte[] policy, byte[] token, PlutusData d) {
+        LotFields ld = PlutusData.cast(d, LotFields.class);
         Value v = out.value();
         // No reference script on a lot: it would make later spenders pay its reference-script fee.
         return out.referenceScript().isEmpty()
@@ -348,8 +354,8 @@ public class SealedBidAuction {
                 && ChainLib.outerEntryCount(v) == 3
                 && ChainLib.policyEntryCount(v, policy) == 1
                 && ValuesLib.assetOf(v, policy, token).compareTo(BigInteger.ONE) == 0
-                && ChainLib.policyEntryCount(v, Builtins.unBData(field(d, 2))) == 1
-                && ValuesLib.assetOf(v, Builtins.unBData(field(d, 2)), Builtins.unBData(field(d, 3))).compareTo(BigInteger.ONE) == 0;
+                && ChainLib.policyEntryCount(v, Builtins.unBData(ld.itemPolicy())) == 1
+                && ValuesLib.assetOf(v, Builtins.unBData(ld.itemPolicy()), Builtins.unBData(ld.itemName())).compareTo(BigInteger.ONE) == 0;
     }
 
     /** The one output under the script's credential. */
@@ -370,17 +376,16 @@ public class SealedBidAuction {
      * (coordinates canonical) and a list of well-formed bids. Anything else fails.
      */
     private static boolean isLot(PlutusData d) {
+        LotFields ld = PlutusData.cast(d, LotFields.class);
         if (Builtins.constrTag(d) != 0) return false;
-        PlutusData f = Builtins.constrFields(d);
-        int count = 0;
-        PlutusData rest = f;
-        while (!Builtins.nullList(rest)) {
-            count = count + 1;
-            rest = Builtins.tailList(rest);
-        }
-        if (count != 13) return false;
+        // Exactly 13 fields (unrolled: fewer fails a builtin, more fails the check).
+        PlutusData f12 = Builtins.tailList(Builtins.tailList(Builtins.tailList(Builtins.tailList(
+                Builtins.tailList(Builtins.tailList(Builtins.tailList(Builtins.tailList(
+                Builtins.tailList(Builtins.tailList(Builtins.tailList(Builtins.tailList(
+                Builtins.constrFields(d)))))))))))));
+        if (!Builtins.nullList(Builtins.tailList(f12))) return false;
         boolean bidsOk = true;
-        PlutusData each = Builtins.unListData(field(d, 12));
+        PlutusData each = Builtins.unListData(ld.bids());
         while (!Builtins.nullList(each)) {
             PlutusData bid = Builtins.headList(each);
             PlutusData bf = Builtins.constrFields(bid);
@@ -390,27 +395,28 @@ public class SealedBidAuction {
             each = Builtins.tailList(each);
         }
         return bidsOk
-                && Builtins.lengthOfByteString(Builtins.unBData(field(d, 0))) == 28
-                && Builtins.lengthOfByteString(Builtins.unBData(field(d, 1))) == 28
-                && Builtins.lengthOfByteString(Builtins.unBData(field(d, 2))) == 28
-                && Builtins.lengthOfByteString(Builtins.unBData(field(d, 3))) <= 32
-                && Builtins.unIData(field(d, 4)).compareTo(BigInteger.ZERO) > 0
-                && ChainLib.canonicalField(Builtins.unIData(field(d, 9)))
-                && ChainLib.canonicalField(Builtins.unIData(field(d, 10)))
-                && Builtins.unIData(field(d, 11)).compareTo(BigInteger.ZERO) >= 0;
+                && Builtins.lengthOfByteString(Builtins.unBData(ld.seller())) == 28
+                && Builtins.lengthOfByteString(Builtins.unBData(ld.auctioneer())) == 28
+                && Builtins.lengthOfByteString(Builtins.unBData(ld.itemPolicy())) == 28
+                && Builtins.lengthOfByteString(Builtins.unBData(ld.itemName())) <= 32
+                && Builtins.unIData(ld.lotAda()).compareTo(BigInteger.ZERO) > 0
+                && ChainLib.canonicalField(Builtins.unIData(ld.pkU()))
+                && ChainLib.canonicalField(Builtins.unIData(ld.pkV()))
+                && Builtins.unIData(ld.generation()).compareTo(BigInteger.ZERO) >= 0;
     }
 
     private static BigInteger deposit(PlutusData d) {
-        return Builtins.unIData(field(d, 5));
+        LotFields ld = PlutusData.cast(d, LotFields.class);
+        return Builtins.unIData(ld.deposit());
     }
 
-    private static PlutusData field(PlutusData d, int index) {
-        PlutusData rest = Builtins.constrFields(d);
-        int i = 0;
-        while (i < index) {
-            rest = Builtins.tailList(rest);
-            i = i + 1;
-        }
-        return Builtins.headList(rest);
-    }
+    /**
+     * A typed view of a lot datum, for constant-cost field access (each accessor is a fixed
+     * {@code tailList} chain, where a loop over the index cost a call and an iteration per step).
+     * Every component stays raw {@code Data}, so callers decode exactly as before, and
+     * {@link #isLot} has already checked the shape before any accessor is used.
+     */
+    record LotFields(PlutusData seller, PlutusData auctioneer, PlutusData itemPolicy, PlutusData itemName,
+                     PlutusData lotAda, PlutusData deposit, PlutusData reserve, PlutusData biddingEnds,
+                     PlutusData settleBy, PlutusData pkU, PlutusData pkV, PlutusData generation, PlutusData bids) {}
 }

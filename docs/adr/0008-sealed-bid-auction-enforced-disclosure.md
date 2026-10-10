@@ -237,6 +237,13 @@ bound, so an upper bound of exactly `biddingEnds` is still in time (tested at th
 ## Revision history
 
 - **r1** (2026-10-10): initial proposal.
+- **r4** (2026-10-10; fee optimization, no change to what the script accepts): the lot datum is
+  read through a typed view (`LotFields`, a fixed `tailList` chain per field) instead of a loop
+  per access, and `isLot`'s field count is unrolled: about half the memory of every auction
+  transaction. The verification keys moved from the bid and settle redeemers to a key carrier
+  output (ADR-0007 r3). VM tests add a missing carrier and a carrier of another script.
+  Measured fees on DevKit, before → after: open 0.745 → 0.512 ADA; bid 1.184 → 0.897; settle
+  (3 bids) 1.377 → 1.028; refund 0.678 → 0.526.
 - **r3** (2026-10-10; implementation review, Codex C1–C5 and Claude A1–A12; no P0, both
   confirmed D4): payouts are tagged with `(policy, T)` (C1, A1); a lot carries no reference script
   (A4); the host keeps `lotAda ≥ minLotAda`, refuses to open a second lot while one is open, checks
@@ -295,14 +302,15 @@ and the auction is deployed as a reference script (13 KB).
 
 | Transaction | VM steps | VM memory | DevKit steps | DevKit memory |
 |---|---|---|---|---|
-| Open (mint) | 9.0% | 20.4% | 9.2% | 20.8% |
-| Bid, the first / third (spend) | — / 51.0% | — / 22.0% | 50.9% / 51.1% | 21.6% / 22.2% |
-| Settle, 1 bid (spend + burn) | 49.0% | 22.0% | — | — |
-| Settle, 2 bids (spend + burn) | 57.3% | 23.7% | — | — |
-| Settle, 3 bids (spend + burn) | 65.6% | 25.4% | 65.8% | 25.7% |
-| Refund (spend) | 8.2% (3 bids) | 17.8% | 7.8% (1 bid) | 17.0% |
+| Open (mint) | 3.1% | 6.3% | 3.3% | 6.4% |
+| Bid, the first / third (spend) | — / 46.6% | — / 11.5% | 46.3% / 46.6% | 10.7% / 11.3% |
+| Settle, 1 bid (spend + burn) | 44.5% | 11.3% | — | — |
+| Settle, 2 bids (spend + burn) | 52.6% | 12.7% | — | — |
+| Settle, 3 bids (spend + burn) | 60.8% | 14.0% | 60.7% | 13.4% |
+| Refund (spend) | 4.3% (3 bids) | 8.6% | 4.1% (1 bid) | 8.1% |
 
 The DevKit columns are the evaluator's ExUnits for the real transactions of
-`AuctionDevKitE2ETest` (2026-10-10), which also asserts the 80% gate. The VM transactions are
-minimal (no fee input, change or reference-script input), so the DevKit figures, from the real
+`AuctionDevKitE2ETest` (2026-10-10, as of r4), which also asserts the 80% gate. The VM transactions are
+minimal (no fee input or change; bids and settlements carry the reference-script input and the
+key carrier), so the DevKit figures, from the real
 transactions, are the ones the gate rests on.
