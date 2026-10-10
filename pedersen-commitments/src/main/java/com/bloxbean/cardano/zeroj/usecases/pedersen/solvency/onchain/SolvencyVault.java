@@ -33,7 +33,9 @@ import java.util.Optional;
  * <p><b>Attest</b> (mint): before the period starts (validity range ending at or before
  * {@code periodStart}), the exchange signs and mints one attestation token into a vault output at
  * exactly the vault's enterprise address, whose inline datum is
- * {@code Attestation([Entry(idHash, u, v)] × N)} and whose value is the attested reserve {@code R}
+ * {@code Attestation([Entry(idHash, u, v, delivery)] × N, auditorDelivery)} (ADR-0007 N6: each
+ * customer's opening and the auditor's aggregate opening delivered on-chain, 89 bytes each) and
+ * whose value is the attested reserve {@code R}
  * in lovelace plus the token. The proof shows {@code Σ b_i ≤ R} over the hidden balances committed
  * in the entries; its public inputs are {@code [R, u_1..u_N, v_1..v_N]}, read from that output.
  *
@@ -109,7 +111,12 @@ public class SolvencyVault {
         if (Builtins.constrTag(datum) != 0) return false;
         PlutusData fields = Builtins.constrFields(datum);
         PlutusData entries = Builtins.unListData(Builtins.headList(fields));
-        if (!Builtins.nullList(Builtins.tailList(fields))) return false;
+        // ADR-0007 N6: the attestation also carries the auditor's delivery of the aggregate opening.
+        PlutusData rest = Builtins.tailList(fields);
+        if (Builtins.nullList(rest) || !Builtins.nullList(Builtins.tailList(rest))
+                || Builtins.lengthOfByteString(Builtins.unBData(Builtins.headList(rest))) != 89) {
+            return false;
+        }
 
         // [R, u_1..u_N, v_1..v_N], with every entry checked: 32-byte idHash, canonical u and v.
         int count = 0;
@@ -158,7 +165,11 @@ public class SolvencyVault {
 
     // ------------------------------------------------------------------
 
-    /** {@code Constr 0 [B(32), I, I]} with canonical coordinates. */
+    /**
+     * {@code Constr 0 [B(32), I, I, B(89)]}: the id hash, canonical coordinates, and the customer's
+     * {@code confidential-note-jubjub-v1} delivery of the entry's opening (ADR-0007 N6). A
+     * validator can check its length, not that it decrypts.
+     */
     private static boolean isEntry(PlutusData entry) {
         if (Builtins.constrTag(entry) != 0) return false;
         PlutusData f = Builtins.constrFields(entry);
@@ -166,10 +177,13 @@ public class SolvencyVault {
         PlutusData f1 = Builtins.tailList(f);
         if (Builtins.nullList(f1)) return false;
         PlutusData f2 = Builtins.tailList(f1);
-        if (Builtins.nullList(f2) || !Builtins.nullList(Builtins.tailList(f2))) return false;
+        if (Builtins.nullList(f2)) return false;
+        PlutusData f3 = Builtins.tailList(f2);
+        if (Builtins.nullList(f3) || !Builtins.nullList(Builtins.tailList(f3))) return false;
         return Builtins.lengthOfByteString(Builtins.unBData(Builtins.headList(f))) == 32
                 && canonicalField(Builtins.unIData(Builtins.headList(f1)))
-                && canonicalField(Builtins.unIData(Builtins.headList(f2)));
+                && canonicalField(Builtins.unIData(Builtins.headList(f2)))
+                && Builtins.lengthOfByteString(Builtins.unBData(Builtins.headList(f3))) == 89;
     }
 
     private static BigInteger entryField(PlutusData entry, int index) {

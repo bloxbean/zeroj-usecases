@@ -15,8 +15,16 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import com.bloxbean.cardano.zeroj.usecases.pedersen.solvency.SolvencyAttestation.Check;
+import com.bloxbean.cardano.zeroj.usecases.pedersen.solvency.SolvencyAttestation.Attestation;
+import org.zeroj.circuit.lib.jubjub.NoteViewingKey;
+import org.zeroj.circuit.lib.jubjub.NoteOpening;
+import org.zeroj.circuit.lib.jubjub.ConfidentialNotes;
+import java.util.Map;
+import java.util.LinkedHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -27,9 +35,17 @@ class SolvencyCircuitTest {
     static final int N = 4;
     private static SolvencyAttestation solvency;
 
+    static final Map<String, NoteViewingKey> KEYS = new LinkedHashMap<>();
+
+    static {
+        for (String id : List.of("alice", "bob", "carol", "dave")) KEYS.put(id, NoteViewingKey.generate(new SecureRandom()));
+    }
+
     static List<Customer> book() {
-        return List.of(Customer.of("alice", 500_000_000L), Customer.of("bob", 1_200_000_000L),
-                Customer.of("carol", 300_000_000L), Customer.of("dave", 0));
+        return List.of(Customer.of("alice", 500_000_000L, KEYS.get("alice").readerKey()),
+                Customer.of("bob", 1_200_000_000L, KEYS.get("bob").readerKey()),
+                Customer.of("carol", 300_000_000L, KEYS.get("carol").readerKey()),
+                Customer.of("dave", 0, KEYS.get("dave").readerKey()));
     }
 
     @BeforeAll
@@ -84,37 +100,55 @@ class SolvencyCircuitTest {
     }
 
     @Test
-    @DisplayName("Customer check: own entry exactly once and opening; understated and duplicated entries are caught")
+    @DisplayName("Customer check from on-chain deliveries: own entry exactly once, opening to the balance; understated, duplicated and garbled entries are caught")
     void customerCheck() {
         var book = book();
         List<Entry> entries = SolvencyAttestation.entries(book);
-        for (Customer c : book) assertTrue(SolvencyAttestation.customerCheck(entries, c));
-        // Understated balance: the entry no longer opens to the customer's balance.
+        for (Customer c : book) {
+            assertEquals(Check.LISTED_ONCE_CORRECT, SolvencyAttestation.customerCheck(entries, c, KEYS.get(c.id())));
+        }
         Customer alice = book.getFirst();
+        // Understated balance, delivered honestly: the opening is the understated one.
         var cheaper = new ArrayList<>(entries);
-        cheaper.set(0, new Entry(alice.idHash(), PedersenCommitment.commit(BigInteger.ONE, alice.blinding()).normalized()));
-        assertFalse(SolvencyAttestation.customerCheck(cheaper, alice));
+        BigInteger r = alice.blinding();
+        var understated = NoteOpening.of(BigInteger.ONE, r);
+        cheaper.set(0, new Entry(alice.idHash(), understated.commitment().normalized(),
+                ConfidentialNotes.seal(understated, List.of(alice.readerKey()), new SecureRandom()).getFirst()));
+        assertEquals(Check.WRONG_BALANCE, SolvencyAttestation.customerCheck(cheaper, alice, KEYS.get("alice")));
+        // The real commitment with a delivery that does not open to it.
+        var garbled = SolvencyAttestation.withGarbageFor(entries, book, "alice");
+        assertEquals(Check.UNOPENABLE, SolvencyAttestation.customerCheck(garbled, alice, KEYS.get("alice")));
+        // Another customer's key cannot read alice's entry.
+        assertEquals(Check.UNOPENABLE, SolvencyAttestation.customerCheck(entries, alice, KEYS.get("bob")));
         // Listed twice (e.g. to show two views): refused.
         var twice = new ArrayList<>(entries);
         twice.set(3, entries.getFirst());
-        assertFalse(SolvencyAttestation.customerCheck(twice, alice));
+        assertEquals(Check.LISTED_TWICE, SolvencyAttestation.customerCheck(twice, alice, KEYS.get("alice")));
+        assertEquals(Check.MISSING, SolvencyAttestation.customerCheck(entries.subList(1, 4), alice, KEYS.get("alice")));
         // Different ids give different id hashes. (The 32-byte salt is fixed-size, so id ‖ salt is
         // already unambiguous; the length prefix keeps it so if the salt format ever changes.) What
         // the encoding cannot stop is the exchange handing two customers the same id: ids must be
         // identifiers the customer can confirm and no one else shares (ADR-0006).
         byte[] s = new byte[32];
-        assertFalse(Arrays.equals(new Customer("12", s, 1, BigInteger.ONE).idHash(),
-                new Customer("123", s, 1, BigInteger.ONE).idHash()));
+        assertFalse(Arrays.equals(new Customer("12", s, 1, BigInteger.ONE, alice.readerKey()).idHash(),
+                new Customer("123", s, 1, BigInteger.ONE, alice.readerKey()).idHash()));
     }
 
     @Test
-    @DisplayName("Auditor: the sum of the commitments opens to total liabilities, and to nothing else")
+    @DisplayName("Auditor: its on-chain delivery opens to total liabilities against the sum of the commitments, and only there")
     void auditorOpening() {
         var book = book();
         List<Entry> entries = SolvencyAttestation.entries(book);
+        NoteViewingKey auditor = NoteViewingKey.generate(new SecureRandom());
+        byte[] delivery = SolvencyAttestation.auditorDelivery(book, auditor.readerKey());
+        assertEquals(BigInteger.valueOf(2_000_000_000L),
+                SolvencyAttestation.auditorCheck(new Attestation(entries, delivery), auditor).orElseThrow());
+        // An entry dropped from the sum: the delivery no longer opens.
+        assertTrue(SolvencyAttestation.auditorCheck(new Attestation(entries.subList(0, 3), delivery), auditor).isEmpty());
+        // Another key cannot read it.
+        assertTrue(SolvencyAttestation.auditorCheck(new Attestation(entries, delivery),
+                NoteViewingKey.generate(new SecureRandom())).isEmpty());
         AuditOpening opening = SolvencyAttestation.auditOpening(book);
-        assertTrue(SolvencyAttestation.auditorCheck(entries, opening));
-        assertFalse(SolvencyAttestation.auditorCheck(entries,
-                new AuditOpening(opening.liabilities().subtract(BigInteger.ONE), opening.blinding())));
+        assertEquals(BigInteger.valueOf(2_000_000_000L), opening.liabilities());
     }
 }

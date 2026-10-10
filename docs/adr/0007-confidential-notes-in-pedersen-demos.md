@@ -494,9 +494,24 @@ their own inputs"):
 
 ## Measurements
 
-To be filled in at M3a and M4: constraints, prover time, and the Julc VM cost of the complete
-transaction as a percentage of `maxTxExecutionUnits` (10e9 steps, 16.5e6 memory), for transfer,
-redeem, and proved issuance with n = 1 and n = 2.
+Julc VM, Plutus V3 cost model (protocol version 11), against `maxTxExecutionUnits` (10e9 steps,
+16.5e6 memory). Each figure is the **complete** transaction: every script purpose it runs, added up.
+Verification keys are pinned by hash and carried in the redeemer (r2).
+
+| Transaction | Circuit constraints | Public inputs | Steps | Memory |
+|---|---|---|---|---|
+| Transfer (spend + Split mint), direct layout | 34,184 | 24 | 7.65e9 (76.5%) | 2.59e6 (15.7%) |
+| Redeem (spend + Receipt mint), direct layout | 18,366 | 15 | 5.80e9 (58.0%) | 2.02e6 (12.2%) |
+| Proved issue, one note (mint) | 15,890 | 12 | 5.08e9 (50.8%) | 1.49e6 (9.0%) |
+| Proved issue, two notes (mint) | 31,773 | 22 | 7.18e9 (71.8%) | 2.26e6 (13.7%) |
+| Trusted issue, two notes (mint) | — | — | 0.37e9 (3.7%) | 1.29e6 (7.8%) |
+| Registry Init / Rotate (two possession proofs) | 2 × 7 inputs | — | 7.77e9 / 7.82e9 | 1.41e6 / 1.55e6 |
+
+**Gate outcome:** every note transaction is within ADR-0055's 80% gate with the **direct layout**
+(spec §8.2), so the hash-compressed layout is not used. The transfer leaves 3.5 points of margin.
+The transfer and redeem circuits are exactly the size of ZeroJ's reference D3a circuits (34,184
+and 18,366 constraints), an independent cross-check of the composition. The on-DevKit figures
+(from the Julc evaluator on the real transactions) are recorded at M3a's end-to-end run.
 
 ## Production gates (not met by this demo)
 

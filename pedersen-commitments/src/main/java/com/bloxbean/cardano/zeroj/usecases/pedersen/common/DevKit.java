@@ -62,9 +62,23 @@ public final class DevKit {
         Thread.sleep(3_000);
     }
 
+    /** The unpadded execution units of every script, summed, from the most recent evaluation. */
+    public record Budget(long steps, long memory) {
+        public double stepsPercent() { return 100.0 * steps / 10_000_000_000L; }
+        public double memoryPercent() { return 100.0 * memory / 16_500_000L; }
+    }
+
+    private static volatile Budget lastBudget = new Budget(0, 0);
+
+    /** The complete transaction's script cost from the most recent evaluation (all purposes). */
+    public static Budget lastBudget() {
+        return lastBudget;
+    }
+
     /**
      * A Julc evaluator with slot-to-POSIX conversion anchored at the latest block (one-second
-     * slots), padded by 25% so fee estimates do not under-shoot.
+     * slots), padded by 25% so fee estimates do not under-shoot. The unpadded total is kept in
+     * {@link #lastBudget()}.
      */
     public static TransactionEvaluator evaluator(BackendService backend) {
         var latest = call(() -> backend.getBlockService().getLatestBlock());
@@ -77,6 +91,13 @@ public final class DevKit {
         return (tx, utxos) -> {
             var result = evaluator.evaluateTx(tx, utxos);
             if (result.isSuccessful() && result.getValue() != null) {
+                long steps = 0;
+                long memory = 0;
+                for (EvaluationResult eval : result.getValue()) {
+                    steps += eval.getExUnits().getSteps().longValueExact();
+                    memory += eval.getExUnits().getMem().longValueExact();
+                }
+                lastBudget = new Budget(steps, memory);
                 for (EvaluationResult eval : result.getValue()) {
                     ExUnits u = eval.getExUnits();
                     eval.setExUnits(new ExUnits(
