@@ -59,6 +59,7 @@ dependencies {
     implementation "org.zeroj:zeroj-circuit-annotation-api:${zerojVersion}"
     annotationProcessor "org.zeroj:zeroj-circuit-annotation-processor:${zerojVersion}"
     implementation "org.zeroj:zeroj-crypto:${zerojVersion}"
+    implementation "org.zeroj:zeroj-bls12381:${zerojVersion}"
     implementation "org.zeroj:zeroj-codec:${zerojVersion}"
     implementation "org.zeroj:zeroj-verifier-groth16:${zerojVersion}"
     implementation "org.zeroj:zeroj-onchain-julc:${zerojVersion}"

@@ -80,40 +80,48 @@ a **singleton** registry token that the registry's own script moves forward on r
 - **Init (mint).** The parameter is a seed, `txId ‖ I2OSP2(index)`, as in `VoteListLib`. The
   policy mints exactly one `REG` token, and only in a transaction that spends the seed. The token
   goes into exactly one output, at the registry's exact enterprise address, with a well-formed
-  entry with `generation = 0`. The auditor named in the entry signs, and `pkProof` verifies
-  on-chain (below). No input under the registry's own payment credential is spent. The seed can
+  entry with `generation = 0`. The auditor named in the entry signs, and both possession proofs
+  verify on-chain (below). No input under the registry's own payment credential is spent. The seed can
   be spent once, so the token is unique forever.
-- **Entry datum.** `Entry(auditor: B28, generation: I, pkU: I, pkV: I, pkEnc: B32, viewKey: B32,
-  pkProof: B192, viewProof: B192)`:
+- **Entry datum.** `Entry(auditor: B28, generation: I, pkU: I, pkV: I, pkEnc: B32, viewU: I,
+  viewV: I, viewKey: B32, pkProof: B192, viewProof: B192)`:
   - `pkU`, `pkV`: the auditor's `elgamal-jubjub-v1` key `PK_a` as canonical affine coordinates,
     which validators read;
-  - `pkEnc`: the same key's 32-byte encoding (spec §7.3), which wallets decode strictly;
-  - `viewKey`: the auditor's `confidential-note-jubjub-v1` reader key, encoded;
+  - `pkEnc`: the same key's 32-byte encoding, which wallets decode strictly;
+  - `viewU`, `viewV`, `viewKey`: the auditor's `confidential-note-jubjub-v1` reader key, as
+    coordinates and encoded;
+  - the registry checks on-chain that each encoding is exactly its coordinates'
+    `pedersen-jubjub-v1` §4 encoding (`v` little-endian, top bit the parity of `u`), that both keys
+    have `u ≠ 0`, and that the two keys differ;
   - `pkProof`, `viewProof`: compressed Groth16 possession proofs (`piA ‖ piB ‖ piC`) for the two
     keys, under the demo's `KeyPossessionProof` circuit (N7). Each proof is bound to its key type,
     to this registry's policy id and to the entry's `auditor`.
 - **Rotate (spend).** All of these must hold:
   - exactly one input under the registry's payment credential;
   - the old entry's auditor signs, and so does the new entry's;
-  - exactly one output holds the token;
+  - exactly one output under the registry's payment credential, and it holds the token;
   - that output is at the exact enterprise address, with value exactly lovelace plus the token;
   - its datum has the exact shape, canonical coordinates, lengths 28/32/32/192/192,
     `pkEnc ≠ viewKey`, and `generation = old + 1`;
-  - the new entry's `pkProof` verifies on-chain;
+  - the new entry's two possession proofs verify on-chain;
   - no mint under the registry policy;
   - the spent input holds the registry token (so a token-less output at the address cannot be
     "rotated").
 
   The token is never burned or duplicated, so no older entry stays unspent. That is what makes
   the current generation enforceable (ADR-0055 Q7, implementation note 11).
-- **Possession (Q6).**
-  - **The ElGamal key is checked on-chain** at Init and Rotate. The registry verifies `pkProof`
-    (one Groth16 verification, 7 public inputs, about 3.5e9 steps; rotation is rare) over
-    `[ctx(0x01), G.u, G.v, pkU, pkV, pkU, pkV]`. This discharges `R_enc`'s `PK ∈ 𝔾` obligation
-    on-chain (spec §9.3). It also means an auditor cannot register an identity, off-curve or
-    out-of-subgroup key, which would make every spend circuit unsatisfiable and freeze every note.
-  - **The viewing key is checked off-chain** by every sender before delivering to it (N5). A bad
-    viewing key costs the auditor its own D5 deliveries, nothing else.
+- **Possession (Q6), checked on-chain for both keys** at Init and Rotate. The registry verifies
+  `pkProof` over `[ctx(0x01), G.u, G.v, pkU, pkV, pkU, pkV]` and `viewProof` over
+  `[ctx(0x02), G.u, G.v, viewU, viewV, viewU, viewV]`. Two Groth16 verifications measure about
+  7.8e9 steps and 1.5e6 memory (78% and 9% of the limits). Registry transactions are rare, and the
+  ADR-0055 80% gate is for note transactions.
+  - This discharges `R_enc`'s `PK ∈ 𝔾` obligation on-chain (spec §9.3).
+  - An auditor cannot register an identity, off-curve or out-of-subgroup key, which would make
+    every spend circuit unsatisfiable and freeze every note. A possession proof with secret 0 does
+    verify for the identity, so `u ≠ 0` is checked separately.
+  - It cannot register an entry that honest senders then refuse to admit (N5): an encoding that
+    is not its coordinates', a viewing key it does not hold, or a malformed proof. Such an entry
+    would otherwise stop every honest transfer.
   - **Binding.** The context `ctx(type)` (N7) is computed on-chain from the key type, the
     registry's own policy id and the entry's `auditor`. A proof copied from another registry, from
     another registrant or from the other key type does not verify. Together with the registrant's
@@ -135,7 +143,7 @@ a **singleton** registry token that the registry's own script moves forward on r
 The parameters are:
 - the issuer's pkh, the token name and the issuance mode;
 - the registry policy and token;
-- the verification keys: transfer, redeem, and proved issuance for one and for two notes.
+- the `blake2b_256(serialiseData(vk))` hashes of the verification keys: transfer, redeem, and proved issuance for one and for two notes (each redeemer carries its key; see the r2 note on script size).
 
 **Datum:** `Note(owner: B28, u: I, v: I, generation: I, audit: [I × 8], deliveries: [B89 × 2])`.
 - `audit` holds the two `elgamal-jubjub-v1` limb ciphertexts at width 32, `A.u, A.v, B.u, B.v`
@@ -387,6 +395,15 @@ their own inputs"):
     period in the demo (N6).
   - F17: notes hold exactly lovelace plus the token; min-ADA computed; per-path compressed
     inputs listed; the source-scan pattern scoped.
+  - M2 implementation review (Claude R1–R6, Codex C1–C2): the entry gains the viewing key's
+    coordinates; both encodings are bound and both proofs verified on-chain (R1); key-type
+    binding tested in isolation (R2, C2); `AdmittedAuditor` has no public constructor (C1);
+    host builders check their preconditions (R5).
+  - Verification keys are pinned by hash: a script embedding four verification keys measured
+    18.1–18.9 KB, beyond the 16 KB transaction limit even for deploying a reference script.
+    `NoteLedger` takes `blake2b_256(serialiseData(vk))` per key, and each proof's redeemer
+    carries its key (on-chain `VkLib`). The ledger is deployed once as a reference script into an
+    output at its own address that holds no note token, so it can never be spent.
   - F10 (script size) stays a measurement at M3a.
 
 ## Invariants
@@ -406,9 +423,9 @@ their own inputs"):
 
 ## Alternatives considered
 
-- **Possession proofs verified on-chain at registration.** Two Groth16 verifications would cost
-  about 8e9 steps, and Q6 allows off-chain checking. Rejected for the demo; anyone can still
-  verify the proofs, which are stored in the entry.
+- **Possession proofs verified off-chain only.** Q6 allows it, and it saves about 7.8e9 steps per
+  registry transaction. Rejected in r2 (design review F1, implementation review R1): an auditor
+  could then register an entry that freezes every note or that every honest sender refuses.
 - **The issuer governs the registry.** The auditee would then control the auditor's key.
   Rejected: the auditor rotates its own entry, and the operator only pins which registry a
   ledger uses.
