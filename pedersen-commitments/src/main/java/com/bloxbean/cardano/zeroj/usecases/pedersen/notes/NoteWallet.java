@@ -4,6 +4,7 @@ import org.zeroj.circuit.lib.jubjub.NoteOpening;
 import org.zeroj.circuit.lib.jubjub.NoteScanner;
 import org.zeroj.circuit.lib.jubjub.NoteViewingKey;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -34,8 +35,11 @@ public final class NoteWallet {
     }
 
     public record Scan(List<Owned> owned, List<ChainNote> unopenable, List<ChainNote> readableNotMine) {
-        public long balance() {
-            return owned.stream().mapToLong(o -> o.opening().value().longValueExact()).sum();
+        /** The sum of the owned notes' values (each below {@code 2^64}; the sum may exceed it). */
+        public BigInteger balance() {
+            BigInteger sum = BigInteger.ZERO;
+            for (Owned o : owned) sum = sum.add(o.opening().value());
+            return sum;
         }
     }
 

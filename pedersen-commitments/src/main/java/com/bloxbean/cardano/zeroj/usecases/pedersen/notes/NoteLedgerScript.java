@@ -166,10 +166,10 @@ public final class NoteLedgerScript {
 
     /**
      * The address-policy cheat (ADR-0007 N2; ZeroJ ADR-0055 M3 criterion (a)): an honest transfer
-     * plus a copy of {@code out1} paid under the ledger's payment credential with another stake
-     * credential. The ledger refuses the whole transaction.
+     * whose change note (token included) is paid under the ledger's payment credential with
+     * another stake credential. Every count still balances; only the exact-address rule refuses it.
      */
-    public Result<String> transferWithStakeVariantCopy(BackendService backend, Account owner, Utxo note, AuditedNote out1,
+    public Result<String> transferWithStakeVariantNote(BackendService backend, Account owner, Utxo note, AuditedNote out1,
                                                        AuditedNote out2, Groth16ProofBLS381 proof) {
         String staked;
         try {
@@ -183,8 +183,7 @@ public final class NoteLedgerScript {
                         ConstrPlutusData.builder().alternative(1).data(ListPlutusData.of(BigIntPlutusData.of(0))).build())
                 .readFrom(registry.currentUtxo(backend))
                 .payToContract(address, noteValue(backend, out1), out1.datum())
-                .payToContract(address, noteValue(backend, out2), out2.datum())
-                .payToContract(staked, List.of(Amount.ada(4)), out1.datum());
+                .payToContract(staked, noteValue(backend, out2), out2.datum());
         return submit(backend, tx, owner);
     }
 

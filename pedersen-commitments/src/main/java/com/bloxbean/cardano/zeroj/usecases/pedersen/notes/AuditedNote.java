@@ -80,6 +80,11 @@ public record AuditedNote(byte[] owner, NoteOpening opening, JubjubPoint commitm
         return new AuditedNote(owner, opening, commitment, generation, limbs, other);
     }
 
+    /** The same note claiming another registry generation (the "retired key" cheat). */
+    public AuditedNote atGeneration(long other) {
+        return new AuditedNote(owner, opening, commitment, other, limbs, deliveries);
+    }
+
     /** The same note with other limbs (the "under-reported amount" cheat). */
     public AuditedNote withLimbs(List<ElGamalEncryption> other) {
         return new AuditedNote(owner, opening, commitment, generation, other, deliveries);

@@ -292,6 +292,11 @@ public final class SolvencyAttestation {
         List<Attestation> all = new ArrayList<>();
         for (int page = 1; ; page++) {
             var result = backend.getUtxoService().getUtxos(address(vault), 100, page);
+            // An address with no UTxOs is "not found"; any other failure must not look like an empty vault.
+            if (!result.isSuccessful() && !String.valueOf(result.getResponse()).contains("404")
+                    && !String.valueOf(result.getResponse()).toLowerCase().contains("not found")) {
+                throw new IllegalStateException("could not read the vault: " + result.getResponse());
+            }
             if (!result.isSuccessful() || result.getValue() == null || result.getValue().isEmpty()) break;
             for (Utxo u : result.getValue()) {
                 if (u.getAmount().stream().anyMatch(a -> a.getUnit().equals(unit))) all.add(readAttestation(u));

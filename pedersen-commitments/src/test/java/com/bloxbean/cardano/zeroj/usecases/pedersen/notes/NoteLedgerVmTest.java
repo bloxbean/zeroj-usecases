@@ -1,7 +1,9 @@
 package com.bloxbean.cardano.zeroj.usecases.pedersen.notes;
 
 import com.bloxbean.cardano.client.crypto.Blake2bUtil;
+import com.bloxbean.cardano.zeroj.usecases.pedersen.common.KeyedCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.circuit.NoteIssueProofCircuit;
+import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.circuit.NoteRedeemProofCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.circuit.NoteTransferProofCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.onchain.NoteLedger;
 import org.julclang.core.PlutusData;
@@ -44,6 +46,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
@@ -180,7 +183,7 @@ class NoteLedgerVmTest extends ContractTest {
         AUDIT_ABSENT, AUDIT_WRONG_OUT1, AUDIT_WRONG_OUT2, AUDIT_SWAPPED_BETWEEN_OUTPUTS, AUDIT_LIMBS_SWAPPED,
         AUDIT_NON_CANONICAL, AUDIT_SEVEN_ENTRIES, DELIVERY_SHORT, DELIVERY_MISSING, DELIVERY_EXTRA, STALE_GENERATION,
         REGISTRY_MISSING, REGISTRY_OTHER_KEY, REGISTRY_SECOND_ENTRY, REGISTRY_QUANTITY_TWO, REGISTRY_EXTRA_FIELD,
-        REGISTRY_WRONG_TOKEN
+        REGISTRY_WRONG_TOKEN, NO_NOTE_SPENT
     }
 
     @Test
@@ -198,7 +201,7 @@ class NoteLedgerVmTest extends ContractTest {
             }
         }
         for (TransferMutation m : List.of(TransferMutation.MINT_TWO, TransferMutation.EXTRA_SCRIPT_INPUT,
-                TransferMutation.EXTRA_STAKED_SCRIPT_INPUT)) {
+                TransferMutation.EXTRA_STAKED_SCRIPT_INPUT, TransferMutation.NO_NOTE_SPENT)) {
             if (evaluate(points, transferMint(m)) instanceof EvalResult.Success) fail("Split mint accepted " + m);
         }
     }
@@ -254,9 +257,14 @@ class NoteLedgerVmTest extends ContractTest {
                                                 PlutusData first, PlutusData second) {
         b.mint(token(PTS, m == TransferMutation.MINT_TWO ? 2 : 1));
         if (m != TransferMutation.NO_SIGNER) b.signer(ALICE);
-        b.input(m == TransferMutation.INPUT_WITHOUT_TOKEN
-                ? new TxInInfo(ownRef, new TxOut(LEDGER, ada(4), new OutputDatum.OutputDatumInline(inDatum()), Optional.empty()))
-                : new TxInInfo(ownRef, noteOut(LEDGER, inDatum(), 1)));
+        if (m == TransferMutation.NO_NOTE_SPENT) {
+            // "Free tokens": a Split mint with no note spent, the new notes paid to the exact address.
+            b.input(new TxInInfo(ownRef, new TxOut(ALICE_WALLET, ada(10), new OutputDatum.NoOutputDatum(), Optional.empty())));
+        } else {
+            b.input(m == TransferMutation.INPUT_WITHOUT_TOKEN
+                    ? new TxInInfo(ownRef, new TxOut(LEDGER, ada(4), new OutputDatum.OutputDatumInline(inDatum()), Optional.empty()))
+                    : new TxInInfo(ownRef, noteOut(LEDGER, inDatum(), 1)));
+        }
         if (m == TransferMutation.EXTRA_SCRIPT_INPUT) {
             b.input(new TxInInfo(TestDataBuilder.randomTxOutRef_typed(), noteOut(LEDGER, noteDatum(out1), 1)));
         }
@@ -301,7 +309,20 @@ class NoteLedgerVmTest extends ContractTest {
         if (m == TransferMutation.THREE_OUTPUTS) b.output(noteOut(LEDGER, noteDatum(note(ALICE, 0, aliceView)), 1));
         if (m == TransferMutation.STAKE_VARIANT_EXTRA_OUTPUT) b.output(noteOut(STAKED_LEDGER, noteDatum(out1), 0));
         registry(b, m.name());
+        realistic(b);
         return b;
+    }
+
+    /**
+     * What a real transaction also carries, for honest costs: the ledger's own reference-script
+     * output (at the ledger address, no token), the fee payer's input and its change output.
+     */
+    private static void realistic(ScriptContextTestBuilder b) {
+        b.referenceInput(new TxInInfo(TestDataBuilder.randomTxOutRef_typed(), new TxOut(LEDGER, ada(40),
+                new OutputDatum.OutputDatumInline(PlutusData.integer(BigInteger.ZERO)), Optional.of(ScriptHash.of(POLICY)))));
+        b.input(new TxInInfo(TestDataBuilder.randomTxOutRef_typed(), new TxOut(ALICE_WALLET, ada(50),
+                new OutputDatum.NoOutputDatum(), Optional.empty())));
+        b.output(new TxOut(ALICE_WALLET, ada(45), new OutputDatum.NoOutputDatum(), Optional.empty()));
     }
 
     /** The registry reference input, or a mutation of it named by {@code m}. */
@@ -331,7 +352,8 @@ class NoteLedgerVmTest extends ContractTest {
     enum RedeemMutation {
         NONE, NO_SIGNER, PRICE_IN_REDEEMER, RECEIPT_PRICE, RECEIPT_TO_OTHER, RECEIPT_NAME_NOT_DERIVED, NO_RECEIPT_MINTED,
         ALSO_MINT_PTS, PRICE_ZERO, PRICE_TOO_LARGE, TWO_CHANGE_NOTES, STAKE_VARIANT_CHANGE, AUDIT_WRONG, DELIVERY_MISSING,
-        STALE_GENERATION, REGISTRY_MISSING, REGISTRY_OTHER_KEY, WRONG_VK
+        STALE_GENERATION, REGISTRY_MISSING, REGISTRY_OTHER_KEY, WRONG_VK, NO_NOTE_SPENT, TWO_NOTES_SPENT,
+        RECEIPT_NAME_NOT_32_BYTES
     }
 
     @Test
@@ -346,6 +368,10 @@ class NoteLedgerVmTest extends ContractTest {
             if (m != RedeemMutation.NONE && evaluate(points, redeemSpend(m)) instanceof EvalResult.Success) {
                 fail("Redeem spend accepted " + m);
             }
+        }
+        for (RedeemMutation m : List.of(RedeemMutation.ALSO_MINT_PTS, RedeemMutation.NO_NOTE_SPENT,
+                RedeemMutation.TWO_NOTES_SPENT, RedeemMutation.RECEIPT_NAME_NOT_32_BYTES)) {
+            if (evaluate(points, redeemMint(m)) instanceof EvalResult.Success) fail("Receipt mint accepted " + m);
         }
     }
 
@@ -365,18 +391,31 @@ class NoteLedgerVmTest extends ContractTest {
     }
 
     private PlutusData redeemMint() {
+        return redeemMint(RedeemMutation.NONE);
+    }
+
+    private PlutusData redeemMint(RedeemMutation m) {
         TxOutRef ownRef = new TxOutRef(TxId.of(filled(32, (byte) 0x45)), BigInteger.ONE);
         var b = ScriptContextTestBuilder.minting(PolicyId.of(POLICY)).redeemer(PlutusData.constr(2, PlutusData.integer(0)));
-        return redeemTx(RedeemMutation.NONE, b, ownRef).buildPlutusData();
+        return redeemTx(m, b, ownRef).buildPlutusData();
     }
 
     private ScriptContextTestBuilder redeemTx(RedeemMutation m, ScriptContextTestBuilder b, TxOutRef ownRef) {
-        byte[] receipt = m == RedeemMutation.RECEIPT_NAME_NOT_DERIVED ? filled(32, (byte) 0x77) : receiptName(ownRef);
+        byte[] receipt = switch (m) {
+            case RECEIPT_NAME_NOT_DERIVED -> filled(32, (byte) 0x77);
+            case RECEIPT_NAME_NOT_32_BYTES -> filled(31, (byte) 0x77);
+            default -> receiptName(ownRef);
+        };
         Value mint = m == RedeemMutation.NO_RECEIPT_MINTED ? Value.zero() : token(receipt, 1);
         if (m == RedeemMutation.ALSO_MINT_PTS) mint = mint.merge(token(PTS, 1));
         b.mint(mint);
         if (m != RedeemMutation.NO_SIGNER) b.signer(ALICE);
-        b.input(new TxInInfo(ownRef, noteOut(LEDGER, inDatum(), 1)));
+        b.input(m == RedeemMutation.NO_NOTE_SPENT
+                ? new TxInInfo(ownRef, new TxOut(ALICE_WALLET, ada(10), new OutputDatum.NoOutputDatum(), Optional.empty()))
+                : new TxInInfo(ownRef, noteOut(LEDGER, inDatum(), 1)));
+        if (m == RedeemMutation.TWO_NOTES_SPENT) {
+            b.input(new TxInInfo(TestDataBuilder.randomTxOutRef_typed(), noteOut(LEDGER, noteDatum(out1), 1)));
+        }
         List<BigInteger> a = new ArrayList<>(change.audit());
         List<byte[]> d = new ArrayList<>(change.deliveries());
         long generation = GENERATION;
@@ -398,6 +437,7 @@ class NoteLedgerVmTest extends ContractTest {
         b.output(new TxOut(to, ada(2).merge(token(receipt, 1)), new OutputDatum.OutputDatumInline(PlutusData.constr(0,
                 PlutusData.bytes(ALICE), PlutusData.integer(BigInteger.valueOf(receiptPrice)))), Optional.empty()));
         registry(b, m.name());
+        realistic(b);
         return b;
     }
 
@@ -525,14 +565,55 @@ class NoteLedgerVmTest extends ContractTest {
         return b;
     }
 
+    // ------------------------------------------------------------------ rogue verification keys
+
+    @Test
+    @DisplayName("Hash-pinned keys: an honest proof under a fresh setup of the same circuit (same shape) is refused")
+    void rogueVerificationKeysAreRefused() {
+        // Another party's setup of exactly the same circuits: same key shape, a trapdoor it knows.
+        var rogueTransfer = KeyedCircuit.compile("note-transfer-rogue", NoteTransferProofCircuit.build());
+        var rogueRedeem = KeyedCircuit.compile("note-redeem-rogue",
+                NoteRedeemProofCircuit.build());
+        var rogueIssue = KeyedCircuit.compile("note-issue-n1-rogue", NoteIssueProofCircuit.build(1, 2, 8));
+        assertTrue(rogueTransfer.compressedVk().ic().size() == proofs.transfer().compressedVk().ic().size());
+
+        var t = NoteProofs.transferInputs(in, out1, out2, auditor);
+        var tProof = rogueTransfer.prove(t.toWitnessMap());
+        assertTrue(rogueTransfer.verify(tProof, NoteTransferProofCircuit.publicInputs(t)), "positive control: valid under the rogue key");
+        var tp = compress(tProof);
+        var spend = ScriptContextTestBuilder.spending(new TxOutRef(TxId.of(filled(32, (byte) 0x44)), BigInteger.ZERO), inDatum())
+                .redeemer(PlutusData.constr(0, PlutusData.bytes(tp.piA()), PlutusData.bytes(tp.piB()), PlutusData.bytes(tp.piC()),
+                        vk(rogueTransfer.compressedVk())));
+        var ctx = transferTx(TransferMutation.NONE, spend, new TxOutRef(TxId.of(filled(32, (byte) 0x44)), BigInteger.ZERO),
+                noteDatum(out1), noteDatum(out2)).buildPlutusData();
+        assertTrue(evaluate(points, ctx) instanceof EvalResult.Failure, "a transfer proof under a rogue key is refused");
+
+        var r = NoteProofs.redeemInputs(in, change, PRICE, auditor);
+        var rp = compress(rogueRedeem.prove(r.toWitnessMap()));
+        var rSpend = ScriptContextTestBuilder.spending(new TxOutRef(TxId.of(filled(32, (byte) 0x45)), BigInteger.ONE), inDatum())
+                .redeemer(PlutusData.constr(1, PlutusData.integer(BigInteger.valueOf(PRICE)), PlutusData.bytes(rp.piA()),
+                        PlutusData.bytes(rp.piB()), PlutusData.bytes(rp.piC()), vk(rogueRedeem.compressedVk())));
+        assertTrue(evaluate(points, redeemTx(RedeemMutation.NONE, rSpend,
+                new TxOutRef(TxId.of(filled(32, (byte) 0x45)), BigInteger.ONE)).buildPlutusData()) instanceof EvalResult.Failure,
+                "a redeem proof under a rogue key is refused");
+
+        var ip = compress(rogueIssue.prove(NoteProofs.issueInputs(List.of(out1), auditor).toWitnessMap()));
+        var b = provedIssueBuilder(List.of(noteDatum(out1)), ip, rogueIssue.compressedVk()).signer(ISSUER);
+        registry(b, "NONE");
+        assertTrue(evaluate(payroll, b.buildPlutusData()) instanceof EvalResult.Failure, "an issuance proof under a rogue key is refused");
+    }
+
     // ------------------------------------------------------------------ helpers
 
-    private void report(String what, EvalResult spend, EvalResult mint, com.bloxbean.cardano.zeroj.usecases.pedersen.common.KeyedCircuit circuit) {
+    private void report(String what, EvalResult spend, EvalResult mint, KeyedCircuit circuit) {
         long cpu = spend.budgetConsumed().cpuSteps() + (mint == null ? 0 : mint.budgetConsumed().cpuSteps());
         long mem = spend.budgetConsumed().memoryUnits() + (mint == null ? 0 : mint.budgetConsumed().memoryUnits());
         System.out.printf("[NoteLedger %s] constraints=%d publicInputs=%d cpu=%d (%.1f%% of steps) mem=%d (%.1f%% of memory)%n",
                 what, circuit.numConstraints(), circuit.numPublicInputs(), cpu, 100.0 * cpu / STEP_LIMIT,
                 mem, 100.0 * mem / MEMORY_LIMIT);
+        // ZeroJ ADR-0055 Q5: D3a is adopted only within 80% of both per-transaction limits.
+        assertTrue(cpu <= STEP_LIMIT * 8 / 10 && mem <= MEMORY_LIMIT * 8 / 10,
+                what + " exceeds the 80% gate");
     }
 
     static PlutusData inDatum() {

@@ -14,6 +14,8 @@ import org.zeroj.circuit.lib.jubjub.NoteViewingKey;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -75,7 +77,7 @@ class NoteCircuitTest {
         assertEquals(24, tPublic.size());
         var tProof = proofs.proveTransfer(in, o1, o2, auditor);
         assertTrue(proofs.transfer().verify(tProof, tPublic));
-        List<BigInteger> wrong = new java.util.ArrayList<>(tPublic);
+        List<BigInteger> wrong = new ArrayList<>(tPublic);
         wrong.set(10, wrong.get(10).add(BigInteger.ONE));
         assertTrue(!proofs.transfer().verify(tProof, wrong), "an audit coordinate is bound");
 
@@ -105,19 +107,23 @@ class NoteCircuitTest {
 
         noTransferWitness(in, o1, o2, i -> i.o1L0(o1.limbs().get(0).message().add(BigInteger.ONE)),
                 "a limb that is not the encrypted message");
-        // L0 + 2^32 and L1 - 1 recombine to the same amount; encrypt them honestly (test fixture).
-        BigInteger k0 = o1.limbs().get(0).randomness();
-        BigInteger k1 = o1.limbs().get(1).randomness();
-        BigInteger hi0 = o1.limbs().get(0).message().add(TWO_32);
-        BigInteger lo1 = BigInteger.valueOf(700 >> 32).subtract(BigInteger.ONE);
-        noTransferWitness(in, o1, o2, i -> {
-            List<BigInteger> c0 = fixtureLimb(hi0, k0, auditorKeys.elgamal().publicKey().point());
-            List<BigInteger> c1 = fixtureLimb(lo1.mod(org.zeroj.circuit.lib.jubjub.JubjubCurve.SUBGROUP_ORDER), k1,
-                    auditorKeys.elgamal().publicKey().point());
-            i.o1L0(hi0).o1L1(lo1.mod(org.zeroj.circuit.lib.jubjub.JubjubCurve.BASE_FIELD_PRIME))
-                    .o1a0u(c0.get(0)).o1a0v(c0.get(1)).o1b0u(c0.get(2)).o1b0v(c0.get(3))
-                    .o1a1u(c1.get(0)).o1a1v(c1.get(1)).o1b1u(c1.get(2)).o1b1v(c1.get(3));
-        }, "a limb at or above 2^32");
+        // A limb at 2^32: out2 = 2^32 + 300 has limbs (300, 1). (300 + 2^32, 0) recombines to the
+        // same amount and is encrypted honestly (test fixture), so only the 32-bit range refuses it.
+        NoteProofs.Spent bigIn = spent(TWO_32.longValueExact() + 1_000);
+        AuditedNote small = note(BOB, 700, bobView);
+        AuditedNote big = note(ALICE, TWO_32.longValueExact() + 300, aliceView);
+        BigInteger k0 = big.limbs().get(0).randomness();
+        BigInteger k1 = big.limbs().get(1).randomness();
+        BigInteger l0 = big.limbs().get(0).message().add(TWO_32);
+        assertEquals(BigInteger.ONE, big.limbs().get(1).message());
+        JubjubPoint pk = auditorKeys.elgamal().publicKey().point();
+        List<BigInteger> c0 = fixtureLimb(l0, k0, pk);
+        List<BigInteger> c1 = fixtureLimb(BigInteger.ZERO, k1, pk);
+        noTransferWitness(bigIn, small, big, i -> i.o2L0(l0).o2L1(BigInteger.ZERO)
+                .o2a0u(c0.get(0)).o2a0v(c0.get(1)).o2b0u(c0.get(2)).o2b0v(c0.get(3))
+                .o2a1u(c1.get(0)).o2a1v(c1.get(1)).o2b1u(c1.get(2)).o2b1v(c1.get(3)), "a limb at or above 2^32");
+        // Positive control: the same mutation tooling with the honest decomposition proves.
+        proofs.transfer().prove(NoteProofs.transferInputs(bigIn, small, big, auditor).toWitnessMap());
         noTransferWitness(in, o1, o2, i -> i
                 .o1a0u(a1.get(4)).o1a0v(a1.get(5)).o1b0u(a1.get(6)).o1b0v(a1.get(7))
                 .o1a1u(a1.get(0)).o1a1v(a1.get(1)).o1b1u(a1.get(2)).o1b1v(a1.get(3)), "limb ciphertexts swapped");
@@ -168,7 +174,7 @@ class NoteCircuitTest {
 
     static byte[] filled(int length, byte value) {
         byte[] out = new byte[length];
-        java.util.Arrays.fill(out, value);
+        Arrays.fill(out, value);
         return out;
     }
 }

@@ -96,6 +96,21 @@
   <Outcome {result} />
 
   {#if state}
+    {#if state.auditor.payslips}
+      <div class="panel auditor">
+        <h3>Tax authority — every salary ever paid (from the chain's mint history)</h3>
+        <p class="hint">Each pay run's notes, including ones already transferred or cashed out, read from the limb ciphertexts.
+          Every one is proof-enforced: the employer could not have under-reported it.</p>
+        <table>
+          <thead><tr><th>payslip UTxO</th><th>employee</th><th>salary</th><th>origin</th><th>check</th></tr></thead>
+          <tbody>
+            {#each state.auditor.payslips as p}<tr><td><code>{p.utxo}</code></td><td>{p.owner}</td><td><strong>{p.amount}</strong></td><td>{p.origin}</td><td>{p.status}</td></tr>{/each}
+          </tbody>
+        </table>
+        <p class="hint">Salary totals:
+          {#each Object.entries(state.auditor.paidTotals) as [who, total], i}{i > 0 ? ' · ' : ''}{who} {total}{/each}</p>
+      </div>
+    {/if}
     <NoteLedgerView {state} unit="credits" />
   {/if}
 </section>

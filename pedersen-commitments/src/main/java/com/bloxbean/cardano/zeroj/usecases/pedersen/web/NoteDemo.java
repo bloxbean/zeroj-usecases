@@ -129,10 +129,11 @@ final class NoteDemo {
             result = ledger.issue(backend, wallets.get(issuerLabel), List.of(note));
         }
         String tx = DemoErrors.require(result, "Issue");
+        DevKit.Budget budget = DevKit.lastBudget();
         DevKit.waitForTx(backend, tx);
         String summary = issuerLabel + " issued " + amount + " to " + to
                 + (reported == null ? "" : " but told the " + auditorLabel + " " + reported);
-        return record("issue", summary, tx, DevKit.lastBudget());
+        return record("issue", summary, tx, budget);
     }
 
     /** {@code from} sends {@code amount} to {@code to}, splitting its largest note. */
@@ -141,33 +142,41 @@ final class NoteDemo {
         requireHolder(to);
         requireAmount(amount);
         NoteWallet.Owned source = largest(from);
-        AdmittedAuditor auditor = cheat == Cheat.RETIRED_KEY ? requireRetired() : registry.admitted(backend);
+        AdmittedAuditor current = registry.admitted(backend);
+        AdmittedAuditor auditor = cheat == Cheat.RETIRED_KEY ? requireRetired() : current;
         long have = source.opening().value().longValueExact();
         AuditedNote out1 = AuditedNote.create(pkh(wallets.get(to)), amount, views.get(to).readerKey(), auditor, RANDOM);
         AuditedNote out2 = AuditedNote.create(pkh(wallets.get(from)), Math.max(0, have - amount),
                 views.get(from).readerKey(), auditor, RANDOM);
+        if (cheat == Cheat.RETIRED_KEY) {
+            // The current generation number with the retired key: only the key binding can refuse it.
+            out1 = out1.atGeneration(current.generation());
+            out2 = out2.atGeneration(current.generation());
+        }
         if (cheat == Cheat.GARBAGE_DELIVERY) {
             byte[] garbage = new byte[89];
             RANDOM.nextBytes(garbage);
             out1 = out1.withDeliveries(List.of(garbage, out1.deliveries().get(1)));
         }
         AuditedNote o1 = out1;
-        var proof = DemoErrors.prove(() -> ledger.proofs().proveTransfer(source.spent(), o1, out2, auditor),
+        AuditedNote o2 = out2;
+        var proof = DemoErrors.prove(() -> ledger.proofs().proveTransfer(source.spent(), o1, o2, auditor),
                 from + "'s note holds " + have + "; no proof exists that it splits into " + amount + " + " + out2.amount());
         Result<String> result = cheat == Cheat.STAKE_VARIANT_OUTPUT
-                ? ledger.transferWithStakeVariantCopy(backend, wallets.get(from), source.note().utxo(), out1, out2, proof)
+                ? ledger.transferWithStakeVariantNote(backend, wallets.get(from), source.note().utxo(), out1, out2, proof)
                 : ledger.transfer(backend, wallets.get(from), source.note().utxo(), out1, out2, proof);
         String what = switch (cheat) {
             case RETIRED_KEY -> "Transfer with limbs to the " + auditorLabel + "'s retired key";
-            case STAKE_VARIANT_OUTPUT -> "Transfer with an extra note at the ledger's script under another stake key";
+            case STAKE_VARIANT_OUTPUT -> "Transfer with the change note at the ledger's script under another stake key";
             default -> "Transfer";
         };
         String tx = DemoErrors.require(result, what);
+        DevKit.Budget budget = DevKit.lastBudget();
         DevKit.waitForTx(backend, tx);
         String summary = from + " sent " + amount + " to " + to
                 + (cheat == Cheat.GARBAGE_DELIVERY ? " with a garbage delivery (the amount is still enforced for the "
                 + auditorLabel + ")" : " (amounts hidden on-chain)");
-        return record("transfer", summary, tx, DevKit.lastBudget());
+        return record("transfer", summary, tx, budget);
     }
 
     /** {@code from} pays a public {@code price} at the issuer and keeps the hidden change. */
@@ -184,9 +193,10 @@ final class NoteDemo {
                 from + "'s note holds " + have + "; no proof exists that it pays " + price + " and keeps " + change.amount());
         String tx = DemoErrors.require(ledger.redeem(backend, wallets.get(from), wallets.get(issuerLabel).baseAddress(),
                 source.note().utxo(), change, price, proof), "Redeem");
+        DevKit.Budget budget = DevKit.lastBudget();
         DevKit.waitForTx(backend, tx);
         return record("redeem", from + " redeemed " + price + " at the " + issuerLabel + " (price public, balance hidden)",
-                tx, DevKit.lastBudget());
+                tx, budget);
     }
 
     /** {@code thief} spends one of {@code victim}'s notes: the validator requires the owner's signature. */
@@ -207,14 +217,17 @@ final class NoteDemo {
 
     /** The auditor rotates to a new generation of keys; the old keys are kept to read old notes. */
     Map<String, Object> rotate() throws Exception {
-        retired = registry.admitted(backend);
-        long next = retired.generation() + 1;
+        AdmittedAuditor before = registry.admitted(backend);
+        long next = before.generation() + 1;
         AuditorKeys keys = AuditorKeys.generate(RANDOM);
+        // Keep the new secrets before submitting: once the entry is on chain they are the only way to read new notes.
+        auditorKeys.put(next, keys);
         String tx = DemoErrors.require(registry.rotate(backend, auditorAccount, auditorAccount,
                 keys.entry(registry.policy(), pkh(auditorAccount), next, possession)), "Rotating the " + auditorLabel + "'s keys");
+        DevKit.Budget budget = DevKit.lastBudget();
         DevKit.waitForTx(backend, tx);
-        auditorKeys.put(next, keys);
-        return record("rotate", auditorLabel + " rotated to key generation " + next, tx, DevKit.lastBudget());
+        retired = before;
+        return record("rotate", auditorLabel + " rotated to key generation " + next, tx, budget);
     }
 
     enum Cheat { NONE, GARBAGE_DELIVERY, RETIRED_KEY, STAKE_VARIANT_OUTPUT }
@@ -228,28 +241,24 @@ final class NoteDemo {
             NoteWallet.Scan scan = NoteWallet.scan(notes, pkh(wallets.get(h)), views.get(h));
             List<Map<String, Object>> owned = new ArrayList<>();
             for (NoteWallet.Owned o : scan.owned()) {
-                owned.add(Map.of("amount", o.opening().value().longValueExact(), "utxo", shortRef(o.note()),
+                owned.add(Map.of("amount", o.opening().value().toString(), "utxo", shortRef(o.note()),
                         "commitment", shortHex(o.note().u()), "generation", o.note().generation()));
             }
             List<String> unopenable = scan.unopenable().stream().map(NoteDemo::shortRef).toList();
-            wallet.put(h, Map.of("address", wallets.get(h).baseAddress(), "balance", scan.balance(),
+            wallet.put(h, Map.of("address", wallets.get(h).baseAddress(), "balance", scan.balance().toString(),
                     "notes", owned, "unopenable", unopenable, "readableNotMine", scan.readableNotMine().size()));
         }
 
         List<Map<String, Object>> onChain = new ArrayList<>();
         List<Map<String, Object>> audited = new ArrayList<>();
-        Map<String, Long> totals = new LinkedHashMap<>();
+        Map<String, BigInteger> totals = new LinkedHashMap<>();
         for (ChainNote n : notes) {
             onChain.add(Map.of("utxo", shortRef(n), "owner", labelOf(n.owner()), "u", shortHex(n.u()),
                     "v", shortHex(n.v()), "generation", n.generation(),
                     "limbHandle", shortHex(n.audit().getFirst()), "deliveries", n.deliveries().size()));
             AuditorView.Audited a = auditorView.audit(n);
-            String status = a.consistent() ? "matches its delivery"
-                    : a.delivered().isEmpty() ? "its delivery does not open" : "its delivery says " + a.delivered().get().value();
-            audited.add(Map.of("utxo", shortRef(n), "owner", labelOf(n.owner()), "amount", a.amount(),
-                    "origin", a.origin() == AuditorView.Origin.PROOF_ENFORCED ? "proof-enforced" : "issuer-claimed",
-                    "consistent", a.consistent(), "status", status, "generation", n.generation()));
-            totals.merge(labelOf(n.owner()), a.amount(), Long::sum);
+            audited.add(audited(a));
+            a.amount().ifPresent(v -> totals.merge(labelOf(n.owner()), v, BigInteger::add));
         }
         var entry = registry.current(backend);
         Map<String, Object> body = new LinkedHashMap<>();
@@ -261,13 +270,45 @@ final class NoteDemo {
                 "auditor", auditorLabel));
         body.put("wallets", wallet);
         body.put("onChain", onChain);
-        body.put("auditor", Map.of("notes", audited, "totals", totals, "label", auditorLabel));
+        Map<String, Object> auditorPanel = new LinkedHashMap<>();
+        auditorPanel.put("notes", audited);
+        auditorPanel.put("totals", totals);
+        auditorPanel.put("label", auditorLabel);
+        if (provedIssuance) {
+            // Every payslip ever issued, spent or not: salary history survives transfers and cash-outs.
+            List<Map<String, Object>> payslips = new ArrayList<>();
+            Map<String, BigInteger> paid = new LinkedHashMap<>();
+            for (ChainNote n : auditorView.issuedNotes(ledger)) {
+                AuditorView.Audited a = auditorView.audit(n);
+                payslips.add(audited(a));
+                a.amount().ifPresent(v -> paid.merge(labelOf(n.owner()), v, BigInteger::add));
+            }
+            auditorPanel.put("payslips", payslips);
+            auditorPanel.put("paidTotals", paid);
+        }
+        body.put("auditor", auditorPanel);
         body.put("receipts", receipts());
         body.put("history", List.copyOf(history));
         body.put("constraints", constraints());
         body.put("issuance", provedIssuance ? "proved" : "trusted");
         body.put("canUseRetiredKey", retired != null);
         return body;
+    }
+
+    private Map<String, Object> audited(AuditorView.Audited a) {
+        ChainNote n = a.note();
+        String status = a.problem() != null ? a.problem()
+                : a.consistent() ? "matches its delivery"
+                : a.delivered().isEmpty() ? "its delivery does not open" : "its delivery says " + a.delivered().get().value();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("utxo", shortRef(n));
+        m.put("owner", labelOf(n.owner()));
+        m.put("amount", a.amount().map(BigInteger::toString).orElse("unreadable"));
+        m.put("origin", a.origin() == AuditorView.Origin.PROOF_ENFORCED ? "proof-enforced" : "issuer-claimed");
+        m.put("consistent", a.consistent());
+        m.put("status", status);
+        m.put("generation", n.generation());
+        return m;
     }
 
     private Map<String, Object> constraints() {
@@ -305,7 +346,7 @@ final class NoteDemo {
     private NoteWallet.Owned largest(String label) throws Exception {
         List<ChainNote> notes = ChainNote.all(backend, ledger);
         return NoteWallet.scan(notes, pkh(wallets.get(label)), views.get(label)).owned().stream()
-                .max(Comparator.comparingLong(o -> o.opening().value().longValueExact()))
+                .max(Comparator.comparing(o -> o.opening().value()))
                 .orElseThrow(() -> new IllegalStateException(label + " holds no notes yet; issue some first"));
     }
 

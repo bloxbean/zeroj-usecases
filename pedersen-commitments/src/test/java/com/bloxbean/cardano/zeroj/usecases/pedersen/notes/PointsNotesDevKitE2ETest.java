@@ -10,8 +10,10 @@ import com.bloxbean.cardano.zeroj.usecases.pedersen.common.E2E;
 import org.junit.jupiter.api.Test;
 import org.zeroj.circuit.lib.jubjub.NoteViewingKey;
 
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -65,15 +67,15 @@ class PointsNotesDevKitE2ETest {
                 NoteProofs.spendOnly(), registry);
         assertTrue(ledger.deploy(backend, retailer).isSuccessful(), "deploy the ledger's reference script");
         AdmittedAuditor auditor = registry.admitted(backend);
-        AuditorView auditorView = new AuditorView(new java.util.HashMap<>(Map.of(0L, gen0)), ledger);
+        AuditorView auditorView = new AuditorView(new HashMap<>(Map.of(0L, gen0)), ledger);
 
         // 2. Issue 1,000 to Alice; she recovers it from the chain.
         AuditedNote issued = AuditedNote.create(pkh(alice), 1_000, aliceView.readerKey(), auditor, RANDOM);
         ok(ledger.issue(backend, retailer, List.of(issued)), "issue", backend);
         var aliceScan = NoteWallet.scan(ChainNote.all(backend, ledger), pkh(alice), aliceView);
-        assertEquals(1_000, aliceScan.balance(), "Alice recovers her issued note from the chain");
+        assertEquals(BigInteger.valueOf(1_000), aliceScan.balance(), "Alice recovers her issued note from the chain");
         var auditIssued = auditorView.audit(aliceScan.owned().getFirst().note());
-        assertEquals(1_000, auditIssued.amount());
+        assertEquals(BigInteger.valueOf(1_000), auditIssued.amount().orElseThrow());
         assertEquals(AuditorView.Origin.ISSUER_CLAIMED, auditIssued.origin());
         assertTrue(auditIssued.consistent());
 
@@ -90,12 +92,12 @@ class PointsNotesDevKitE2ETest {
                 "a spend not signed by the owner");
         ok(ledger.transfer(backend, alice, source.note().utxo(), toBob, aliceChange, proof), "transfer", backend);
         var bobScan = NoteWallet.scan(ChainNote.all(backend, ledger), pkh(bob), bobView);
-        assertEquals(700, bobScan.balance(), "Bob recovers 700 from the chain");
+        assertEquals(BigInteger.valueOf(700), bobScan.balance(), "Bob recovers 700 from the chain");
         aliceScan = NoteWallet.scan(ChainNote.all(backend, ledger), pkh(alice), aliceView);
-        assertEquals(300, aliceScan.balance());
+        assertEquals(BigInteger.valueOf(300), aliceScan.balance());
         for (var owned : List.of(bobScan.owned().getFirst(), aliceScan.owned().getFirst())) {
             var audited = auditorView.audit(owned.note());
-            assertEquals(owned.opening().value().longValueExact(), audited.amount(), "the auditor reads the amount");
+            assertEquals(owned.opening().value(), audited.amount().orElseThrow(), "the auditor reads the amount (sender, owner and auditor agree)");
             assertEquals(AuditorView.Origin.PROOF_ENFORCED, audited.origin());
             assertTrue(audited.consistent());
         }
@@ -110,10 +112,10 @@ class PointsNotesDevKitE2ETest {
         ok(ledger.transfer(backend, alice, aliceNote.note().utxo(), garbled, aliceRest,
                 ledger.proofs().proveTransfer(aliceNote.spent(), garbled, aliceRest, auditor)), "transfer with a garbage delivery", backend);
         bobScan = NoteWallet.scan(ChainNote.all(backend, ledger), pkh(bob), bobView);
-        assertEquals(700, bobScan.balance(), "the garbled note is not spendable");
+        assertEquals(BigInteger.valueOf(700), bobScan.balance(), "the garbled note is not spendable");
         assertEquals(1, bobScan.unopenable().size(), "Bob's wallet reports the owned note it cannot open");
         var garbledAudit = auditorView.audit(bobScan.unopenable().getFirst());
-        assertEquals(100, garbledAudit.amount(), "the auditor reads the amount anyway (D3a)");
+        assertEquals(BigInteger.valueOf(100), garbledAudit.amount().orElseThrow(), "the auditor reads the amount anyway (D3a)");
 
         // 5. Bob redeems 120 of his 700.
         var bobNote = bobScan.owned().getFirst();
@@ -121,7 +123,7 @@ class PointsNotesDevKitE2ETest {
         ok(ledger.redeem(backend, bob, retailer.baseAddress(), bobNote.note().utxo(), bobChange, 120,
                 ledger.proofs().proveRedeem(bobNote.spent(), bobChange, 120, auditor)), "redeem", backend);
         bobScan = NoteWallet.scan(ChainNote.all(backend, ledger), pkh(bob), bobView);
-        assertEquals(580, bobScan.balance());
+        assertEquals(BigInteger.valueOf(580), bobScan.balance());
 
         // 6. Rotation: the auditor moves to generation 1.
         AuditorKeys gen1 = AuditorKeys.generate(RANDOM);
@@ -131,8 +133,9 @@ class PointsNotesDevKitE2ETest {
         assertEquals(1, rotated.generation());
         aliceScan = NoteWallet.scan(ChainNote.all(backend, ledger), pkh(alice), aliceView);
         var aliceNote2 = aliceScan.owned().getFirst();
-        AuditedNote stale1 = AuditedNote.create(pkh(bob), 50, bobView.readerKey(), auditor, RANDOM);
-        AuditedNote stale2 = AuditedNote.create(pkh(alice), 150, aliceView.readerKey(), auditor, RANDOM);
+        // Limbs to the retired key, but with the current generation number: only the key binding refuses them.
+        AuditedNote stale1 = AuditedNote.create(pkh(bob), 50, bobView.readerKey(), auditor, RANDOM).atGeneration(1);
+        AuditedNote stale2 = AuditedNote.create(pkh(alice), 150, aliceView.readerKey(), auditor, RANDOM).atGeneration(1);
         E2E.assertScriptRejected(ledger.transfer(backend, alice, aliceNote2.note().utxo(), stale1, stale2,
                 ledger.proofs().proveTransfer(aliceNote2.spent(), stale1, stale2, auditor)), "limbs to the retired key");
         AuditedNote fresh1 = AuditedNote.create(pkh(bob), 50, bobView.readerKey(), rotated, RANDOM);
@@ -140,10 +143,10 @@ class PointsNotesDevKitE2ETest {
         ok(ledger.transfer(backend, alice, aliceNote2.note().utxo(), fresh1, fresh2,
                 ledger.proofs().proveTransfer(aliceNote2.spent(), fresh1, fresh2, rotated)), "transfer after rotation", backend);
         auditorView = new AuditorView(Map.of(0L, gen0, 1L, gen1), ledger);
-        long audited = 0;
-        for (ChainNote n : ChainNote.all(backend, ledger)) audited += auditorView.audit(n).amount();
+        BigInteger audited = BigInteger.ZERO;
+        for (ChainNote n : ChainNote.all(backend, ledger)) audited = audited.add(auditorView.audit(n).amount().orElseThrow());
         // Live notes: Bob's change 580, the garbled 100, Bob's 50 (generation 1), Alice's 150 (generation 1).
-        assertEquals(880, audited, "the auditor reads every live note, across both generations");
+        assertEquals(BigInteger.valueOf(880), audited, "the auditor reads every live note, across both generations");
         System.out.println("[DevKit points] auditor total across generations: " + audited);
     }
 
@@ -152,6 +155,10 @@ class PointsNotesDevKitE2ETest {
         var budget = DevKit.lastBudget();
         System.out.printf("[DevKit %s] tx %s steps=%d (%.1f%%) mem=%d (%.1f%%)%n", what, result.getValue(),
                 budget.steps(), budget.stepsPercent(), budget.memory(), budget.memoryPercent());
+        if (!what.startsWith("registry")) {
+            // ZeroJ ADR-0055 note 8: the application's complete transaction, measured on DevKit, within 80%.
+            assertTrue(budget.stepsPercent() <= 80 && budget.memoryPercent() <= 80, what + " exceeds the 80% gate");
+        }
         DevKit.waitForTx(backend, result.getValue());
     }
 

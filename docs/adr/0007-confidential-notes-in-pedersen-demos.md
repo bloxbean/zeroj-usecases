@@ -187,8 +187,8 @@ and that every integer is canonical. It cannot check that a delivery decrypts (A
 
 ### N3 — Enforced auditor amount on transfer and redeem (ADR-0055 D3a)
 
-Both circuits get a new version (`NoteTransferProof` and `NoteRedeemProof`, version 2). Each
-created note `o` gets:
+Both circuits are replaced by new ones (`NoteTransferProof` and `NoteRedeemProof`, under new
+circuit names and so new keys). Each created note `o` gets:
 - two secret 32-bit limbs with `L_{o,0} + 2^32·L_{o,1} = amount_o`, where `amount_o` is the
   witness that opens `C_o`;
 - for each limb, `ZkElGamal.encrypt(limb, k, key)` under
@@ -399,6 +399,15 @@ their own inputs"):
     coordinates; both encodings are bound and both proofs verified on-chain (R1); key-type
     binding tested in isolation (R2, C2); `AdmittedAuditor` has no public constructor (C1);
     host builders check their preconditions (R5).
+  - M3–M5 implementation review (Claude R1–R12, Codex C1–C6; no P0): a same-shape rogue
+    verification key is tested against the hash pin (R1); the 80% gate is asserted in the VM and on
+    DevKit, with realistic transaction contexts (R2, C5); malformed issuer data is reported per note
+    (R3, C2); a note's origin counts only a consumed note of this ledger, and failed lookups are not
+    cached (R4); payroll history comes from the mint history (C4); amounts are `BigInteger` (R9, C1);
+    the solvency audit needs a live attestation (C3); missing tests added (mint without a spent note,
+    source scan, readable-not-mine, payroll DevKit E2E); the stake-variant and retired-key cheats now
+    exercise the address and key rules themselves (R6, R8); rotation keeps keys before submitting (R7);
+    budgets are per thread (R10).
   - Verification keys are pinned by hash: a script embedding four verification keys measured
     18.1–18.9 KB, beyond the 16 KB transaction limit even for deploying a reference script.
     `NoteLedger` takes `blake2b_256(serialiseData(vk))` per key, and each proof's redeemer
@@ -498,17 +507,22 @@ Julc VM, Plutus V3 cost model (protocol version 11), against `maxTxExecutionUnit
 16.5e6 memory). Each figure is the **complete** transaction: every script purpose it runs, added up.
 Verification keys are pinned by hash and carried in the redeemer (r2).
 
-| Transaction | Circuit constraints | Public inputs | Steps | Memory |
-|---|---|---|---|---|
-| Transfer (spend + Split mint), direct layout | 34,184 | 24 | 7.65e9 (76.5%) | 2.59e6 (15.7%) |
-| Redeem (spend + Receipt mint), direct layout | 18,366 | 15 | 5.80e9 (58.0%) | 2.02e6 (12.2%) |
-| Proved issue, one note (mint) | 15,890 | 12 | 5.08e9 (50.8%) | 1.49e6 (9.0%) |
-| Proved issue, two notes (mint) | 31,773 | 22 | 7.18e9 (71.8%) | 2.26e6 (13.7%) |
-| Trusted issue, two notes (mint) | — | — | 0.37e9 (3.7%) | 1.29e6 (7.8%) |
-| Registry Init / Rotate (two possession proofs) | 2 × 7 inputs | — | 7.77e9 / 7.82e9 | 1.41e6 / 1.55e6 |
+| Transaction | Circuit constraints | Public inputs | Julc VM steps | VM memory | DevKit steps | DevKit memory |
+|---|---|---|---|---|---|---|
+| Transfer (spend + Split mint), direct layout | 34,184 | 24 | 76.8% | 16.2% | 76.8% | 16.2% |
+| Redeem (spend + Receipt mint), direct layout | 18,366 | 15 | 58.3% | 12.7% | 58.3% | 12.7% |
+| Proved issue, one note (mint) | 15,890 | 12 | 50.8% | 9.0% | — | — |
+| Proved issue, two notes (mint) | 31,773 | 22 | 71.8% | 13.7% | see the payroll E2E | |
+| Trusted issue (mint) | — | — | 3.7% (two notes) | 7.8% | 2.6% (one note) | 5.3% |
+| Registry Init / Rotate (two possession proofs, 7 public inputs each) | 6,548 per proof | 7 | 77.7% / 78.2% | 8.6% / 9.4% | 77.8% / 78.3% | 8.6% / 9.5% |
+
+The VM contexts include the ledger's reference-script input, a fee-payer input and a change
+output; the DevKit figures are the Julc evaluator's unpadded units for the real submitted
+transaction. Both are asserted at ≤ 80% (registry transactions are outside ADR-0055's note gate).
+The evaluator pads by up to 25% but never beyond `maxTxExecutionUnits`.
 
 **Gate outcome:** every note transaction is within ADR-0055's 80% gate with the **direct layout**
-(spec §8.2), so the hash-compressed layout is not used. The transfer leaves 3.5 points of margin.
+(spec §8.2), so the hash-compressed layout is not used. The transfer leaves 3.2 points of margin.
 The transfer and redeem circuits are exactly the size of ZeroJ's reference D3a circuits (34,184
 and 18,366 constraints), an independent cross-check of the composition. The on-DevKit figures
 (from the Julc evaluator on the real transactions) are recorded at M3a's end-to-end run.

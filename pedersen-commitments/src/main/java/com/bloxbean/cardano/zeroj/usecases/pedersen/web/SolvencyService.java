@@ -197,9 +197,11 @@ public class SolvencyService {
     public synchronized Map<String, Object> audit() throws Exception {
         ensureReady();
         if (vault == null) throw new IllegalStateException("attest first");
+        var live = SolvencyAttestation.liveAttestations(backend, vault);
+        if (live.isEmpty()) throw new IllegalStateException("no live attestation to audit (released, or not yet indexed)");
         BigInteger total = BigInteger.ZERO;
         boolean ok = true;
-        for (var attestation : SolvencyAttestation.liveAttestations(backend, vault)) {
+        for (var attestation : live) {
             var opened = SolvencyAttestation.auditorCheck(attestation, auditorKeys.viewing());
             ok = ok && opened.isPresent();
             total = total.add(opened.orElse(BigInteger.ZERO));
