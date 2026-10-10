@@ -4,6 +4,7 @@
   import Credit from './tabs/Credit.svelte';
   import Solvency from './tabs/Solvency.svelte';
   import Payroll from './tabs/Payroll.svelte';
+  import Auction from './tabs/Auction.svelte';
 
   let tab = $state('points');
   let status = $state<any>(null);
@@ -45,6 +46,7 @@
   <nav>
     <button class:active={tab === 'points'} onclick={() => (tab = 'points')}>A. Confidential points</button>
     <button class:active={tab === 'payroll'} onclick={() => (tab = 'payroll')}>Confidential payroll</button>
+    <button class:active={tab === 'auction'} onclick={() => (tab = 'auction')}>Sealed-bid auction</button>
     <button class:active={tab === 'credit'} onclick={() => (tab = 'credit')}>B. Committed credential</button>
     <button class:active={tab === 'solvency'} onclick={() => (tab = 'solvency')}>C. Hidden-liability solvency</button>
   </nav>
@@ -52,6 +54,7 @@
   {#if status?.demos?.[tab] === 'ready'}
     {#if tab === 'points'}<Points />{/if}
     {#if tab === 'payroll'}<Payroll />{/if}
+    {#if tab === 'auction'}<Auction />{/if}
     {#if tab === 'credit'}<Credit />{/if}
     {#if tab === 'solvency'}<Solvency />{/if}
   {:else if status}

@@ -25,14 +25,18 @@ public class DemoController {
 
     private final PointsService points;
     private final PayrollService payroll;
+    private final AuctionService auction;
     private final CreditService credit;
     private final SolvencyService solvency;
     private final Map<String, String> readiness = new ConcurrentHashMap<>(
-            Map.of("points", "starting", "payroll", "starting", "credit", "starting", "solvency", "starting"));
+            Map.of("points", "starting", "payroll", "starting", "auction", "starting", "credit", "starting",
+                    "solvency", "starting"));
 
-    public DemoController(PointsService points, PayrollService payroll, CreditService credit, SolvencyService solvency) {
+    public DemoController(PointsService points, PayrollService payroll, AuctionService auction, CreditService credit,
+                          SolvencyService solvency) {
         this.points = points;
         this.payroll = payroll;
+        this.auction = auction;
         this.credit = credit;
         this.solvency = solvency;
     }
@@ -42,6 +46,7 @@ public class DemoController {
     public void warmUp() {
         warm("points", () -> points.ensureReady());
         warm("payroll", () -> payroll.ensureReady());
+        warm("auction", () -> auction.ensureReady());
         warm("credit", () -> credit.ensureReady());
         warm("solvency", () -> solvency.ensureReady());
     }
@@ -130,6 +135,41 @@ public class DemoController {
     @PostMapping("/payroll/rotate")
     public Map<String, Object> rotatePayroll() throws Exception {
         return payroll.rotate();
+    }
+
+    // --- Sealed-bid auction ------------------------------------------------------------------
+
+    @GetMapping("/auction")
+    public Map<String, Object> auctionState() throws Exception {
+        return auction.state();
+    }
+
+    @PostMapping("/auction/open")
+    public Map<String, Object> openLot(@RequestBody Map<String, Object> r) throws Exception {
+        return auction.open((String) r.get("item"), num(r, "deposit"), num(r, "reserve"));
+    }
+
+    /** A sealed bid; an optional {@code copyFrom} bidder is the copy cheat. */
+    @PostMapping("/auction/bid")
+    public Map<String, Object> bid(@RequestBody Map<String, Object> r) throws Exception {
+        return auction.bid(str(r, "bidder"), num(r, "amount"), (String) r.get("copyFrom"));
+    }
+
+    /** Settles; an optional {@code claimWinner} (1-based) is the auctioneer naming another winner. */
+    @PostMapping("/auction/settle")
+    public Map<String, Object> settle(@RequestBody Map<String, Object> r) throws Exception {
+        Long claim = optionalNum(r, "claimWinner");
+        return auction.settle(claim == null ? null : claim.intValue());
+    }
+
+    @PostMapping("/auction/refund")
+    public Map<String, Object> refund() throws Exception {
+        return auction.refund();
+    }
+
+    @PostMapping("/auction/no-bids")
+    public Map<String, Object> noBids() throws Exception {
+        return auction.noBids();
     }
 
     // --- B. Committed credential ------------------------------------------------------------

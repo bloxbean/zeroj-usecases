@@ -307,14 +307,19 @@ run_flow() {
       post_json "/api/kyc/claim" "{\"recipientAddress\":\"${recipient}\"}"
       ;;
     pedersen-commitments)
-      # /api/status answers while the demos warm up; wait until all three are ready.
-      for _ in $(seq 1 120); do
+      # /api/status answers while the demos warm up; wait until every demo is ready.
+      for _ in $(seq 1 200); do
         curl -fsS "${BASE_URL}/api/status" | grep -q '"ready":true' && break
         sleep 3
       done
       post_json "/api/points/issue" '{"to":"alice","amount":1000}'
       post_json "/api/points/transfer" '{"from":"alice","to":"bob","amount":700}'
       post_json "/api/points/redeem" '{"from":"bob","price":120}'
+      post_json "/api/payroll/pay" '{"to":"carol","amount":5000}'
+      post_json "/api/payroll/transfer" '{"from":"carol","to":"dave","amount":800}'
+      post_json "/api/auction/open" '{"item":"Painting","deposit":100,"reserve":10}'
+      post_json "/api/auction/bid" '{"bidder":"alice","amount":40}'
+      post_json "/api/auction/bid" '{"bidder":"bob","amount":70}'
       post_json "/api/credit/issue" '{"income":85000,"creditScore":720,"birthYear":1990,"country":356}'
       post_json "/api/credit/claim" '{"who":"alice","minIncome":50000,"minScore":650}'
       post_json "/api/solvency/attest" '{"reservesAda":2000}'

@@ -76,24 +76,28 @@ Wallets and the auctioneer consider only authentic lots. Every spending action r
 spent input to be authentic, and every action burns or carries forward that same `T`.
 
 **Payout outputs.** Every payout goes to the recipient's **exact enterprise address**,
-`(PubKeyCredential(pkh), no stake)`. It carries the inline datum `Payout(T)`. `T` is unique to
-one lot (below), so one output can never satisfy two lots' payouts, even across differently
-parameterized auction scripts in one transaction. Within one lot the recipients are distinct
+`(PubKeyCredential(pkh), no stake)`. It carries the inline datum `Payout(policy, T)`: the lot token's full asset identity. The
+same seed spent in one transaction could give two differently parameterized auction scripts the
+same token name `T` (implementation review, Codex C1), so the policy is part of the tag; one
+output can never satisfy two lots' payouts. Within one lot the recipients are distinct
 (seller, auctioneer and bidders, below).
 
 **Time.** A rule "ends at or before t" requires a **finite** upper bound `≤ t`, and "starts at or
-after t" a **finite** lower bound `≥ t`. An infinite bound fails.
+after t" a **finite** lower bound `≥ t`. An infinite bound fails. This relies on Plutus V3's
+convention that a transaction's validity interval has an inclusive lower and an exclusive upper
+bound, so an upper bound of exactly `biddingEnds` is still in time (tested at the boundary).
 
 | Action | Purpose | Conditions |
 |---|---|---|
-| **Open** | mint | <ul><li>No input under the script's payment credential.</li><li>The mint entry under the policy is exactly `{T: 1}`, where `T = blake2b_256(refBytes(i))` for some input `i` the transaction spends. So `T` is one-shot and globally unique.</li><li>Exactly one output under the script's credential. It is an authentic lot holding `T`, with exactly `lotAda` lovelace and `bids = []`.</li><li>`seller` signs. `seller`, `auctioneer` and `itemPolicy` are 28 bytes; `itemPolicy` is not the script's policy; `itemName` is at most 32 bytes.</li><li>The parameter ranges above hold.</li><li>The transaction ends at or before `biddingEnds`.</li><li>Exactly one registry reference input (ADR-0007 N3's rule). Its entry's `auditor`, `pkU`, `pkV` and `generation` equal the datum's `auctioneer`, `pkU`, `pkV` and `generation`.</li></ul> |
+| **Open** | mint | <ul><li>No input under the script's payment credential.</li><li>The mint entry under the policy is exactly `{T: 1}`, where `T = blake2b_256(refBytes(i))` for some input `i` the transaction spends. So `T` is one-shot and unique under this policy
+(another auction policy could mint the same name, which is why payouts carry the policy too).</li><li>Exactly one output under the script's credential. It is an authentic lot holding `T`, with exactly `lotAda` lovelace and `bids = []`.</li><li>`seller` signs. `seller`, `auctioneer` and `itemPolicy` are 28 bytes; `itemPolicy` is not the script's policy; `itemName` is at most 32 bytes.</li><li>The parameter ranges above hold.</li><li>The transaction ends at or before `biddingEnds`.</li><li>Exactly one registry reference input (ADR-0007 N3's rule). Its entry's `auditor`, `pkU`, `pkV` and `generation` equal the datum's `auctioneer`, `pkU`, `pkV` and `generation`.</li></ul> |
 | **Bid** | spend | <ul><li>The spent input is an authentic lot, and the only input under the script's credential.</li><li>No mint under the policy.</li><li>The transaction ends at or before `biddingEnds`.</li><li>The appended bid's `bidder` signs. It is 28 bytes and differs from `seller`, `auctioneer` and every earlier bidder.</li><li>Fewer than 3 bids before this one.</li><li>Exactly one output under the script's credential: an authentic lot with the same `T`, the same item, and lovelace exactly `deposit · 10^6` more.</li><li>Its datum equals the old datum with exactly this `Bid` appended. It is rebuilt and compared.</li><li>Coordinates are canonical, `A.u ≠ 0`, and `A` differs from every earlier bid's `A`.</li><li>`BidProof` verifies over `[OS2IP(bidder), deposit, reserve, pkU, pkV, A.u, A.v, B.u, B.v]` (D3).</li></ul> |
-| **Settle** | spend + burn | <ul><li>The spent input is an authentic lot, and the only script input.</li><li>The mint entry is exactly `{T: −1}`, and there is no output under the script's credential.</li><li>The transaction starts at or after `biddingEnds` and ends at or before `settleBy`.</li><li>`n = len(bids) ≥ 1`, with `w` and `p` from the redeemer, `1 ≤ w ≤ n` and `reserve ≤ p ≤ deposit`.</li><li>`SettleProof(n)` verifies over `[w, p, pkU, pkV, A_1, B_1, …, A_n, B_n]` from the datum (D4).</li><li>Payouts, each tagged `Payout(T)`: to `bids[w].bidder` the item and at least `lotAda + (deposit − p) · 10^6` lovelace; to `seller` at least `p · 10^6`; to every other bidder at least `deposit · 10^6`.</li></ul> |
+| **Settle** | spend + burn | <ul><li>The spent input is an authentic lot, and the only script input.</li><li>The mint entry is exactly `{T: −1}`, and there is no output under the script's credential.</li><li>The transaction starts at or after `biddingEnds` and ends at or before `settleBy`.</li><li>`n = len(bids) ≥ 1`, with `w` and `p` from the redeemer, `1 ≤ w ≤ n` and `reserve ≤ p ≤ deposit`.</li><li>`SettleProof(n)` verifies over `[w, p, pkU, pkV, A_1, B_1, …, A_n, B_n]` from the datum (D4).</li><li>Payouts, each tagged `Payout(policy, T)`: to `bids[w].bidder` the item and at least `lotAda + (deposit − p) · 10^6` lovelace; to `seller` at least `p · 10^6`; to every other bidder at least `deposit · 10^6`.</li></ul> |
 | **NoBids** | spend + burn | <ul><li>The spent input is authentic and the only script input.</li><li>The mint entry is `{T: −1}`, and there is no script output.</li><li>The transaction starts at or after `biddingEnds`, and `bids = []`.</li><li>`seller` signs.</li><li>A payout to `seller` with the item and at least `lotAda`.</li></ul> |
 | **Refund** | spend + burn | <ul><li>The spent input is authentic and the only script input.</li><li>The mint entry is `{T: −1}`, and there is no script output.</li><li>The transaction starts at or after `settleBy`.</li><li>A payout to `seller` with the item and at least `lotAda`.</li><li>A payout to every bidder of at least `deposit · 10^6`.</li><li>Anyone may submit it.</li></ul> |
 
 **Why the payouts are sound:**
-- `T` is unique, and every payout output carries `Payout(T)` at an exact address.
+- `T` is unique, and every payout output carries `Payout(policy, T)` at an exact address.
 - The lot's recipients are distinct.
 - So each required payout is a different output, and none is shared with another lot.
 - The payouts sum to the lot's value: `lotAda + n · deposit` against
@@ -192,10 +196,10 @@ after t" a **finite** lower bound `≥ t`. An infinite bound fails.
 | A-I1 | Each lot is one authentic UTxO with a one-shot, globally unique token `T`, at the exact enterprise address, from Open until `T` is burned. |
 | A-I2 | A bid is accepted only before `biddingEnds`, signed by a new bidder (not the seller or the auctioneer), with exactly `deposit` ADA added and the datum extended by exactly that bid. |
 | A-I3 | Every accepted bid encrypts, under the lot's key, an amount in `[reserve, deposit]`, bound to its bidder (D3). |
-| A-I4 | Settlement happens only in `[biddingEnds, settleBy]`, covers **every** bid in the datum, names the earliest highest bid and its amount, and pays the seller, the winner and every loser through outputs tagged with `T`. |
+| A-I4 | Settlement happens only in `[biddingEnds, settleBy]`, covers **every** bid in the datum, names the earliest highest bid and its amount, and pays the seller, the winner and every loser through outputs tagged with `(policy, T)`. |
 | A-I5 | If there is no settlement by `settleBy`, anyone can return every deposit and the item. |
 | A-I6 | No transaction discloses a losing bid amount; settlement discloses only `w` and `p`. The bid ciphertexts are permanent: whoever holds the lot's auctioneer secret, now or later, can read every bid. There is no forward secrecy. |
-| A-I7 | One lot per transaction; payouts are tagged with the lot's unique token; within a lot, recipients are distinct. |
+| A-I7 | One lot of this auction script per transaction; payouts are tagged with the lot token's policy and name; within a lot, recipients are distinct. |
 
 ## Limitations (stated, not prevented)
 
@@ -211,10 +215,12 @@ after t" a **finite** lower bound `≥ t`. An infinite bound fails.
 ## Escalation (external review)
 
 - **D4 composes `R_enc`'s gadget with the auctioneer's secret as the randomness and a bid handle
-  as the key.** This is algebraically the decryption relation, and both design reviewers verified
-  that the gadget supports it: the key path, the shared cached decomposition, and the `u ≠ 0`
-  rule. ZeroJ's specs define no named decryption relation (ADR-0052 D8 put on-chain decryption
-  shares out of scope). The argument is this repository's own and needs external review.
+  as the key.** This is algebraically the decryption relation, and the design and implementation
+  reviewers verified that the gadget supports it: the key path, the shared cached decomposition,
+  and the `u ≠ 0` rule. ZeroJ's specs define decryption only through `R_dleq` decryption shares
+  (spec §9.2, §10.2), which publish `D = [sk]·A` and so would reveal every bid as `B − D`; that is
+  why D4 keeps the decryption inside the proof. The argument is this repository's own and needs
+  external review.
 
 ## Alternatives considered
 
@@ -231,9 +237,15 @@ after t" a **finite** lower bound `≥ t`. An infinite bound fails.
 ## Revision history
 
 - **r1** (2026-10-10): initial proposal.
+- **r3** (2026-10-10; implementation review, Codex C1–C5 and Claude A1–A12; no P0, both
+  confirmed D4): payouts are tagged with `(policy, T)` (C1, A1); a lot carries no reference script
+  (A4); the host keeps `lotAda ≥ minLotAda`, refuses to open a second lot while one is open, checks
+  the lot's full pinned tuple before bidding, sweeps payouts back to the wallet, and checks each
+  decrypted bid against the lot (C2–C5, A6–A8); every bid mutation is tested with its own valid
+  proof, and the missing tests were added (A2, A3, A12).
 - **r2** (2026-10-10; design review by an adversarial Claude reviewer, F1–F17, and Codex,
   C1–C10; no P0; both verified D4):
-  - C1, F14: payouts are tagged with `Payout(T)` and paid to exact enterprise addresses.
+  - C1, F14: payouts are tagged with `Payout(policy, T)` and paid to exact enterprise addresses.
   - C2, F9: lot authentication and the per-action rules are written out.
   - C3: Open spends no script input.
   - C4, F4: decryption uses the `2^32 − 1` bound.
@@ -269,5 +281,28 @@ after t" a **finite** lower bound `≥ t`. An infinite bound fails.
   losers refunded); the refund path; a bid over the deposit refused (no proof); a late bid
   refused.
 - **UI** through the Playwright MCP.
-- **Measurements**, filled in at M6: constraints, prover time, and the Julc VM cost of Bid and of
-  Settle (`n = 1, 2, 3`) against the 80% gate.
+- **Measurements**: see below.
+
+## Measurements
+
+Circuits: the bid relation has 7,011 constraints and 9 public inputs. Settlement has 6,950
+(n = 1), 13,330 (n = 2) and 19,710 (n = 3) constraints, with 8, 12 and 16 public inputs.
+
+Julc VM, Plutus V3 cost model (protocol version 11). Each figure is the complete transaction
+(every script purpose it runs), against `maxTxExecutionUnits` (10e9 steps, 16.5e6 memory), and
+the test asserts ADR-0055's 80% gate. Verification keys are pinned by hash (as `NoteLedger`),
+and the auction is deployed as a reference script (13 KB).
+
+| Transaction | VM steps | VM memory | DevKit steps | DevKit memory |
+|---|---|---|---|---|
+| Open (mint) | 9.0% | 20.4% | 9.2% | 20.8% |
+| Bid, the first / third (spend) | — / 51.0% | — / 22.0% | 50.9% / 51.1% | 21.6% / 22.2% |
+| Settle, 1 bid (spend + burn) | 49.0% | 22.0% | — | — |
+| Settle, 2 bids (spend + burn) | 57.3% | 23.7% | — | — |
+| Settle, 3 bids (spend + burn) | 65.6% | 25.4% | 65.8% | 25.7% |
+| Refund (spend) | 8.2% (3 bids) | 17.8% | 7.8% (1 bid) | 17.0% |
+
+The DevKit columns are the evaluator's ExUnits for the real transactions of
+`AuctionDevKitE2ETest` (2026-10-10), which also asserts the 80% gate. The VM transactions are
+minimal (no fee input, change or reference-script input), so the DevKit figures, from the real
+transactions, are the ones the gate rests on.
