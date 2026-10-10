@@ -60,7 +60,8 @@ class AuctionDevKitE2ETest {
         AuditorKeys keys = AuditorKeys.generate(RANDOM);
         ok(registry.init(backend, auctioneer, seed, keys.entry(registry.policy(), pkh(auctioneer), 0, possession)), "registry init", backend);
         AuctionScript auction = new AuctionScript(new AuctionProofs(), registry, 60_000, 2_000_000);
-        assertTrue(auction.deploy(backend, auctioneer).isSuccessful());
+        var deployed1 = auction.deploy(backend, auctioneer);
+        assertTrue(deployed1.isSuccessful(), "deploy: " + deployed1.getResponse());
         AdmittedAuditor key = registry.admitted(backend);
 
         // Open.

@@ -117,11 +117,18 @@ public final class NoteLedgerScript {
             reference = DevKit.utxosOf(backend, address, result.getValue()).getFirst();
             var keys = verificationKeys();
             BigInteger lovelace = Plutus.minAda(backend, address, List.of(), keys).add(BigInteger.valueOf(1_000_000));
-            var carried = new QuickTxBuilder(backend).compose(new Tx()
-                            .payToContract(address, List.of(new Amount("lovelace", lovelace)), keys)
-                            .from(payer.baseAddress()))
-                    .withSigner(SignerProviders.signerFrom(payer))
-                    .complete();
+            // The carrier spends the payer's change from the deployment just confirmed; the
+            // indexer can lag a moment behind, so a refused attempt is retried.
+            Result<String> carried = null;
+            for (int attempt = 1; attempt <= 4; attempt++) {
+                carried = new QuickTxBuilder(backend).compose(new Tx()
+                                .payToContract(address, List.of(new Amount("lovelace", lovelace)), keys)
+                                .from(payer.baseAddress()))
+                        .withSigner(SignerProviders.signerFrom(payer))
+                        .complete();
+                if (carried.isSuccessful()) break;
+                Thread.sleep(3_000L * attempt);
+            }
             if (!carried.isSuccessful()) return carried;
             DevKit.waitForTx(backend, carried.getValue());
             keyCarrier = DevKit.utxosOf(backend, address, carried.getValue()).getFirst();

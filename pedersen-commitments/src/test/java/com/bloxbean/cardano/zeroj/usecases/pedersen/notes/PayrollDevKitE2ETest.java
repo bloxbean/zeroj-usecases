@@ -53,7 +53,8 @@ class PayrollDevKitE2ETest {
         ok(registry.init(backend, tax, seed, taxKeys.entry(registry.policy(), pkh(tax), 0, possession)), "registry init", backend);
         NoteLedgerScript ledger = new NoteLedgerScript(pkh(employer), "SAL".getBytes(StandardCharsets.UTF_8),
                 NoteProofs.withIssuance(), registry);
-        assertTrue(ledger.deploy(backend, employer).isSuccessful());
+        var deployed1 = ledger.deploy(backend, employer);
+        assertTrue(deployed1.isSuccessful(), "deploy: " + deployed1.getResponse());
         AdmittedAuditor auditor = registry.admitted(backend);
         AuditorView taxView = new AuditorView(Map.of(0L, taxKeys), ledger);
 
