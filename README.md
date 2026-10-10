@@ -250,12 +250,19 @@ docker volume rm zeroj-usecases_compliance-credential-plonk-cache
 From the repository root:
 
 ```bash
-# If Gradle is installed locally, use the root aggregate tasks:
-gradle buildAllUsecasesNoTests
-gradle testAllUsecases
+# Root aggregate tasks (each runs the module's own wrapper):
+./gradlew buildAllUsecasesNoTests
+./gradlew testAllUsecases
 
 # Or use the repo script, which runs each module's wrapper:
 ./build-all.sh build -x test
+```
+
+Each module is a standalone Gradle build, so the root wrapper can also run one module's tasks
+with `-p`, for example the Pedersen demo UI:
+
+```bash
+./gradlew -p pedersen-commitments bootRun -PwithFrontend   # http://localhost:8093
 ```
 
 To test against a local ZeroJ build:
@@ -265,7 +272,7 @@ cd ../zeroj
 ./gradlew publishToMavenLocal
 
 cd ../zeroj-usecases
-gradle buildAllUsecasesNoTests -PzerojVersion=<local-zeroj-version>
+./gradlew buildAllUsecasesNoTests -PzerojVersion=<local-zeroj-version>
 ```
 
 `<local-zeroj-version>` is the version the ZeroJ build published (a `-SNAPSHOT` version is
