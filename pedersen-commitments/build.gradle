@@ -101,6 +101,9 @@ tasks.register('walkthrough', JavaExec) {
 
 bootRun {
     jvmArgs '--enable-native-access=ALL-UNNAMED', '-Dzeroj.allowInsecureTrustedSetup=true'
+    // Spring Boot's optimized launch (-XX:TieredStopAtLevel=1) disables C2, which makes the
+    // pure-Java key validation, proving and verification several times slower.
+    optimizedLaunch = false
 }
 
 // Fork the compiler for the Julc annotation processor on Java 25

@@ -4,13 +4,17 @@ import com.bloxbean.cardano.zeroj.usecases.pedersen.common.KeyedCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.circuit.NoteIssueProofCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.circuit.NoteRedeemProofCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.circuit.NoteTransferProofCircuit;
+import org.zeroj.circuit.CircuitBuilder;
 import org.zeroj.circuit.lib.jubjub.ElGamalEncryption;
 import org.zeroj.circuit.lib.jubjub.NoteOpening;
 import org.zeroj.crypto.groth16.Groth16ProofBLS381;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * The note circuits with their keys (ADR-0007 N3, N4): transfer and redeem, and optionally proved
@@ -36,16 +40,22 @@ public final class NoteProofs {
 
     /** Transfer and redeem only (trusted issuance). */
     public static NoteProofs spendOnly() {
-        return new NoteProofs(KeyedCircuit.compile("note-transfer", NoteTransferProofCircuit.build()),
-                KeyedCircuit.compile("note-redeem", NoteRedeemProofCircuit.build()), null, null);
+        Map<String, Supplier<CircuitBuilder>> circuits = new LinkedHashMap<>();
+        circuits.put("note-transfer", NoteTransferProofCircuit::build);
+        circuits.put("note-redeem", NoteRedeemProofCircuit::build);
+        List<KeyedCircuit> c = KeyedCircuit.compileAll(circuits);
+        return new NoteProofs(c.get(0), c.get(1), null, null);
     }
 
     /** Transfer, redeem and proved issuance (payroll). */
     public static NoteProofs withIssuance() {
-        return new NoteProofs(KeyedCircuit.compile("note-transfer", NoteTransferProofCircuit.build()),
-                KeyedCircuit.compile("note-redeem", NoteRedeemProofCircuit.build()),
-                KeyedCircuit.compile("note-issue-n1", NoteIssueProofCircuit.build(1, 2, 8)),
-                KeyedCircuit.compile("note-issue-n2", NoteIssueProofCircuit.build(2, 4, 16)));
+        Map<String, Supplier<CircuitBuilder>> circuits = new LinkedHashMap<>();
+        circuits.put("note-transfer", NoteTransferProofCircuit::build);
+        circuits.put("note-redeem", NoteRedeemProofCircuit::build);
+        circuits.put("note-issue-n1", () -> NoteIssueProofCircuit.build(1, 2, 8));
+        circuits.put("note-issue-n2", () -> NoteIssueProofCircuit.build(2, 4, 16));
+        List<KeyedCircuit> c = KeyedCircuit.compileAll(circuits);
+        return new NoteProofs(c.get(0), c.get(1), c.get(2), c.get(3));
     }
 
     public KeyedCircuit transfer() { return transfer; }

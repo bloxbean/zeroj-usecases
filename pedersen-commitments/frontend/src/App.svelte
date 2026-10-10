@@ -32,7 +32,8 @@
   {#if !status?.ready}
     <div class="card">
       <p><strong>Starting…</strong> compiling circuits, loading or generating development keys and funding demo wallets.
-        The first start takes a few minutes; later starts reuse the cached keys.</p>
+        Each tab opens as soon as its demo is ready. Cached keys are re-validated point by point on every start (about
+        two minutes); the very first start also generates them, which takes longer.</p>
       {#if status?.demos}
         <p>
           {#each Object.entries(status.demos) as [name, s]}

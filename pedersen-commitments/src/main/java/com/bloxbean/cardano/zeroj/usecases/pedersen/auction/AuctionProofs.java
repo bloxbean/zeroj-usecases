@@ -4,13 +4,17 @@ import com.bloxbean.cardano.zeroj.usecases.pedersen.auction.circuit.BidProofCirc
 import com.bloxbean.cardano.zeroj.usecases.pedersen.auction.circuit.SettleProofCircuit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.common.Fields;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.common.KeyedCircuit;
+import org.zeroj.circuit.CircuitBuilder;
 import org.zeroj.circuit.lib.jubjub.ElGamalCiphertext;
 import org.zeroj.circuit.lib.jubjub.ElGamalEncryption;
 import org.zeroj.crypto.groth16.Groth16ProofBLS381;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * The auction circuits with their keys (ADR-0008 D3, D4): the bid relation and the settlement
@@ -22,11 +26,14 @@ public final class AuctionProofs {
     private final List<KeyedCircuit> settle;
 
     public AuctionProofs() {
-        bid = KeyedCircuit.compile("sealed-bid", BidProofCircuit.build());
-        settle = List.of(
-                KeyedCircuit.compile("sealed-bid-settle-n1", SettleProofCircuit.build(1, 4)),
-                KeyedCircuit.compile("sealed-bid-settle-n2", SettleProofCircuit.build(2, 8)),
-                KeyedCircuit.compile("sealed-bid-settle-n3", SettleProofCircuit.build(3, 12)));
+        Map<String, Supplier<CircuitBuilder>> circuits = new LinkedHashMap<>();
+        circuits.put("sealed-bid", BidProofCircuit::build);
+        circuits.put("sealed-bid-settle-n1", () -> SettleProofCircuit.build(1, 4));
+        circuits.put("sealed-bid-settle-n2", () -> SettleProofCircuit.build(2, 8));
+        circuits.put("sealed-bid-settle-n3", () -> SettleProofCircuit.build(3, 12));
+        List<KeyedCircuit> c = KeyedCircuit.compileAll(circuits);
+        bid = c.getFirst();
+        settle = List.copyOf(c.subList(1, 4));
     }
 
     public KeyedCircuit bid() { return bid; }

@@ -39,18 +39,7 @@ public class Funding {
             return account;
         }
         try {
-            var request = HttpRequest.newBuilder()
-                    .uri(URI.create(adminUrl + "/local-cluster/api/addresses/topup"))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(
-                            "{\"address\":\"" + account.baseAddress() + "\",\"adaAmount\":" + ada + "}"))
-                    .build();
-            var response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() / 100 != 2) {
-                throw new IllegalStateException("top-up returned " + response.statusCode() + ": " + response.body());
-            }
-            waitForFunds(account.baseAddress());
-            log.info("Funded {} with {} ADA: {}", label, ada, account.baseAddress());
+            topUp(label, account.baseAddress(), ada);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("interrupted while funding " + label, e);
@@ -58,6 +47,28 @@ public class Funding {
             throw new IllegalStateException("could not fund " + label + " via " + adminUrl + ": " + e.getMessage(), e);
         }
         return account;
+    }
+
+    /**
+     * One top-up at a time: the demos start concurrently, and DevKit's faucet refuses a top-up
+     * while its previous one is still in flight ("Topup failed"). Each top-up waits until its funds
+     * are visible, and a refused one is retried.
+     */
+    private synchronized void topUp(String label, String address, int ada) throws Exception {
+        var request = HttpRequest.newBuilder()
+                .uri(URI.create(adminUrl + "/local-cluster/api/addresses/topup"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"address\":\"" + address + "\",\"adaAmount\":" + ada + "}"))
+                .build();
+        for (int attempt = 1; ; attempt++) {
+            var response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() / 100 == 2) break;
+            if (attempt == 5) throw new IllegalStateException("top-up returned " + response.statusCode() + ": " + response.body());
+            log.warn("Top-up for {} refused ({}); retrying", label, response.statusCode());
+            Thread.sleep(3_000L * attempt);
+        }
+        waitForFunds(address);
+        log.info("Funded {} with {} ADA: {}", label, ada, address);
     }
 
     private void waitForFunds(String address) throws Exception {
