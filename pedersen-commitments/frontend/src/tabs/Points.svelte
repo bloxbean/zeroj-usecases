@@ -1,6 +1,7 @@
 <script lang="ts">
   import { get, post } from '../lib/api';
   import Outcome from '../lib/Outcome.svelte';
+  import NoteLedgerView from '../lib/NoteLedgerView.svelte';
 
   let state = $state<any>(null);
   let busy = $state('');
@@ -8,6 +9,7 @@
 
   let issueTo = $state('alice');
   let issueAmount = $state(1000);
+  let reported = $state(100);
   let from = $state('alice');
   let to = $state('bob');
   let amount = $state(700);
@@ -16,7 +18,7 @@
   let thief = $state('bob');
   let victim = $state('alice');
 
-  const holders = ['alice', 'bob', 'retailer'];
+  const holders = ['alice', 'bob'];
 
   async function load() {
     const r = await get('/points');
@@ -36,11 +38,12 @@
 
 <section>
   <h2>A. Confidential points</h2>
-  <p class="hint">Loyalty points are notes whose amounts are Pedersen commitments. A transfer proves
-    <code>in = out1 + out2</code> over hidden 64-bit amounts; a redemption proves <code>in = change + price</code>
-    with a public price. The <code>PointsLedger</code> script checks the proof, the owner's signature, issuer-only
-    supply and one-time receipts. Circuits: transfer {state?.constraints?.transfer ?? '…'} constraints, redeem
-    {state?.constraints?.redeem ?? '…'}.</p>
+  <p class="hint">Loyalty points are <strong>notes</strong>: a Pedersen commitment, the opening encrypted on-chain to the
+    owner and the auditor (<code>confidential-note-jubjub-v1</code>), and the amount encrypted to the auditor as two
+    32-bit ElGamal limbs that the transfer proof binds to the commitment (ADR-0055 D3a). Wallets recover their notes by
+    scanning the chain with their viewing key; the auditor reads every amount from the chain. Issuance is
+    <em>trusted</em>: the retailer supplies the issued notes' audit data. Circuits: transfer
+    {state?.constraints?.transfer ?? '…'} constraints, redeem {state?.constraints?.redeem ?? '…'}.</p>
 
   <div class="actions">
     <div class="action">
@@ -63,12 +66,46 @@
       <label>price (public) <input type="number" min="1" bind:value={price} /></label>
       <button class="primary" disabled={!!busy} onclick={() => act('Proving and submitting the redemption', '/points/redeem', { from: redeemFrom, price })}>Redeem</button>
     </div>
+    <div class="action">
+      <h4>Auditor key rotation</h4>
+      <p class="hint">Registry generation {state?.registry?.generation ?? '…'}. Both possession proofs are verified on-chain.</p>
+      <button disabled={!!busy} onclick={() => act('Rotating the auditor keys', '/points/rotate', {})}>Rotate auditor keys</button>
+    </div>
+  </div>
+
+  <h3>Try to cheat</h3>
+  <div class="actions">
     <div class="action cheat">
-      <h4>Try to cheat: spend someone else's note</h4>
+      <h4>Garbage delivery</h4>
+      <p class="hint">{from} sends {amount} to {to}, but the recipient's encrypted opening is random bytes. The ledger
+        can only check its length, so it is accepted: {to}'s wallet reports an <em>unopenable</em> note, while the auditor
+        still reads the amount (D3a).</p>
+      <button class="danger" disabled={!!busy} onclick={() => act('Submitting a transfer with a garbage delivery', '/points/transfer', { from, to, amount, cheat: 'garbageDelivery' })}>Send with garbage delivery</button>
+    </div>
+    <div class="action cheat">
+      <h4>Under-report an issuance</h4>
+      <label>tell the auditor <input type="number" min="0" bind:value={reported} /></label>
+      <p class="hint">The retailer issues {issueAmount} but encrypts {reported} to the auditor. Trusted issuance accepts it;
+        the auditor sees <em>issuer-claimed</em> and a mismatch with its own delivery. (Payroll's proved issuance refuses this.)</p>
+      <button class="danger" disabled={!!busy} onclick={() => act('Issuing with under-reported audit data', '/points/issue', { to: issueTo, amount: issueAmount, reported })}>Issue and under-report</button>
+    </div>
+    <div class="action cheat">
+      <h4>Limbs to the retired key</h4>
+      <p class="hint">After a rotation, {from} encrypts the amounts to the auditor's previous key. The ledger reads the key
+        from the current registry entry, so the proof does not verify.</p>
+      <button class="danger" disabled={!!busy || !state?.canUseRetiredKey} onclick={() => act('Submitting a transfer to the retired key', '/points/transfer', { from, to, amount, cheat: 'retiredKey' })}>Use the retired key</button>
+    </div>
+    <div class="action cheat">
+      <h4>Note under another stake key</h4>
+      <p class="hint">An honest transfer plus a copy of a note paid to the ledger's script with another stake credential.
+        The address policy refuses every output under the script that is not at its exact address (M3 criterion (a)).</p>
+      <button class="danger" disabled={!!busy} onclick={() => act('Submitting a transfer with a stake-variant note', '/points/transfer', { from, to, amount, cheat: 'stakeVariant' })}>Add a stake-variant note</button>
+    </div>
+    <div class="action cheat">
+      <h4>Spend someone else's note</h4>
       <label>thief <select bind:value={thief}>{#each holders as h}<option>{h}</option>{/each}</select></label>
       <label>victim <select bind:value={victim}>{#each holders as h}<option>{h}</option>{/each}</select></label>
       <button class="danger" disabled={!!busy} onclick={() => act('Submitting the theft', '/points/steal', { thief, victim })}>Steal the largest note</button>
-      <p class="hint">Even with a valid proof, the script requires the note owner's signature.</p>
     </div>
   </div>
 
@@ -76,48 +113,6 @@
   <Outcome {result} />
 
   {#if state}
-    <div class="columns">
-      <div class="panel private">
-        <h3>Private — the openings each wallet holds</h3>
-        {#each Object.entries(state.private) as [label, w]}
-          <p><strong>{label}</strong>: balance <strong>{w.balance}</strong> points</p>
-          {#if w.notes.length > 0}
-            <table>
-              <thead><tr><th>amount</th><th>commitment (u)</th><th>note UTxO</th></tr></thead>
-              <tbody>
-                {#each w.notes as n}<tr><td>{n.amount}</td><td><code>{n.commitment}</code></td><td><code>{n.utxo}</code></td></tr>{/each}
-              </tbody>
-            </table>
-          {/if}
-        {/each}
-      </div>
-      <div class="panel public">
-        <h3>On-chain — what anyone can see</h3>
-        <p class="hint">Notes at <code>{state.ledgerAddress.substring(0, 34)}…</code>: owner and commitment, never the amount.</p>
-        <table>
-          <thead><tr><th>note UTxO</th><th>owner</th><th>commitment u</th><th>v</th></tr></thead>
-          <tbody>
-            {#each state.onChain as n}<tr><td><code>{n.utxo}</code></td><td>{n.owner}</td><td><code>{n.u}</code></td><td><code>{n.v}</code></td></tr>{/each}
-          </tbody>
-        </table>
-        <h3>Receipts held by the retailer</h3>
-        {#if state.receipts.length === 0}<p class="hint">None yet.</p>{/if}
-        <table>
-          {#if state.receipts.length > 0}<thead><tr><th>receipt UTxO</th><th>spender</th><th>price</th></tr></thead>{/if}
-          <tbody>
-            {#each state.receipts as r}<tr><td><code>{r.utxo}</code></td><td>{r.spender}</td><td>{r.price}</td></tr>{/each}
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    {#if state.history.length > 0}
-      <h3>Transactions</h3>
-      <table>
-        <tbody>
-          {#each state.history as h}<tr><td>{h.summary}</td><td><code>{h.txHash.substring(0, 20)}…</code></td></tr>{/each}
-        </tbody>
-      </table>
-    {/if}
+    <NoteLedgerView {state} unit="points" />
   {/if}
 </section>

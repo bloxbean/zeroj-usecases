@@ -32,6 +32,12 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 
 /**
  * One compiled circuit with its Groth16 keys: proves witnesses, verifies proofs from their
@@ -43,11 +49,17 @@ import java.util.Map;
  * the circuit fingerprint ({@code c<rows>-w<wires>-p<public>}) and a SHA-256 of its constraints, so
  * a changed circuit never reuses stale keys, even one with the same shape. Production needs keys
  * from an MPC ceremony.
+ *
+ * <p>Loading a cached key validates every point (ZeroJ's {@code Groth16SetupCache}), which takes
+ * about two minutes for the largest circuits. So each key file is loaded once per process and shared
+ * by every demo that compiles the same circuit, and {@link #compileAll} loads several in parallel.
  */
 public final class KeyedCircuit {
 
     private static final Logger log = LoggerFactory.getLogger(KeyedCircuit.class);
     private static final Path CACHE_DIR = Path.of("./data");
+    /** Keys by cache file: a second demo compiling the same circuit waits for the first load. */
+    private static final Map<Path, CompletableFuture<Groth16SetupBLS381.SetupResult>> SETUPS = new ConcurrentHashMap<>();
 
     private final String name;
     private final CircuitBuilder circuit;
@@ -73,9 +85,42 @@ public final class KeyedCircuit {
         log.info("Circuit {}: {} constraints, {} public inputs ({})",
                 name, r1cs.numConstraints(), r1cs.numPublicInputs(), fingerprint);
         Path cache = CACHE_DIR.resolve("setup-" + name + "-" + fingerprint + "-" + r1csDigest(r1cs.constraints()) + ".bin");
+        var mine = new CompletableFuture<Groth16SetupBLS381.SetupResult>();
+        var shared = SETUPS.putIfAbsent(cache, mine);
+        Groth16SetupBLS381.SetupResult setup;
+        if (shared != null) {
+            setup = join(shared);
+        } else {
+            try {
+                setup = loadOrGenerate(name, r1cs, cache);
+                mine.complete(setup);
+            } catch (RuntimeException e) {
+                SETUPS.remove(cache, mine);
+                mine.completeExceptionally(e);
+                throw e;
+            }
+        }
+        return new KeyedCircuit(name, circuit, r1cs, setup);
+    }
+
+    /** Compiles several circuits concurrently, in the order given. */
+    public static List<KeyedCircuit> compileAll(Map<String, Supplier<CircuitBuilder>> circuits) {
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<CompletableFuture<KeyedCircuit>> futures = circuits.entrySet().stream()
+                    .map(e -> CompletableFuture.supplyAsync(() -> compile(e.getKey(), e.getValue().get()), pool))
+                    .toList();
+            return futures.stream().map(KeyedCircuit::join).toList();
+        }
+    }
+
+    private static Groth16SetupBLS381.SetupResult loadOrGenerate(String name, R1CSConstraintSystem r1cs, Path cache) {
         Groth16SetupBLS381.SetupResult setup = null;
         try {
-            if (Files.exists(cache)) setup = Groth16SetupCache.loadBls12381Setup(cache);
+            if (Files.exists(cache)) {
+                long start = System.nanoTime();
+                setup = Groth16SetupCache.loadBls12381Setup(cache);
+                log.info("Loaded and validated the keys for {} in {} s", name, (System.nanoTime() - start) / 1_000_000_000L);
+            }
         } catch (Exception e) {
             log.warn("Key cache {} unreadable ({}); regenerating", cache, e.getMessage());
         }
@@ -90,7 +135,17 @@ public final class KeyedCircuit {
                 log.warn("Could not cache keys for {}: {}", name, e.getMessage());
             }
         }
-        return new KeyedCircuit(name, circuit, r1cs, setup);
+        return setup;
+    }
+
+    private static <T> T join(CompletableFuture<T> future) {
+        try {
+            return future.join();
+        } catch (CompletionException e) {
+            if (e.getCause() instanceof RuntimeException r) throw r;
+            if (e.getCause() instanceof Error err) throw err;
+            throw e;
+        }
     }
 
     /** Computes the witness for {@code inputs} (throws if the relation does not hold) and proves it. */

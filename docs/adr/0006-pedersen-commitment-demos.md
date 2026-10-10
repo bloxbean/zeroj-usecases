@@ -2,7 +2,11 @@
 
 - **Status:** Proposed. Implementation is on `feat/pedersen-private-ballot-and-demos`.
 - **Date:** 2026-10-04 (r2: amended after the design review; r3: after the implementation review —
-  demo C is bound to an attestation period)
+  demo C is bound to an attestation period; r4, 2026-10-10: demo A's notes and demo C's entries
+  carry on-chain deliveries, see [ADR-0007](0007-confidential-notes-in-pedersen-demos.md))
+- **Superseded in part (r4):** demo A's ledger, datums and circuits are now ADR-0007's
+  `NoteLedger` (ZeroJ ADR-0055 M3). Demo C's attestation datum gains deliveries (ADR-0007 N6).
+  The rest of this ADR stands.
 - **Related:**
   - ZeroJ ADR-0051 and its specs, `pedersen-jubjub-v1` and `pedersen-jubjub-vector-v1`.
   - ZeroJ's reference validators `ConfidentialNoteValidator` and
@@ -130,7 +134,8 @@ should re-split its note.
 - the number of notes.
 
 Points cannot be burned, so zero-value notes, and the min-ADA they hold, accumulate. Openings are
-given to recipients off-chain; that delivery channel is out of scope.
+given to recipients off-chain; that delivery channel is out of scope. (r4: openings are now
+delivered on-chain; see ADR-0007.)
 
 ---
 
@@ -305,7 +310,9 @@ exchange's process runs the single-party dev setup, which is acceptable only as 
   binding. They deliberately have no issuance control and no business rules. Demos A and B add
   those.
 - **A sealed-bid auction.** Making it complete needs either an auctioneer who sees every bid, or
-  an on-chain auction state machine. It was deferred as larger than a demo.
+  an on-chain auction state machine. It was deferred as larger than a demo. (r4: built in
+  [ADR-0008](0008-sealed-bid-auction-enforced-disclosure.md), with bids encrypted to the
+  auctioneer under `elgamal-jubjub-v1`.)
 - **Demo C as a mint-only attestation, with the token at the exchange's own address.** Rejected
   in review. The exchange could move the token and swap the datum after proving, and it could
   reuse the same reserves for several attestations.

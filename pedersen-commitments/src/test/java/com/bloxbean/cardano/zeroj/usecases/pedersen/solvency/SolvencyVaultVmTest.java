@@ -1,8 +1,11 @@
 package com.bloxbean.cardano.zeroj.usecases.pedersen.solvency;
 
+import com.bloxbean.cardano.zeroj.usecases.pedersen.common.CostProfiler;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.solvency.SolvencyAttestation.Customer;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.solvency.SolvencyAttestation.Entry;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.solvency.onchain.SolvencyVault;
+import org.zeroj.circuit.lib.jubjub.NoteViewingKey;
+import org.julclang.compiler.CompileResult;
 import org.julclang.core.PlutusData;
 import org.julclang.core.Program;
 import org.julclang.ledger.Address;
@@ -32,6 +35,7 @@ import org.zeroj.onchain.julc.groth16.codec.ProverToCardano;
 import org.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
 
 import java.math.BigInteger;
+import java.security.SecureRandom;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -61,6 +65,7 @@ class SolvencyVaultVmTest extends ContractTest {
             Optional.of(new StakingCredential.StakingHash(new Credential.PubKeyCredential(PubKeyHash.of(filled(28, (byte) 0x5a))))));
 
     private static Program program;
+    private static CompileResult compiled;
     private static List<Entry> entries;
     private static SnarkjsToCardano.ProofCompressed proof;
 
@@ -71,8 +76,8 @@ class SolvencyVaultVmTest extends ContractTest {
         entries = SolvencyAttestation.entries(book);
         proof = ProverToCardano.compressProof(solvency.prove(RESERVES, book));
         var vk = solvency.circuit().compressedVk();
-        program = new SolvencyVaultVmTest().compileValidator(SolvencyVault.class, Path.of("src/main/java"))
-                .program().applyParams(
+        compiled = new SolvencyVaultVmTest().compileValidatorWithSourceMap(SolvencyVault.class, Path.of("src/main/java"));
+        program = compiled.program().applyParams(
                         PlutusData.bytes(EXCHANGE), PlutusData.bytes(TOKEN),
                         PlutusData.integer(BigInteger.valueOf(SolvencyCircuitTest.N)),
                         PlutusData.integer(BigInteger.valueOf(PERIOD_START)),
@@ -88,13 +93,16 @@ class SolvencyVaultVmTest extends ContractTest {
     enum Attest {
         NONE, NO_SIGNER, MALFORMED_PROOF, LESS_LOCKED, EXTRA_TOKEN_IN_VAULT, VAULT_ELSEWHERE, STAKED_VAULT,
         MISSING_ENTRY, EXTRA_ENTRY, SWAPPED_ENTRIES, NON_CANONICAL_U, SHORT_ID_HASH, TWO_TOKENS, EXTRA_MINT_ENTRY,
-        VAULT_SPENT_IN_SAME_TX, AFTER_PERIOD_START, NO_UPPER_BOUND
+        VAULT_SPENT_IN_SAME_TX, AFTER_PERIOD_START, NO_UPPER_BOUND,
+        SHORT_DELIVERY, ENTRY_WITHOUT_DELIVERY, NO_AUDITOR_DELIVERY, SHORT_AUDITOR_DELIVERY, EXTRA_ATTESTATION_FIELD
     }
 
     @Test
     @DisplayName("Attest: an honest attestation locks the reserve; every mutation is rejected")
     void attest() {
-        var ok = evaluate(program, attestContext(Attest.NONE));
+        var ctx = attestContext(Attest.NONE);
+        var ok = evaluate(program, ctx);
+        CostProfiler.profile("solvency attest", program, compiled, ctx);
         assertSuccess(ok);
         System.out.println("[SolvencyVault attest] budget: " + ok.budgetConsumed());
         for (Attest m : Attest.values()) {
@@ -120,7 +128,7 @@ class SolvencyVaultVmTest extends ContractTest {
         if (m == Attest.VAULT_SPENT_IN_SAME_TX) {
             b.input(new TxInInfo(TestDataBuilder.randomTxOutRef_typed(), new TxOut(VAULT_ADDRESS,
                     Value.lovelace(BigInteger.valueOf(RESERVES)).merge(token(1)),
-                    new OutputDatum.OutputDatumInline(attestation(entries, false)), Optional.empty())));
+                    new OutputDatum.OutputDatumInline(attestation(entries, Attest.NONE)), Optional.empty())));
         }
         List<Entry> published = new ArrayList<>(entries);
         if (m == Attest.MISSING_ENTRY) published.remove(3);
@@ -129,7 +137,10 @@ class SolvencyVaultVmTest extends ContractTest {
             published.set(0, entries.get(1));
             published.set(1, entries.get(0));
         }
-        if (m == Attest.SHORT_ID_HASH) published.set(0, new Entry(Arrays.copyOf(entries.getFirst().idHash(), 31), entries.getFirst().commitment()));
+        if (m == Attest.SHORT_ID_HASH) published.set(0, new Entry(Arrays.copyOf(entries.getFirst().idHash(), 31),
+                entries.getFirst().commitment(), entries.getFirst().delivery()));
+        if (m == Attest.SHORT_DELIVERY) published.set(1, new Entry(entries.get(1).idHash(), entries.get(1).commitment(),
+                Arrays.copyOf(entries.get(1).delivery(), 88)));
         long locked = m == Attest.LESS_LOCKED ? RESERVES - 1 : RESERVES;
         Value vaultValue = Value.lovelace(BigInteger.valueOf(locked)).merge(token(m == Attest.TWO_TOKENS ? 2 : 1));
         if (m == Attest.EXTRA_TOKEN_IN_VAULT) vaultValue = vaultValue.merge(Value.singleton(PolicyId.of(filled(28, (byte) 3)), TokenName.of(new byte[] {1}), BigInteger.ONE));
@@ -139,7 +150,7 @@ class SolvencyVaultVmTest extends ContractTest {
             default -> VAULT_ADDRESS;
         };
         b.output(new TxOut(to, vaultValue,
-                new OutputDatum.OutputDatumInline(attestation(published, m == Attest.NON_CANONICAL_U)), Optional.empty()));
+                new OutputDatum.OutputDatumInline(attestation(published, m)), Optional.empty()));
         return b.buildPlutusData();
     }
 
@@ -181,7 +192,7 @@ class SolvencyVaultVmTest extends ContractTest {
 
     private PlutusData releaseSpend(Release m) {
         TxOutRef ref = TestDataBuilder.randomTxOutRef_typed();
-        var b = ScriptContextTestBuilder.spending(ref, attestation(entries, false)).redeemer(PlutusData.constr(0));
+        var b = ScriptContextTestBuilder.spending(ref, attestation(entries, Attest.NONE)).redeemer(PlutusData.constr(0));
         return releaseTx(m, b, ref).buildPlutusData();
     }
 
@@ -195,20 +206,32 @@ class SolvencyVaultVmTest extends ContractTest {
 
     private static TxOut vaultOut() {
         return new TxOut(VAULT_ADDRESS, Value.lovelace(BigInteger.valueOf(RESERVES)).merge(token(1)),
-                new OutputDatum.OutputDatumInline(attestation(entries, false)), Optional.empty());
+                new OutputDatum.OutputDatumInline(attestation(entries, Attest.NONE)), Optional.empty());
     }
 
-    private static PlutusData attestation(List<Entry> es, boolean nonCanonical) {
+    /** {@code Attestation([Entry(idHash, u, v, delivery)], auditorDelivery)}, or a mutation of it. */
+    private static PlutusData attestation(List<Entry> es, Attest m) {
         PlutusData[] items = new PlutusData[es.size()];
         for (int i = 0; i < es.size(); i++) {
             Entry e = es.get(i);
             BigInteger u = e.commitment().affineU();
-            if (nonCanonical && i == 0) u = u.add(JubjubCurve.BASE_FIELD_PRIME);
-            items[i] = PlutusData.constr(0, PlutusData.bytes(e.idHash()), PlutusData.integer(u),
-                    PlutusData.integer(e.commitment().affineV()));
+            if (m == Attest.NON_CANONICAL_U && i == 0) u = u.add(JubjubCurve.BASE_FIELD_PRIME);
+            items[i] = m == Attest.ENTRY_WITHOUT_DELIVERY && i == 2
+                    ? PlutusData.constr(0, PlutusData.bytes(e.idHash()), PlutusData.integer(u), PlutusData.integer(e.commitment().affineV()))
+                    : PlutusData.constr(0, PlutusData.bytes(e.idHash()), PlutusData.integer(u),
+                            PlutusData.integer(e.commitment().affineV()), PlutusData.bytes(e.delivery()));
         }
-        return PlutusData.constr(0, PlutusData.list(items));
+        return switch (m) {
+            case NO_AUDITOR_DELIVERY -> PlutusData.constr(0, PlutusData.list(items));
+            case SHORT_AUDITOR_DELIVERY -> PlutusData.constr(0, PlutusData.list(items), PlutusData.bytes(new byte[88]));
+            case EXTRA_ATTESTATION_FIELD -> PlutusData.constr(0, PlutusData.list(items), PlutusData.bytes(AUDITOR_DELIVERY),
+                    PlutusData.integer(BigInteger.ONE));
+            default -> PlutusData.constr(0, PlutusData.list(items), PlutusData.bytes(AUDITOR_DELIVERY));
+        };
     }
+
+    private static final byte[] AUDITOR_DELIVERY = SolvencyAttestation.auditorDelivery(SolvencyCircuitTest.book(),
+            NoteViewingKey.generate(new SecureRandom()).readerKey());
 
     private static Value token(long qty) {
         return Value.singleton(PolicyId.of(VAULT), TokenName.of(TOKEN), BigInteger.valueOf(qty));
