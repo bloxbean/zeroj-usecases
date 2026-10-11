@@ -250,9 +250,17 @@ run_flow() {
       post_json "/api/credential/unlock" '{"name":"Alice"}'
       ;;
     nft-ownership)
-      post_json "/api/snapshot/register" '{"secretKey":"12345","tokenName":"101"}'
+      # Mint one ticket to the custody wallet, register it (the server signs the CIP-8 registration
+      # and returns a fresh 252-bit holder secret once), build the event snapshot, then prove.
+      post_json "/api/mint" '{"count":1}'
+      register_json="$(post_json "/api/snapshot/register" '{"tokenName":"ZeroJTicket_1"}')"
+      secret="$(printf '%s' "${register_json}" | sed -n 's/.*"secretKey":"\([^"]*\)".*/\1/p')"
+      if [ -z "${secret}" ]; then
+        echo "Could not extract the holder secret from /api/snapshot/register." >&2
+        return 1
+      fi
       post_json "/api/snapshot/build" "{}"
-      proof_json="$(post_json "/api/prove" '{"secretKey":"12345","tokenName":"101","contextId":"nft-demo-v1"}')"
+      proof_json="$(post_json "/api/prove" "{\"secretKey\":\"${secret}\",\"tokenName\":\"ZeroJTicket_1\"}")"
       printf '%s' "${proof_json}"
       nullifier="$(printf '%s' "${proof_json}" | sed -n 's/.*"nullifier":"\([^"]*\)".*/\1/p')"
       if [ -z "${nullifier}" ]; then

@@ -290,7 +290,7 @@ The demo's unused `DppComplianceValidator` is removed.
 under the demo data directory, so restarts keep the voters. Voting by label remains a
 demo-operator action (D10).
 
-### D6: Vouchers pay exactly what they owe, one voucher per transaction (F6)
+### D6: Vouchers pay exactly what they owe, through payments tagged per voucher (F6)
 
 This applies to both `BbsKycClaimValidator` and `OwnershipProofValidator`.
 - The datum gains `funderPkh: B28` and `maxFee: I`.
