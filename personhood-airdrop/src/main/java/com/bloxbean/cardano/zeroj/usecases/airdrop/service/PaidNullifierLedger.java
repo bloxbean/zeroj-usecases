@@ -13,9 +13,10 @@ import java.util.Map;
  *
  * <p>A nullifier is recorded, atomically and owner-only, <em>before</em> the faucet signs its
  * payout ({@link #reserve}), and refused once recorded, also after a restart. A reservation is
- * released only if no signed transaction ever left the faucet (the build or signing failed);
- * once a payout has been submitted, or its submission failed in an unknown state, the record
- * stays, so a nullifier is paid at most once (fail closed).
+ * released only if no signed transaction left the faucet (the build or signing failed), or if
+ * the node definitively rejected the submission and the transaction is not on chain. In every
+ * other case (a payout submitted, or a submission in an unknown state) the record stays, so a
+ * nullifier is paid at most once (fail closed).
  */
 @Component
 public class PaidNullifierLedger {
