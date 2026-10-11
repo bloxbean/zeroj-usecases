@@ -3,7 +3,7 @@ package com.bloxbean.cardano.zeroj.usecases.airdrop.config;
 import com.bloxbean.cardano.client.account.Account;
 import com.bloxbean.cardano.client.backend.api.BackendService;
 import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService;
-import com.bloxbean.cardano.client.common.model.Networks;
+import com.bloxbean.cardano.zeroj.usecases.airdrop.service.AirdropKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,9 +21,6 @@ public class CardanoConfig {
     @Value("${cardano.yaci.base-url}")
     private String yaciBaseUrl;
 
-    @Value("${cardano.yaci.mnemonic}")
-    private String yaciMnemonic;
-
     @Value("${cardano.blockfrost.base-url:}")
     private String overrideBlockfrostBaseUrl;
 
@@ -37,10 +34,15 @@ public class CardanoConfig {
         return new BFBackendService(baseUrl, firstNonBlank(overrideBlockfrostProjectId, ""));
     }
 
+    /**
+     * The faucet admin wallet: a random key persisted in the demo data directory
+     * ({@link AirdropKeys}, ADR-0009 D11), not the public DevKit mnemonic. It is funded through
+     * DevKit's top-up; on another network, fund this address manually.
+     */
     @Bean
-    public Account adminAccount() {
-        var account = new Account(Networks.testnet(), yaciMnemonic);
-        log.info("Demo admin address ({}): {}", network, account.baseAddress());
+    public Account adminAccount(AirdropKeys keys) {
+        var account = keys.admin();
+        log.info("Faucet admin address ({}): {}", network, account.baseAddress());
         return account;
     }
 
