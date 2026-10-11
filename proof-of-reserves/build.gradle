@@ -64,6 +64,8 @@ dependencies {
     runtimeOnly "org.julclang:julc-vm-java:${julcVersion}"
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation "org.julclang:julc-testkit:${julcVersion}"
+    testRuntimeOnly "org.julclang:julc-vm-java:${julcVersion}"
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
@@ -83,4 +85,6 @@ test {
 def frontendDir = file('frontend')
 tasks.register('npmInstall', Exec) { workingDir frontendDir; commandLine 'npm', 'install' }
 tasks.register('buildFrontend', Exec) { dependsOn 'npmInstall'; workingDir frontendDir; commandLine 'npm', 'run', 'build' }
-if (project.hasProperty('withFrontend')) { processResources.dependsOn buildFrontend }
+// The customer check's browser logic (frontend/src/lib/reserves), run with Node's built-in test runner.
+tasks.register('frontendTest', Exec) { workingDir frontendDir; commandLine 'npm', 'test' }
+if (project.hasProperty('withFrontend')) { processResources.dependsOn buildFrontend; test.dependsOn frontendTest }
