@@ -41,7 +41,7 @@ Java Circuit DSL → R1CS → Groth16 Prove (pure Java) → 192-byte proof → P
 | # | Demo | Port | What it Proves | On-Chain Pattern |
 |---|------|------|---------------|-----------------|
 | 1 | **Private NFT Ownership** | 8085 | "I own an NFT from this collection" | Sorted linked list + nullifiers |
-| 2 | **Private Voting** | 8086 | "I'm eligible AND my vote is valid" | Sorted linked list + vote tally |
+| 2 | **Private Voting** | 8086 | "I'm eligible AND my encrypted vote is 0 or 1" | Sorted linked list + homomorphic tally |
 | 3 | **Identity/KYC** | 8087 | "I meet KYC requirements (age, country)" | Stateless spending validator |
 | 4 | **Digital Product Passport** | 8088 | "Product meets EU compliance thresholds" | Minting policy (mint-if-compliant) |
 | 5 | **Proof of Reserves** | 8089 | "Reserves >= liabilities, all balances >= 0" | Spending validator (attestation) |
@@ -114,27 +114,33 @@ Holder → Generate ZK proof (secretKey, tokenName, Merkle path)
 
 ### Architecture
 ```
-Voter → Prove: "I'm in voter Merkle tree + vote ∈ {0,1}"
-      → Nullifier = Poseidon(secretKey, electionId) — one vote per voter
-      → Commitment = Poseidon(vote, nullifier) — hides vote
-      → Insert on-chain via sorted linked list
-      → Tally: decode commitments after election
+Trustees → 3 key shares, each with a proof of possession → election key PK = PK1 + PK2 + PK3
+Voter    → Ballot = ElGamal encryption of the vote under PK: A = [k]·G, B = [vote]·G + [k]·PK
+         → Prove: "I'm in the voter Merkle tree + the nullifier is mine + (A, B) encrypts 0 or 1"
+         → Nullifier = Poseidon(secretKey, electionId) — one vote per voter
+         → Insert on-chain via sorted linked list (node = nullifier + ballot)
+Tally    → after the deadline: sum the ballots while encrypted, each trustee posts a
+           decryption share with a DLEQ proof, and only the total is decrypted, once
 ```
+
+An earlier version stored `Poseidon(vote, nullifier)`. That hid the voter but not the vote: the
+nullifier is public and a vote is 0 or 1, so anyone could hash both and compare
+([issue #7](https://github.com/bloxbean/zeroj-usecases/issues/7), fixed by ADR-0005).
 
 ### Key Components
 | Component | Details |
 |-----------|---------|
-| Circuit | `PrivateVoteProof` — symbolic annotation circuit, voter Merkle proof + vote boolean |
-| On-chain | `VoteListValidator` (linked list) + `VoteZkMintingPolicy` (Groth16) |
-| Tally | Off-chain: for each nullifier, compute Poseidon(0, null) and Poseidon(1, null), match against stored commitment |
-| Test accounts | 5 voter accounts auto-created at startup with Yaci DevKit funding |
+| Circuits | `PrivateBallotProof` (eligibility + nullifier + `ZkElGamal.encrypt` of a 1-bit vote, 9,477 constraints) and `TrusteeShareProof` (DLEQ for key and decryption shares) |
+| On-chain | `VoteListValidator` (linked list) + `VoteZkMintingPolicy` (Groth16; election id, voter root, election key and deadline are script parameters) |
+| Tally | `TallyService`: homomorphic sum, verified trustee shares, one decryption after the deadline, re-verifiable from the election manifest |
+| Test accounts | 5 voter accounts and 3 trustees auto-created at startup with Yaci DevKit funding |
 
 ### Demo Flow
-1. Election auto-created with 5 voters
-2. voter1 votes YES → on-chain tx
-3. voter2 votes NO → on-chain tx
+1. Election auto-created with 5 voters and 3 trustees
+2. voter1 votes YES → on-chain tx (encrypted ballot)
+3. voter2 votes NO → on-chain tx (encrypted ballot)
 4. voter1 tries again → **double vote rejected**
-5. Tally: YES: 1, NO: 1
+5. After the deadline: trustees decrypt the total → YES: 1, NO: 1
 
 ---
 

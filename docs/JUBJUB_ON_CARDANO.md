@@ -101,21 +101,28 @@ operations to circuit-lib.** ADR-0016 is its Cardano-native realization.
 
 ### 4.2 private-voting
 
-**Today:**
+**Before ADR-0005:**
 - Eligible voter set = Poseidon Merkle tree of public keys (where each
   key = `Poseidon(secret, 0)`).
 - Nullifier = `Poseidon(secret, electionId)`.
-- Commitment = `Poseidon(vote, nullifier)`.
+- Commitment = `Poseidon(vote, nullifier)`. This hid the voter but **not the
+  vote**: the nullifier is public and the vote is 0 or 1, so anyone could
+  hash both and compare (issue #7).
+
+**Now (ADR-0005):** each ballot is an exponential ElGamal ciphertext
+(`elgamal-jubjub-v1`) of the vote under a trustee-held election key; ballots
+are summed homomorphically and only the total is decrypted, with verified
+trustee shares. Voter keys and the nullifier are unchanged.
 
 **With Jubjub:**
 - **Voter keys become Jubjub keypairs.** Voter public key = `[sk]·G` where
   G is the Jubjub generator — a standard EdDSA public key. Voters can
   derive and prove membership using the same key they'd use for wallet
   signing.
-- **Vote commitment via Pedersen** = `[vote]·G + [r]·H` — homomorphic.
-  Allows **additive tallying** (sum the on-chain commitments → encrypted
-  total → threshold-decrypt off-chain by vote authority). No need for
-  the tallier to see individual votes.
+- **Additive tallying** — done with ElGamal, not Pedersen (see above). A
+  Pedersen commitment `[vote]·G + [r]·H` adds up too, but nobody can
+  decrypt the sum: opening it needs every voter's blinding `r`. ElGamal
+  ciphertexts add up *and* the key holders can decrypt the total.
 - **Sybil-resistant registration**: voter proves ownership of a Cardano
   wallet via Jubjub-Schnorr tied to an on-chain stake key commitment.
 - **Weighted voting by stake**: same proof, but the tally weights each
