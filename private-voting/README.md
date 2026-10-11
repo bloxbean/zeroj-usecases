@@ -43,9 +43,10 @@ decrypting once.
 - **The vote list is public:** anyone can see how many ballots were cast and when.
 
 **Demo shortcuts.** The server holds every voter's and every trustee's secret and proves on their
-behalf, so in this demo the server knows every vote. The protocol separates these roles; the demo
-does not. The trusted setup is single-party and for development only. See
-[Important Notes](#important-notes).
+behalf, so in this demo the server knows every vote and can link every nullifier to its voter.
+Its HTTP API is the operator's view: the privacy above holds against chain and mempool observers,
+not against the demo server. The protocol separates these roles; the demo does not. The trusted
+setup is single-party and for development only. See [Important Notes](#important-notes).
 
 ## Prerequisites
 
@@ -78,7 +79,11 @@ java --enable-native-access=ALL-UNNAMED \
   -jar build/libs/private-voting-*.jar
 ```
 
-Startup takes about 2 minutes the first time (circuit compilation and the dev setup for both circuits); the keys are then cached under `data/`, and later starts are faster.
+Startup takes about 2 minutes the first time (circuit compilation and the dev setup for both circuits); the keys are then cached under `data/`, and later starts are faster. The test voters' secret keys are also kept in `data/` (see [Important Notes](#important-notes)).
+
+**Upgrading from an earlier version.** Earlier versions derived the test voters' keys as
+`10000 + i`. Those voters have no key file, so the first start of this version draws random keys
+for them; nothing needs to be migrated, because every start creates a new election.
 
 The cache file names carry the circuit version (`setup-private-ballot-d10-v3-…`,
 `setup-trustee-dleq-v2-…`). Caches from before the move to `elgamal-jubjub-v1` (names without
@@ -236,7 +241,17 @@ private-voting/
 - **Unauthenticated endpoints.** The demo's HTTP API is open: `GET /api/results` after the
   deadline triggers the one-time decryption, and `POST /api/election/create` is refused once an
   election is finalized. A real deployment authenticates trustees and the administrator.
-- **Test voters.** 5 test voters are auto-created at startup with deterministic secret keys.
+- **Test voters and operator view.** 5 test voters are created on first start. Each voter's
+  secret key is drawn uniformly from the BLS12-381 scalar field with `SecureRandom` (about
+  254.9 bits; ADR-0009 D5), so nobody can match a nullifier to a voter by guessing keys. The keys
+  are written once to `data/voter-keys.txt` (atomically, readable by the owner only), and later
+  starts load them, so each new election registers the same voters. If that file exists but is
+  unreadable, malformed, or holds a different number of voters than `election.voter-count`, the
+  demo stops instead of drawing new keys. `./demo.sh private-voting --clean-cache` (or deleting
+  `data/`) resets them. The server holds these keys: `POST /api/vote` with a `voterLabel` is the
+  demo operator voting on that voter's behalf, not the voter authenticating. The API is
+  unauthenticated; authenticated operator access is the first production change. In a real
+  election each voter keeps their own key and proves on their own device.
 
 ## Configuration
 

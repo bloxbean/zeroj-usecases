@@ -99,7 +99,9 @@ it to its 28-byte payment key hash and binds it into the proof, so the proof aut
 **Path (`--account`, `--role`, `--index`):** pick any address — `--account 0 --role 0 --index 0`
 (defaults) is the first external address; `--role 1` is the internal/change chain, `--account 1` a
 second account. The **full path is a secret witness**: only the payment key hash and the recipient
-are public inputs, and the path is not written to `public-inputs.json`.
+are public inputs, and the path is not written to `public-inputs.json`. It is private from chain
+observers, not from anyone holding the account's xpub. The proof links the address to the
+recipient, so use a fresh recipient address.
 
 `--backend` picks the prover. The default is **`java`** (pure-Java multi-core): same speed as
 blst at this circuit size since ADR-0033/0034, no native lib, and safe on small-memory machines.
@@ -148,7 +150,10 @@ network **and** the default Blockfrost URL:
 **hidden prompt** (base address `m/1852'/1815'/0'/0/0`). To use a different admin, use a different
 mnemonic. This is a **funding wallet, not the wallet being proven** — use a low-value account. On
 `devnet` it's auto-funded; elsewhere it must **already hold ADA**. It only submits the demo
-transactions — the proof itself establishes ownership.
+transactions — the proof itself establishes ownership. It is also the voucher's **funder**: the 10 ADA voucher pays 2 ADA to the recipient
+and 6 ADA back to the admin's enterprise address, each in an output tagged with the voucher's
+outref; the remaining 2 ADA (`maxFee`) covers the fee, and whoever submits can keep what the fee
+doesn't use.
 
 ## `info` — inspect a bundle
 

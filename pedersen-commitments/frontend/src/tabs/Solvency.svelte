@@ -2,7 +2,8 @@
   import { get, post } from '../lib/api';
   import Outcome from '../lib/Outcome.svelte';
 
-  let state = $state<any>(null);
+  let state = $state<any>(null);      // public view: the period and the on-chain entries, no customer ids
+  let operator = $state<any>(null);   // the exchange operator's view (demo custody): ids, balances, salts
   let busy = $state('');
   let result = $state<any>(null);
   let reservesAda = $state(2000);
@@ -12,11 +13,14 @@
   let now = $state(Date.now());
 
   async function load() {
-    const r = await get('/solvency');
+    const [r, o] = await Promise.all([get('/solvency'), get('/solvency/operator')]);
     if (r.ok) {
       state = r.data;
       offset = r.data.chainTime - Date.now();
-      if (rows.length === 0) rows = r.data.book.map((c: any) => ({ id: c.id, balance: c.balance }));
+    }
+    if (o.ok) {
+      operator = o.data;
+      if (rows.length === 0) rows = o.data.book.map((c: any) => ({ id: c.id, balance: c.balance }));
     }
   }
 
@@ -73,14 +77,14 @@
     </div>
     <div class="action">
       <h4>3. Check (during the period)</h4>
-      {#each state?.book ?? [] as c}
+      {#each operator?.book ?? [] as c}
         <button class="primary" disabled={!!busy || !state?.period} onclick={() => act(`${c.id} checks the attestations`, '/solvency/check', { id: c.id })}>{c.id} checks</button>
       {/each}
       <button class="primary" disabled={!!busy || !state?.period} onclick={() => act('Auditor opens the total', '/solvency/audit')}>Auditor opens the total</button>
     </div>
     <div class="action cheat">
       <h4>Attest with a garbage delivery</h4>
-      <label>for <select bind:value={garbageFor}>{#each state?.book ?? [] as c}<option>{c.id}</option>{/each}</select></label>
+      <label>for <select bind:value={garbageFor}>{#each operator?.book ?? [] as c}<option>{c.id}</option>{/each}</select></label>
       <p class="hint">The exchange attests honestly but gives {garbageFor} an encrypted opening that does not open. The vault can
         only check its length; {garbageFor}'s check reports it as unopenable.</p>
       <button class="danger" disabled={!!busy || live} onclick={() => act('Proving solvency and attesting with a garbage delivery', '/solvency/attest', { reservesAda, garbageFor })}>Attest with garbage</button>
@@ -114,11 +118,13 @@
     <div class="columns">
       <div class="panel private">
         <h3>Private — the exchange's book (customers recover their own opening from the chain)</h3>
-        <p>Total liabilities: <strong>{state.liabilitiesAda} ADA</strong> (never published)</p>
+        <p class="hint">Operator view (<code>/api/solvency/operator</code>): this demo server holds every key, so it can
+          show the exchange's book. The public view (<code>/api/solvency</code>) names no customer.</p>
+        <p>Total liabilities: <strong>{operator?.liabilitiesAda ?? '…'} ADA</strong> (never published)</p>
         <table>
           <thead><tr><th>customer</th><th>balance</th><th>salt</th><th>blinding</th><th>id hash</th><th>last check</th></tr></thead>
           <tbody>
-            {#each state.book as c}
+            {#each operator?.book ?? [] as c}
               <tr><td>{c.id}</td><td>{c.balance}</td><td><code>{c.salt}</code></td><td><code>{c.blinding}</code></td><td><code>{c.idHash}</code></td><td>{c.check}</td></tr>
             {/each}
           </tbody>

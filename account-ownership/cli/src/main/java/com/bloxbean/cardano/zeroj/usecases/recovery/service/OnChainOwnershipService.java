@@ -1,7 +1,9 @@
 package com.bloxbean.cardano.zeroj.usecases.recovery.service;
 
 import com.bloxbean.cardano.client.account.Account;
+import com.bloxbean.cardano.client.address.Address;
 import com.bloxbean.cardano.client.address.AddressProvider;
+import com.bloxbean.cardano.client.api.MinAdaCalculator;
 import com.bloxbean.cardano.client.api.model.Amount;
 import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.cardano.client.backend.api.BackendService;
@@ -13,7 +15,10 @@ import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
 import com.bloxbean.cardano.client.quicktx.ScriptTx;
 import com.bloxbean.cardano.client.quicktx.Tx;
 import com.bloxbean.cardano.client.transaction.spec.TransactionInput;
+import com.bloxbean.cardano.client.transaction.spec.TransactionOutput;
+import com.bloxbean.cardano.client.transaction.spec.Value;
 import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier;
+import com.bloxbean.cardano.client.util.HexUtil;
 
 import static com.bloxbean.cardano.client.common.CardanoConstants.LOVELACE;
 import org.julclang.clientlib.JulcScriptLoader;
@@ -21,20 +26,33 @@ import org.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
 import com.bloxbean.cardano.zeroj.usecases.recovery.onchain.OwnershipProofValidator;
 
 import java.math.BigInteger;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
 /**
  * Deploys the {@link OwnershipProofValidator} — the <b>practical</b> recovery gate (ADR-0029 M5) —
- * and drives it on-chain: lock a UTxO whose datum is the address's payment key hash (the derivation
- * circuit's 28 public inputs), then unlock it with a Groth16 proof of the full CIP-1852 derivation.
- * The unlock succeeds only if the spender proved knowledge of the <em>root key</em> behind the
- * address — the real ownership statement, no registered secret.
+ * and drives it on-chain: lock a voucher UTxO whose datum names the address's payment key hash (the
+ * circuit's first public input, packed), then unlock it with a Groth16 proof of the full CIP-1852
+ * derivation. The unlock succeeds only if the spender proved knowledge of the <em>root key</em>
+ * behind the address — the real ownership statement, no registered secret.
+ *
+ * <p>The unlock pays through outputs tagged with the voucher's outref (ADR-0009 D6): the refund to
+ * the proof's recipient, and the remainder ({@code voucher − refund − maxFee}) back to the funder's
+ * enterprise address. Creation refuses terms the validator would reject, and a positive remainder
+ * below the min-UTxO of its tagged output.</p>
  */
 public class OnChainOwnershipService {
 
     /** Demo refund the recipient is paid on unlock (2 ADA); the datum encodes this as the minimum. */
     public static final long DEMO_REFUND_LOVELACE = 2_000_000L;
+    /**
+     * The fee slack the voucher allows (2 ADA). Whoever submits the unlock may keep {@code maxFee}
+     * minus the actual fee, so a funder sets it close to the expected fee.
+     */
+    public static final long DEMO_MAX_FEE_LOVELACE = 2_000_000L;
+    /** The voucher's value: 10 ADA. */
+    public static final long VOUCHER_LOVELACE = 10_000_000L;
 
     private final BackendService backendService;
     private final Account adminAccount;
@@ -66,24 +84,40 @@ public class OnChainOwnershipService {
     public String scriptAddress() { initialize(); return scriptAddr; }
 
     /**
-     * Lock the ownership gate (datum = {@code OwnershipDatum(pkh, refundAmount)}), then verify by
-     * unlocking with the recipient-bound derivation proof — the unlock pays the bound recipient at
-     * least {@code refundLovelace}, which the validator enforces. Returns the unlock tx hash.
+     * Lock the ownership gate (datum = {@code OwnershipDatum(pkh, refundAmount, funderPkh, maxFee)}),
+     * then verify by unlocking with the recipient-bound derivation proof — the unlock pays the bound
+     * recipient at least {@code refundLovelace} and the remainder back to the admin (the funder),
+     * which the validator enforces. Uses {@link #DEMO_MAX_FEE_LOVELACE}. Returns the unlock tx hash.
      */
     public String verifyOwnershipOnChain(SnarkjsToCardano.ProofCompressed c, byte[] pkh,
                                          byte[] recipientPkh, String recipientAddress,
                                          long refundLovelace) throws Exception {
+        return verifyOwnershipOnChain(c, pkh, recipientPkh, recipientAddress, refundLovelace, DEMO_MAX_FEE_LOVELACE);
+    }
+
+    /** As {@link #verifyOwnershipOnChain(SnarkjsToCardano.ProofCompressed, byte[], byte[], String, long)}, with an explicit {@code maxFee}. */
+    public String verifyOwnershipOnChain(SnarkjsToCardano.ProofCompressed c, byte[] pkh,
+                                         byte[] recipientPkh, String recipientAddress,
+                                         long refundLovelace, long maxFeeLovelace) throws Exception {
         initialize();
-        // Datum = OwnershipDatum(pkh, refundAmount): the pkh the proof must attest + the minimum
-        // lovelace the recipient is owed. ConstrData (alt 0), matching the on-chain record.
+        byte[] funderPkh = new Address(adminAccount.baseAddress()).getPaymentCredentialHash()
+                .orElseThrow(() -> new IllegalStateException("admin has no payment key credential"));
+        String funderAddress = adminAccount.enterpriseAddress();
+        long remainder = checkVoucherTerms(VOUCHER_LOVELACE, refundLovelace, maxFeeLovelace,
+                tagOutputMinLovelace(funderAddress));
+
+        // Datum = OwnershipDatum(pkh, refundAmount, funderPkh, maxFee): the pkh the proof must
+        // attest, the minimum lovelace the recipient is owed, who gets the remainder back, and the
+        // fee slack. ConstrData (alt 0), matching the on-chain record.
         var datum = ConstrPlutusData.builder().alternative(0)
                 .data(ListPlutusData.of(new BytesPlutusData(pkh),
-                        BigIntPlutusData.of(BigInteger.valueOf(refundLovelace))))
+                        BigIntPlutusData.of(BigInteger.valueOf(refundLovelace)),
+                        new BytesPlutusData(funderPkh),
+                        BigIntPlutusData.of(BigInteger.valueOf(maxFeeLovelace))))
                 .build();
 
-        // 10 ADA locked / 2 back: this validator's execution fee (28 public-input scalar-muls +
-        // pairings) is far larger than the commitment gate's — leave headroom so change stays
-        // above min-ADA when both outputs land on the admin address.
+        // 10 ADA locked: 2 to the recipient, up to maxFee (2) of fee slack, and the rest (6) back
+        // to the admin in a tagged output.
         //
         // Also carve out a dedicated 5 ADA pure-ADA output back to the admin, used as explicit
         // collateral for the unlock below. On public backends (Blockfrost) the admin's UTxOs may
@@ -92,7 +126,7 @@ public class OnChainOwnershipService {
         // (CollateralContainsNonADA / BadInputsUTxO). A fresh, confirmed, ADA-only output from
         // this very lock tx sidesteps both. Yaci DevKit never hit this (no lag, ADA-only wallet).
         var lockTx = new Tx()
-                .payToContract(scriptAddr, Amount.ada(10), datum)
+                .payToContract(scriptAddr, Amount.lovelace(BigInteger.valueOf(VOUCHER_LOVELACE)), datum)
                 .payToAddress(adminAccount.baseAddress(), Amount.ada(5))
                 .from(adminAccount.baseAddress());
         var lock = new QuickTxBuilder(backendService).compose(lockTx)
@@ -117,16 +151,26 @@ public class OnChainOwnershipService {
         var collateralInput = new TransactionInput(collateralUtxo.getTxHash(), collateralUtxo.getOutputIndex());
 
         // Redeemer = OwnershipRedeemer(piA, piB, piC, recipient): the proof + the recipient it was
-        // bound to (public inputs 28..55). ConstrData (alt 0), matching the on-chain record.
+        // bound to (the second, packed public input). ConstrData (alt 0), matching the on-chain record.
         var redeemer = ConstrPlutusData.builder().alternative(0)
                 .data(ListPlutusData.of(new BytesPlutusData(c.piA()), new BytesPlutusData(c.piB()),
                         new BytesPlutusData(c.piC()), new BytesPlutusData(recipientPkh))).build();
 
-        // Pay the bound recipient at least the datum's refund amount — the validator enforces this,
-        // so the tx submitter cannot redirect or short-change the funds. Change returns to admin.
-        var unlockTx = new ScriptTx().collectFrom(scriptUtxo, redeemer)
-                .payToAddress(recipientAddress, Amount.lovelace(BigInteger.valueOf(refundLovelace)))
-                .attachSpendingValidator(script);
+        // Pay the bound recipient the refund and the admin the remainder, each tagged with the
+        // voucher's outref — the validator counts only tagged outputs, so the tx submitter cannot
+        // redirect or keep the funds. The remainder goes to the admin's enterprise address, never
+        // the change address, so fee balancing can't take the fee out of a tagged output. Same key:
+        // one combined output.
+        var tag = outRefTag(scriptUtxo.getTxHash(), scriptUtxo.getOutputIndex());
+        var unlockTx = new ScriptTx().collectFrom(scriptUtxo, redeemer);
+        if (Arrays.equals(recipientPkh, funderPkh)) {
+            unlockTx.payToContract(funderAddress, Amount.lovelace(BigInteger.valueOf(refundLovelace + remainder)), tag);
+        } else {
+            unlockTx.payToContract(recipientAddress, Amount.lovelace(BigInteger.valueOf(refundLovelace)), tag);
+            if (remainder > 0)
+                unlockTx.payToContract(funderAddress, Amount.lovelace(BigInteger.valueOf(remainder)), tag);
+        }
+        unlockTx.attachSpendingValidator(script);
         var unlock = new QuickTxBuilder(backendService).compose(unlockTx)
                 .withTxEvaluator(LocalJulcEvaluator.create(backendService))
                 .withSigner(SignerProviders.signerFrom(adminAccount))
@@ -138,6 +182,45 @@ public class OnChainOwnershipService {
             throw new RuntimeException("on-chain ownership proof verify failed: " + unlock.getResponse());
         waitForTx(unlock.getValue());
         return unlock.getValue();
+    }
+
+    /**
+     * Check a voucher's terms before locking it, returning the remainder owed to the funder. Refuses
+     * terms the validator would reject ({@code refund ≥ 0}, {@code maxFee ≥ 0},
+     * {@code refund + maxFee ≤ voucher}), and a remainder that is positive but below
+     * {@code remainderMinLovelace}, the min-UTxO of its tagged output (ADR-0009 D6).
+     */
+    public static long checkVoucherTerms(long voucherLovelace, long refundLovelace, long maxFeeLovelace,
+                                         long remainderMinLovelace) {
+        if (refundLovelace < 0 || maxFeeLovelace < 0)
+            throw new IllegalArgumentException("refund and maxFee must be non-negative");
+        if (refundLovelace > voucherLovelace - maxFeeLovelace)
+            throw new IllegalArgumentException("refund + maxFee exceeds the voucher's " + voucherLovelace + " lovelace");
+        long remainder = voucherLovelace - refundLovelace - maxFeeLovelace;
+        if (remainder > 0 && remainder < remainderMinLovelace)
+            throw new IllegalArgumentException("remainder " + remainder + " lovelace is below the min-UTxO "
+                    + remainderMinLovelace + " of its tagged output: lower maxFee or raise the refund");
+        return remainder;
+    }
+
+    /** The voucher tag: the outref {@code Constr 0 [B txId, I index]}, as the validator compares it. */
+    public static ConstrPlutusData outRefTag(String txHash, int index) {
+        return ConstrPlutusData.builder().alternative(0)
+                .data(ListPlutusData.of(new BytesPlutusData(HexUtil.decodeHexString(txHash)),
+                        BigIntPlutusData.of(BigInteger.valueOf(index))))
+                .build();
+    }
+
+    /** Min-UTxO of an ADA-only output to {@code address} tagged with an outref (worst-case index). */
+    private long tagOutputMinLovelace(String address) throws Exception {
+        var pp = backendService.getEpochService().getProtocolParameters();
+        if (!pp.isSuccessful()) throw new IllegalStateException("protocol parameters: " + pp.getResponse());
+        var output = TransactionOutput.builder()
+                .address(address)
+                .value(new Value(MinAdaCalculator.DUMMY_COIN_VAL, List.of()))
+                .inlineDatum(outRefTag("00".repeat(32), 65_535))
+                .build();
+        return new MinAdaCalculator(pp.getValue()).calculateMinAda(output).longValueExact();
     }
 
     private void waitForTx(String txHash) throws Exception {

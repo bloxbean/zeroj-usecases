@@ -7,7 +7,7 @@
 > **Update — decision taken & implemented.** Since this analysis, **Option C (recipient binding as a
 > circuit public input)** was chosen and shipped: the circuit takes the recipient's payment key hash
 > as a second public input — both the pkh and the recipient are **packed** into one field element
-> each, so **2 public inputs (~2.8×10⁹ CPU steps, ~0.45 ADA on-chain)** — `account`/`role`/`index`
+> each, so **2 public inputs (~2.3×10⁹ CPU steps on-chain)** — `account`/`role`/`index`
 > are all secret, and the on-chain validator **verifies the proof and enforces the payout goes to the
 > bound recipient for the datum's amount**. This report is kept as the **decision record** — the
 > sections below are the threat model and the options weighed to get there; the pkh-only "starting
@@ -69,9 +69,10 @@ validate = Groth16BLS12381Lib.verify(datum, piA, piB, piC, vkAlpha, vkBeta, vkGa
 It checks **only** that the proof verifies against the pkh. It does **not** inspect the
 `ScriptContext`: it does not bind the signer, the outputs/recipient, a nullifier, or any
 authorization field. *(This has since been done: the validator now takes `datum = (pkh,
-refundAmount)` and `redeemer = (proof, recipient)`, verifies the proof for `[pkh, recipient]`, and
-inspects the `ScriptContext` to enforce that an output pays the bound recipient at least
-`refundAmount`. See the flow doc.)*
+refundAmount, funderPkh, maxFee)` and `redeemer = (proof, recipient)`, verifies the proof for
+`[pkh, recipient]`, and inspects the `ScriptContext` to enforce that outputs tagged with the
+voucher's outref pay the bound recipient at least `refundAmount` and the funder the remainder
+(ADR-0009 D6). See the flow doc.)*
 
 ### 2.3 The current on-chain "verification" flow (CLI `verify --onchain`)
 A **self-check**, not a refund: a funding/admin account **locks** a gate UTxO at the validator
@@ -289,7 +290,7 @@ Combine the voucher (T2/T4) with recipient binding from A, B, C, or E (T1/T3) fo
   nothing new**. (With Option C the recipient becomes public — that is the payout address, expected.)
 - **On-chain cost/scale:** Groth16 BLS12-381 verify uses the Plutus V3 pairing builtins; cost is
   O(#public inputs). The shipped design **packs** the pkh and recipient into one field element each —
-  **2 public inputs, ~2.8×10⁹ CPU steps (~0.45 ADA)**. (A byte-per-input encoding would be 56 inputs /
+  **2 public inputs, ~2.3×10⁹ CPU steps**. (A byte-per-input encoding would be 56 inputs /
   ~13.4×10⁹ steps and exceed the per-tx limit — hence the packing; see the flow doc §7.) Verify effort
   is independent of the 19M-constraint circuit size.
 - **Upgradeability & emergency exit:** the validator is immutable once deployed. Include an

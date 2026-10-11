@@ -69,8 +69,9 @@ class PrivateVotingYaciE2ETest {
         ReflectionTestUtils.setField(tally, "settleSeconds", 5L);
 
         election.createElection("E2E proposal");
+        var random = new SecureRandom();
         for (int i = 0; i < 4; i++) {
-            election.registerVoter("voter" + i, BigInteger.valueOf(20001 + i));
+            election.registerVoter("voter" + i, VoterKeyStore.randomSecretKey(random));
         }
         var config = election.finalizeElection();
         onChain.deploy(config);

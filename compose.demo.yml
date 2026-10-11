@@ -43,7 +43,7 @@ services:
       <<: *spring-env
       SERVER_PORT: 8080
     ports:
-      - "${PROOF_OF_RESERVES_PORT:-8089}:8080"
+      - "127.0.0.1:${PROOF_OF_RESERVES_PORT:-8089}:8080"
     volumes:
       - proof-of-reserves-data:/app/data
 
@@ -60,7 +60,7 @@ services:
       <<: *spring-env
       SERVER_PORT: 8080
     ports:
-      - "${IDENTITY_KYC_PORT:-8087}:8080"
+      - "127.0.0.1:${IDENTITY_KYC_PORT:-8087}:8080"
     volumes:
       - identity-kyc-data:/app/data
 
@@ -77,7 +77,7 @@ services:
       <<: *spring-env
       SERVER_PORT: 8080
     ports:
-      - "${NFT_OWNERSHIP_PORT:-8085}:8080"
+      - "127.0.0.1:${NFT_OWNERSHIP_PORT:-8085}:8080"
     volumes:
       - nft-ownership-data:/app/data
 
@@ -94,7 +94,7 @@ services:
       <<: *spring-env
       SERVER_PORT: 8080
     ports:
-      - "${VOTING_PORT:-8086}:8080"
+      - "127.0.0.1:${VOTING_PORT:-8086}:8080"
     volumes:
       - voting-data:/app/data
 
@@ -111,7 +111,7 @@ services:
       <<: *spring-env
       SERVER_PORT: 8080
     ports:
-      - "${AIRDROP_PORT:-8083}:8080"
+      - "127.0.0.1:${AIRDROP_PORT:-8083}:8080"
     volumes:
       - airdrop-data:/app/data
 
@@ -127,9 +127,8 @@ services:
     environment:
       <<: *spring-env
       SERVER_PORT: 8080
-      DPP_ROCKSDB_PATH: /app/data/dpp-trie
     ports:
-      - "${DPP_PORT:-8088}:8080"
+      - "127.0.0.1:${DPP_PORT:-8088}:8080"
     volumes:
       - dpp-data:/app/data
 
@@ -146,7 +145,7 @@ services:
       <<: *spring-env
       SERVER_PORT: 8080
     ports:
-      - "${SELECTIVE_DISCLOSURE_PORT:-8091}:8080"
+      - "127.0.0.1:${SELECTIVE_DISCLOSURE_PORT:-8091}:8080"
     volumes:
       - selective-disclosure-data:/app/data
 
@@ -163,7 +162,7 @@ services:
       <<: *spring-env
       SERVER_PORT: 8080
     ports:
-      - "${REUSABLE_KYC_PORT:-8092}:8080"
+      - "127.0.0.1:${REUSABLE_KYC_PORT:-8092}:8080"
     volumes:
       - reusable-kyc-data:/app/data
 
@@ -180,7 +179,7 @@ services:
       <<: *spring-env
       SERVER_PORT: 8080
     ports:
-      - "${PEDERSEN_COMMITMENTS_PORT:-8093}:8080"
+      - "127.0.0.1:${PEDERSEN_COMMITMENTS_PORT:-8093}:8080"
     volumes:
       - pedersen-commitments-data:/app/data
 

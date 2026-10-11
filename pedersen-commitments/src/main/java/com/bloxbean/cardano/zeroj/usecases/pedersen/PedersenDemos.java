@@ -143,10 +143,12 @@ public final class PedersenDemos {
         var vault = solvency.vault(pkh(exchange), period);
         Map<String, NoteViewingKey> keys = new LinkedHashMap<>();
         for (String id : List.of("alice", "bob", "carol", "dave")) keys.put(id, NoteViewingKey.generate(random));
-        var book = List.of(SolvencyAttestation.Customer.of("alice", 500_000_000L, keys.get("alice").readerKey()),
+        // Each attestation salts, blinds and shuffles the book afresh (ADR-0009 D7).
+        var book = SolvencyAttestation.forAttestation(List.of(
+                SolvencyAttestation.Customer.of("alice", 500_000_000L, keys.get("alice").readerKey()),
                 SolvencyAttestation.Customer.of("bob", 1_200_000_000L, keys.get("bob").readerKey()),
                 SolvencyAttestation.Customer.of("carol", 300_000_000L, keys.get("carol").readerKey()),
-                SolvencyAttestation.Customer.of("dave", 0, keys.get("dave").readerKey()));
+                SolvencyAttestation.Customer.of("dave", 0, keys.get("dave").readerKey())));
         long reserves = 2_000_000_000L;
         String attested = ok(SolvencyAttestation.attest(backend, vault, exchange, reserves,
                 SolvencyAttestation.entries(book), SolvencyAttestation.auditorDelivery(book, registry.admitted(backend).viewKey()),

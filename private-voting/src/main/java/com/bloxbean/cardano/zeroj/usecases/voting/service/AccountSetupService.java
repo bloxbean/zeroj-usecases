@@ -14,10 +14,17 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Path;
+import java.security.SecureRandom;
 import java.util.*;
 
 /**
  * Creates test voter accounts on Yaci DevKit and registers them in the election.
+ *
+ * <p>Each voter's secret key is random ({@link VoterKeyStore}, ADR-0009 D5) and persisted under
+ * the demo data directory, so a restart registers the same voters in its new election. The server
+ * holds these keys and votes by label on the voters' behalf: that is a demo-operator action, and
+ * the server can link every nullifier to its voter.
  */
 @Service
 public class AccountSetupService {
@@ -36,6 +43,9 @@ public class AccountSetupService {
     @Value("${demo.topup.enabled:true}")
     private boolean topUpEnabled;
 
+    @Value("${demo.data-dir:./data}")
+    private String dataDir = "./data";
+
     private final ElectionService electionService;
     private final VoteCircuitService circuitService;
     private final BackendService backendService;
@@ -53,14 +63,17 @@ public class AccountSetupService {
     public void setup() {
         log.info("Setting up election with {} test voters...", voterCount);
 
+        // Load the voters' keys, or generate them on first start; a damaged key file stops the demo.
+        Map<String, BigInteger> keys = VoterKeyStore.loadOrCreate(
+                Path.of(dataDir).resolve(VoterKeyStore.FILE_NAME), voterCount, new SecureRandom());
+
         // Create election
         electionService.createElection(defaultElectionName);
 
         // Create voter accounts
-        for (int i = 1; i <= voterCount; i++) {
-            String label = "voter" + i;
-            // Use deterministic secret keys for reproducibility
-            BigInteger secretKey = BigInteger.valueOf(10000 + i);
+        for (var entry : keys.entrySet()) {
+            String label = entry.getKey();
+            BigInteger secretKey = entry.getValue();
             BigInteger publicKey = circuitService.computePublicKey(secretKey);
 
             var account = new Account(Networks.testnet());

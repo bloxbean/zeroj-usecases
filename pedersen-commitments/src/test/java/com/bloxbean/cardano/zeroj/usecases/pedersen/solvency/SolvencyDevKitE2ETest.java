@@ -45,7 +45,8 @@ class SolvencyDevKitE2ETest {
         var period = new SolvencyAttestation.Period(now + 40_000, now + 90_000);
         var vault = solvency.vault(exchange.hdKeyPair().getPublicKey().getKeyHash(), period);
         String vaultAddress = SolvencyAttestation.address(vault);
-        List<Customer> book = SolvencyCircuitTest.book();   // 2,000 ADA of liabilities, in lovelace
+        // 2,000 ADA of liabilities, in lovelace, salted, blinded and shuffled for this attestation (ADR-0009 D7).
+        List<Customer> book = SolvencyAttestation.forAttestation(SolvencyCircuitTest.book());
         long reserves = 2_000_000_000L;
 
         assertThrows(RuntimeException.class, () -> solvency.prove(reserves - 1, book), "insolvent books have no proof");

@@ -4,7 +4,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,7 +17,6 @@ import java.util.concurrent.ConcurrentHashMap;
 /** REST API behind the three tabs. Every action runs on Yaci DevKit; errors map in {@link DemoErrors}. */
 @RestController
 @RequestMapping("/api")
-@CrossOrigin(origins = "*")
 public class DemoController {
 
     private static final Logger log = LoggerFactory.getLogger(DemoController.class);
@@ -192,9 +190,16 @@ public class DemoController {
 
     // --- C. Solvency ------------------------------------------------------------------------
 
+    /** The public view: the period and the on-chain entries, with no customer ids or balances. */
     @GetMapping("/solvency")
     public Map<String, Object> solvencyState() throws Exception {
         return solvency.state();
+    }
+
+    /** The exchange operator's view (demo custody): the book with ids, balances and salts. */
+    @GetMapping("/solvency/operator")
+    public Map<String, Object> solvencyOperatorView() throws Exception {
+        return solvency.operatorView();
     }
 
     @PostMapping("/solvency/book")

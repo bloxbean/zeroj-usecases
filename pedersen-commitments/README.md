@@ -65,7 +65,10 @@ Wallets count a note only if its delivery opens **and** it names them as owner; 
 that does not open is reported as **unopenable**. The auditor reads each amount from the limbs
 and labels it *proof-enforced* or *issuer-claimed*.
 
-**Not hidden:** owners (the transfer graph), the redeemed price, the reader policy.
+**Not hidden:** owners (the transfer graph), the redeemed price, the reader policy. The price
+is public, so a redemption tells observers something about the redeemed note: redeeming a whole
+note (price equal to its amount, change 0) publishes the note's amount, and a partial redemption
+shows that the note held at least the price.
 
 ## Confidential payroll — proof-enforced issuance
 
@@ -74,6 +77,9 @@ per transaction with a proof that each salary note's limbs encrypt its committed
 tax authority's registered key. The tax authority reads every salary from the chain — including
 payslips already transferred or cashed out — and an employer that tries to under-report one has
 no proof. Employees read their payslips with their viewing keys.
+
+Cashing out is a redemption with a public amount, as in points: cashing out a whole payslip
+publishes the salary it held, and a partial cash-out shows that it held at least that amount.
 
 ## Sealed-bid auction — enforced bid disclosure (ADR-0008)
 
@@ -86,8 +92,15 @@ its amount. Losers get their deposits back, the seller the price, the winner the
 change; every payout is tagged with the lot's unique token. If the auctioneer never settles,
 anyone can refund after the deadline.
 
-**Trust:** the auctioneer sees every bid (it could leak them); losing bids never appear on chain.
+**Trust:** the auctioneer sees every bid (it could leak them). Losing bids never appear on chain
+in the clear, but they are not fully hidden: every bid is proved to lie in `[reserve, deposit]`,
+and settlement proves the winner is the earliest highest bid, so every losing bid lies in
+`[reserve, price]`, and losing bids placed before the winner's lie strictly below the price.
 Three distinct keys can fill a lot (no sybil protection in the demo).
+
+**Demo custody:** the server holds the auctioneer's decryption key, and `GET /api/auction`
+returns the auctioneer's view (`auctioneerView`, every decrypted bid) to anyone who calls it. That
+is the operator's view for the demo, not what a chain observer sees.
 
 ## B. Committed credential gate
 
@@ -130,6 +143,29 @@ proves that the hidden total is at most `R`. This follows the Provisions approac
   comes from the chain, not from the exchange, and an entry that does not open is evidence.
 - The attestation also carries the total's opening encrypted to the auditor's registered key; the
   auditor opens it against the sum of the on-chain commitments.
+- **Fresh per attestation** (ADR-0009 D7). Every attestation draws a new 32-byte salt and a new
+  blinding for every customer, and shuffles the entries with `SecureRandom`
+  (`SolvencyAttestation.forAttestation`). The proof's witness, the datum's entries and the sealed
+  deliveries all follow the shuffled order. Two attestations of the same book share no id hash,
+  no commitment and no position, so an observer cannot link a customer across periods. A
+  customer finds their entry by the id hash of this period's salt, which reaches them with their
+  statement, never by position.
+- **The exchange's key** (ADR-0009 D11). The exchange's signature makes an attestation the
+  exchange's, so its wallet key is random (a 24-word mnemonic from `SecureRandom`) and persisted
+  in the data directory as `data/solvency-exchange.wallet.key`, next to its deployment state
+  `data/solvency-exchange.deployment` (the payment key hash the vaults take as a parameter). Both
+  are written atomically and readable by the owner only. A restart loads the key, and tops the
+  wallet up through DevKit's top-up API when it holds less than 5,000 ADA. If the deployment
+  state exists but the key is missing, unreadable, invalid or has another key hash, the app stops
+  with an error instead of creating a new key. `./demo.sh pedersen-commitments --clean-cache`
+  removes both together, which amounts to a new exchange.
+- **Public and operator views** (ADR-0009 D10). `GET /api/solvency` is the public view: the
+  period, the vault and its on-chain entries (id hash, commitment, delivery), with no customer
+  id, balance or total liabilities, so nothing in it pairs a customer with an entry.
+  `GET /api/solvency/operator` is the exchange's private book (ids, balances, this period's salts
+  and blindings, id hashes, last check results), which the UI shows in its "Private" panel because
+  the demo server holds every key. `POST /api/solvency/check` returns only the named customer's
+  own result.
 
 **Not provided:**
 - borrowed reserves, held for the period;
@@ -229,9 +265,19 @@ frontend/       Svelte 5 + Vite UI, built into src/main/resources/static
 
 - **Dev trusted setup only.** Whoever holds the toxic waste can forge proofs. Production needs
   an MPC ceremony.
-- **Demo custody.** The web demo's server holds every wallet's spending and viewing keys and the
-  auditors' keys, and scans the chain on their behalf; its API is unauthenticated. Real wallets
-  scan in their own process (ADR-0055 D9: never as a shared or network-facing service).
+- **Demo custody and operator view** (ADR-0009 D10). The web demo's server holds every wallet's
+  spending and viewing keys, the auditors' keys and the auctioneer's key, and scans the chain on
+  their behalf. Its API is the operator's view: it returns what only a user should see (the
+  solvency book at `/api/solvency/operator`, the auctioneer's decrypted bids, wallet balances
+  and note openings). The privacy statements on this page hold against chain and mempool
+  observers, not against the demo server. The API is unauthenticated; authenticated operator
+  access is the first production change. Real wallets scan in their own process (ADR-0055 D9:
+  never as a shared or network-facing service).
+- **Wallet keys.** No wallet uses a published mnemonic. The solvency exchange's key is persisted
+  (above); every other demo wallet is random and created afresh on each start, so a restart
+  starts those demos over.
+- **Upgrading.** Demo state does not survive this version: the solvency book, attestations and
+  every other demo start fresh, and the exchange gets a new persisted key on first start.
 - **Unreviewed assumptions.** The note delivery profile rests on ADR-0055's assumptions A1–A3,
   and the auction's settlement relation is this repo's own composition (ADR-0008); both need
   external review.

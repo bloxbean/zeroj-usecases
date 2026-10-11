@@ -42,7 +42,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ElectionService {
 
     private static final Logger log = LoggerFactory.getLogger(ElectionService.class);
-    private static final BigInteger FR = new BigInteger(
+    /** The BLS12-381 scalar field order {@code r}: the field of the ballot circuit. */
+    static final BigInteger FR = new BigInteger(
             "52435875175126190479447740508185965837690552500527637822603658699938581184513");
     private static final byte[] ELECTION_ID_TAG =
             "zeroj.private-voting.election-id.v2".getBytes(StandardCharsets.UTF_8);

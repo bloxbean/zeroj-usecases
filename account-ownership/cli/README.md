@@ -52,8 +52,8 @@ The launcher auto-sizes the heap (~80 % of RAM; override with `AOR_JAVA_OPTS="-X
 on-chain steps the transaction payer's mnemonic comes from `AOR_ADMIN_MNEMONIC` or a hidden
 prompt; a local [Yaci DevKit](https://github.com/bloxbean/yaci-devkit) devnet needs no Blockfrost
 key. `--account 0 --role 0 --index 0` is the default first address; any path works (`--role 1` =
-change addresses, `--account 1` = a second account) — the full path stays private; only the pkh and
-the chosen `--recipient` are in the proof.
+change addresses, `--account 1` = a second account) — the full path stays private from observers
+(an xpub holder can still find it); only the pkh and the chosen `--recipient` are in the proof.
 
 ### Option 2 — Docker (no Java install)
 
@@ -106,7 +106,7 @@ anyway). Grab Option 1 for real proving.
 | `export-r1cs` | coordinator, once | export the circuit `.r1cs` for an **external** snarkjs ceremony |
 | `import`      | coordinator, once | import a finalized ceremony `.zkey` → key bundle (no snarkjs) |
 | `setup`       | anyone, testing   | generate a **local, dev-only** key bundle (single-party) |
-| `prove`       | user, each proof  | generate a proof from your mnemonic, bound to `--recipient` (`--account`/`--role`/`--index` pick the address; all stay private) |
+| `prove`       | user, each proof  | generate a proof from your mnemonic, bound to `--recipient` (`--account`/`--role`/`--index` pick the address; all stay private from observers) |
 | `verify`      | user, each proof  | check a proof off-chain (default) or on-chain |
 | `info`        | anyone            | inspect a key bundle |
 
@@ -211,10 +211,14 @@ the light ones (`verify`/`info`) with the default heap — no manual `-Xmx`.
 - Mnemonic: hidden prompt only; the derived root key stays in memory and is never persisted or sent.
 - The full derivation path (`--account`, `--role`, `--index`) is a **secret** circuit input — it is
   not written to `public-inputs.json` and cannot be read from the proof. Only the payment key hash
-  and the chosen recipient are public (each packed into one field element).
+  and the chosen recipient are public (each packed into one field element). The path is private from
+  observers, not from anyone holding the account's xpub.
+- The proof links the proven address to the recipient. Use a **fresh recipient** address.
 - The proof is **bound to the recipient**: it authorises a payout only to the `--recipient` address.
   A copied proof cannot be redirected, and the on-chain validator enforces that the payout goes to
-  that recipient for the datum's refund amount.
+  that recipient for the datum's refund amount, and that the remainder (less the datum's `maxFee`)
+  goes back to the funder, both through outputs tagged with the voucher's outref (ADR-0009 D6). The
+  submitter can keep `maxFee` minus the actual fee.
 - `verify` recomputes the public inputs from the address + recipient (not the file's `publicInputs`
   array), so an edited `public-inputs.json` is caught. Pass `--expect-address`/`--expect-recipient`
   (bech32) to check the proof against values you know independently — the meaningful assurance when

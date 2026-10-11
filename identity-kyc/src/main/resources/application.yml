@@ -27,3 +27,8 @@ credential:
   # Minimum age for eligibility
   min-age: 18
   # Approved countries configured in IssuerService: USA(840), GBR(826), DEU(276), FRA(250), JPN(392)
+
+demo:
+  # Demo data directory (/app/data in Docker): the issuer key and its deployment state.
+  # ./demo.sh identity-kyc --clean-cache removes them together (ADR-0009 D11).
+  data-dir: ${DEMO_DATA_DIR:./data}

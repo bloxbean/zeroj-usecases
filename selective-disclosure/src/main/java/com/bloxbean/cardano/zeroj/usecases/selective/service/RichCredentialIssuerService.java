@@ -1,16 +1,18 @@
 package com.bloxbean.cardano.zeroj.usecases.selective.service;
 
 import org.zeroj.circuit.lib.jubjub.EdDSAJubjub;
-import org.zeroj.circuit.lib.jubjub.JubjubCurve;
 import org.zeroj.circuit.lib.jubjub.JubjubMessage;
 import org.zeroj.circuit.lib.jubjub.JubjubPoint;
 import com.bloxbean.cardano.zeroj.usecases.selective.circuit.CredentialSchema;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
+import java.nio.file.Path;
+import java.security.SecureRandom;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,14 +22,21 @@ import java.util.Map;
  * (dobYear, country, role, salaryBracket, name) — all hidden from
  * verifiers. Holders prove arbitrary predicates over these fields without
  * revealing them.
+ *
+ * <p>The issuer's EdDSA-Jubjub key is generated with {@link SecureRandom} on first start and
+ * persisted in the demo data directory by {@link IssuerKeyStore} (ADR-0009 D11); a restart loads it.
+ * Earlier versions derived it from a seed published in this file, so anyone could sign credentials
+ * the deployed validators accepted. If the deployment state exists but the key is missing,
+ * unreadable or doesn't match, the demo stops instead of creating a new key.
  */
 @Service
 public class RichCredentialIssuerService {
 
     private static final Logger log = LoggerFactory.getLogger(RichCredentialIssuerService.class);
 
-    private static final BigInteger ISSUER_SECRET_SEED = new BigInteger(
-            "feedfacecafebeef1234567890abcdef0fedcba9876543210feedface00112233", 16);
+    /** The demo data directory: the issuer key, its deployment state and the setup cache. */
+    @Value("${demo.data-dir:./data}")
+    private String dataDir;
 
     private EdDSAJubjub.Keypair issuerKeypair;
     private final Map<String, RichCredential> credentials = new LinkedHashMap<>();
@@ -46,11 +55,10 @@ public class RichCredentialIssuerService {
 
     @PostConstruct
     public void setup() {
-        BigInteger sk = ISSUER_SECRET_SEED.mod(JubjubCurve.SUBGROUP_ORDER);
-        if (sk.signum() == 0) sk = BigInteger.ONE;
-        issuerKeypair = EdDSAJubjub.keypairFromSecret(sk);
-        log.info("Rich-credential issuer keypair generated. pk.u = 0x{}",
-                issuerKeypair.pk().affineU().toString(16));
+        // In production this key would live in a KMS / HSM; the demo keeps it in its data directory.
+        issuerKeypair = IssuerKeyStore.loadOrCreate(Path.of(dataDir), "selective-disclosure", new SecureRandom());
+        log.info("Rich-credential issuer key loaded from {}. pk.u = 0x{}",
+                Path.of(dataDir).toAbsolutePath(), issuerKeypair.pk().affineU().toString(16));
 
         buildCountryTree();
         seedTestUsers();

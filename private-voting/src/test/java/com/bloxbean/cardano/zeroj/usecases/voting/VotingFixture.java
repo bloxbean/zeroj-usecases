@@ -1,6 +1,7 @@
 package com.bloxbean.cardano.zeroj.usecases.voting;
 
 import com.bloxbean.cardano.zeroj.usecases.voting.service.VoteCircuitService;
+import com.bloxbean.cardano.zeroj.usecases.voting.service.VoterKeyStore;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.zeroj.circuit.lib.jubjub.ElGamal;
 import org.zeroj.circuit.lib.jubjub.ElGamalEncryption;
@@ -22,9 +23,10 @@ public final class VotingFixture {
 
     public static final int DEPTH = 4;
     public static final BigInteger ELECTION_ID = new BigInteger("1234567890abcdef", 16);
-    public static final List<BigInteger> SECRETS = List.of(
-            BigInteger.valueOf(10001), BigInteger.valueOf(10002), BigInteger.valueOf(10003));
     public static final SecureRandom RANDOM = new SecureRandom();
+    /** Voter keys as the demo draws them (ADR-0009 D5): uniform in {@code [1, r)}. */
+    public static final List<BigInteger> SECRETS = List.of(VoterKeyStore.randomSecretKey(RANDOM),
+            VoterKeyStore.randomSecretKey(RANDOM), VoterKeyStore.randomSecretKey(RANDOM));
 
     public final VoteCircuitService circuits;
     public final BigInteger[][] tree;

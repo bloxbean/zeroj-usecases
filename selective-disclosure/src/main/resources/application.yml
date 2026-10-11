@@ -19,3 +19,8 @@ zk:
 
 credential:
   current-year: 2026
+
+demo:
+  # Demo data directory (/app/data in Docker): the issuer key, its deployment state and the
+  # setup cache. ./demo.sh selective-disclosure --clean-cache removes them together (ADR-0009 D11).
+  data-dir: ${DEMO_DATA_DIR:./data}

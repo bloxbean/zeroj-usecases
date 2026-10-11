@@ -21,7 +21,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
-@CrossOrigin(origins = "*")
 public class VoteController {
 
     private static final Logger log = LoggerFactory.getLogger(VoteController.class);

@@ -42,6 +42,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -54,6 +55,12 @@ import java.util.Optional;
  * carries its customer's opening encrypted to the customer's viewing key, and the attestation
  * carries the aggregate opening {@code (L, Σ r_i mod l)} encrypted to the auditor's viewing key.
  * Customers and the auditor recover them from the chain, not from the exchange's say-so.
+ *
+ * <p><b>Fresh per attestation</b> (ADR-0009 D7). {@link #forAttestation} gives every customer a
+ * new salt and blinding and shuffles the entries with {@link SecureRandom}, independently of the
+ * book order and of every earlier attestation. The proof's witness, the datum's entries and the
+ * sealed deliveries all take that order, so two attestations of the same book share no id hash,
+ * no commitment and no position. A customer finds their entry by id hash, never by position.
  */
 public final class SolvencyAttestation {
 
@@ -61,15 +68,25 @@ public final class SolvencyAttestation {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     /**
-     * A customer as the exchange sees them: id, a fresh 32-byte salt for this period, the
-     * balance, its blinding, and the customer's reader key (given when the account was opened).
-     * The salt still reaches the customer off-chain, with the account statement.
+     * A customer as the exchange sees them: id, a 32-byte salt and the balance's blinding, both
+     * drawn afresh for every attestation ({@link #forAttestation}), the balance, and the
+     * customer's reader key (given when the account was opened). The period's salt still reaches
+     * the customer off-chain, with the account statement.
      */
     public record Customer(String id, byte[] salt, long balance, BigInteger blinding, NoteReaderKey readerKey) {
         public static Customer of(String id, long balance, NoteReaderKey readerKey) {
+            return of(id, balance, readerKey, RANDOM);
+        }
+
+        static Customer of(String id, long balance, NoteReaderKey readerKey, SecureRandom random) {
             byte[] salt = new byte[32];
-            RANDOM.nextBytes(salt);
-            return new Customer(id, salt, balance, PedersenCommitment.randomBlinding(RANDOM), readerKey);
+            random.nextBytes(salt);
+            return new Customer(id, salt, balance, PedersenCommitment.randomBlinding(random), readerKey);
+        }
+
+        /** The same customer and balance with a new salt and blinding. */
+        public Customer refreshed(SecureRandom random) {
+            return of(id, balance, readerKey, random);
         }
 
         public NoteOpening opening() {
@@ -117,18 +134,38 @@ public final class SolvencyAttestation {
 
     public int customers() { return customers; }
 
-    /** Each customer's entry, with its opening sealed to the customer's reader key. */
+    /**
+     * The customers of one attestation (ADR-0009 D7): each with a new salt and blinding, in an
+     * order shuffled with {@link SecureRandom}. Prove, build the entries and seal the deliveries
+     * from this list, in this order, and give each customer their own refreshed record.
+     */
+    public static List<Customer> forAttestation(List<Customer> book) {
+        return forAttestation(book, RANDOM);
+    }
+
+    static List<Customer> forAttestation(List<Customer> book, SecureRandom random) {
+        List<Customer> out = new ArrayList<>(book.size());
+        for (Customer c : book) out.add(c.refreshed(random));
+        Collections.shuffle(out, random);
+        return List.copyOf(out);
+    }
+
+    /** Each customer's entry, in the list's order, with its opening sealed to the customer's reader key. */
     public static List<Entry> entries(List<Customer> book) {
         return book.stream().map(c -> new Entry(c.idHash(), c.commitment(),
                 ConfidentialNotes.seal(c.opening(), List.of(c.readerKey()), RANDOM).getFirst())).toList();
     }
 
-    /** {@code entries} with customer {@code id}'s delivery replaced by random bytes (the cheat). */
+    /**
+     * {@code entries} with customer {@code id}'s delivery replaced by random bytes (the cheat).
+     * The entry is found by the customer's id hash, whatever the order.
+     */
     public static List<Entry> withGarbageFor(List<Entry> entries, List<Customer> book, String id) {
+        byte[] target = book.stream().filter(c -> c.id().equals(id)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("unknown customer: " + id)).idHash();
         List<Entry> out = new ArrayList<>();
-        for (int i = 0; i < entries.size(); i++) {
-            Entry e = entries.get(i);
-            if (book.get(i).id().equals(id)) {
+        for (Entry e : entries) {
+            if (Arrays.equals(e.idHash(), target)) {
                 byte[] garbage = new byte[ConfidentialNotes.DELIVERY_LENGTH];
                 RANDOM.nextBytes(garbage);
                 out.add(new Entry(e.idHash(), e.commitment(), garbage));

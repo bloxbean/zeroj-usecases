@@ -1,6 +1,8 @@
 package com.bloxbean.cardano.zeroj.usecases.pedersen.web;
 
 import com.bloxbean.cardano.client.account.Account;
+import com.bloxbean.cardano.client.api.model.Amount;
+import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.cardano.client.backend.api.BackendService;
 import com.bloxbean.cardano.client.common.model.Networks;
 import org.slf4j.Logger;
@@ -8,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.math.BigInteger;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -47,6 +50,49 @@ public class Funding {
             throw new IllegalStateException("could not fund " + label + " via " + adminUrl + ": " + e.getMessage(), e);
         }
         return account;
+    }
+
+    /**
+     * Tops up a wallet that persists across restarts ({@code RoleWallet}) when it holds less than
+     * {@code ada}: on its first start, and again after its funds were spent or the devnet reset.
+     */
+    public void topUpIfBelow(String label, Account account, int ada) {
+        if (!topUpEnabled) {
+            log.warn("Top-up disabled: fund {} at {} yourself", label, account.baseAddress());
+            return;
+        }
+        try {
+            BigInteger lovelace = lovelace(account.baseAddress());
+            if (lovelace.compareTo(BigInteger.valueOf(ada).multiply(BigInteger.valueOf(1_000_000))) >= 0) {
+                log.info("{} holds {} lovelace; no top-up needed: {}", label, lovelace, account.baseAddress());
+                return;
+            }
+            topUp(label, account.baseAddress(), ada);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while funding " + label, e);
+        } catch (Exception e) {
+            throw new IllegalStateException("could not fund " + label + " via " + adminUrl + ": " + e.getMessage(), e);
+        }
+    }
+
+    private BigInteger lovelace(String address) throws Exception {
+        BigInteger total = BigInteger.ZERO;
+        for (int page = 1; ; page++) {
+            var result = backend.getUtxoService().getUtxos(address, 100, page);
+            // An address with no UTxOs is "not found"; any other failure must not look like an empty wallet.
+            if (!result.isSuccessful() && !String.valueOf(result.getResponse()).contains("404")
+                    && !String.valueOf(result.getResponse()).toLowerCase().contains("not found")) {
+                throw new IllegalStateException("could not read " + address + ": " + result.getResponse());
+            }
+            if (!result.isSuccessful() || result.getValue() == null || result.getValue().isEmpty()) return total;
+            for (Utxo u : result.getValue()) {
+                for (Amount a : u.getAmount()) {
+                    if ("lovelace".equals(a.getUnit())) total = total.add(a.getQuantity());
+                }
+            }
+            if (result.getValue().size() < 100) return total;
+        }
     }
 
     /**

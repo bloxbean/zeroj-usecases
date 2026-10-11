@@ -7,18 +7,21 @@ import com.bloxbean.cardano.client.plutus.spec.PlutusScript;
 import com.bloxbean.cardano.client.util.HexUtil;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.common.DevKit;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.common.Plutus;
+import com.bloxbean.cardano.zeroj.usecases.pedersen.common.RoleWallet;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.solvency.SolvencyAttestation;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.solvency.SolvencyAttestation.Customer;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.solvency.SolvencyAttestation.Period;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.AuditorKeys;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.KeyPossession;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.notes.Registry;
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.zeroj.circuit.lib.jubjub.NoteViewingKey;
 import org.zeroj.crypto.groth16.Groth16ProofBLS381;
 
 import java.math.BigInteger;
+import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -27,16 +30,23 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Demo C, solvency with hidden liabilities, for the UI (ADR-0006 C, ADR-0007 N6). The exchange is
- * a wallet this server creates. Each customer's opening is delivered on-chain to the customer's
- * viewing key, and the aggregate opening to the auditor's registered viewing key, so customers
- * and the auditor check from chain data. The server holds the customers' and the auditor's keys
- * on their behalf (demo custody).
+ * Demo C, solvency with hidden liabilities, for the UI (ADR-0006 C, ADR-0007 N6). Each customer's
+ * opening is delivered on-chain to the customer's viewing key, and the aggregate opening to the
+ * auditor's registered viewing key, so customers and the auditor check from chain data. The server
+ * holds the customers' and the auditor's keys on their behalf (demo custody), and its API is the
+ * exchange operator's view.
+ *
+ * <p>The exchange's signature makes an attestation the exchange's, so its wallet has a random key
+ * persisted in the demo data directory ({@link RoleWallet}, ADR-0009 D11), loaded before the app
+ * starts serving; its key hash is the vault's parameter. Every attestation draws fresh salts and
+ * blindings and a shuffled entry order ({@link SolvencyAttestation#forAttestation}, ADR-0009 D7).
  */
 @Service
 public class SolvencyService {
 
     static final int CUSTOMERS = 4;
+    /** The exchange's role name for {@link RoleWallet}: its key and deployment state files. */
+    static final String EXCHANGE_ROLE = "solvency-exchange";
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final long LOVELACE = 1_000_000L;
 
@@ -45,6 +55,9 @@ public class SolvencyService {
 
     @Value("${solvency.period-length-seconds:180}")
     private long lengthSeconds = 180;
+
+    @Value("${demo.data-dir:./data}")
+    private String dataDir = "./data";
 
     private final BackendService backend;
     private final Funding funding;
@@ -69,10 +82,24 @@ public class SolvencyService {
         this.funding = funding;
     }
 
+    /**
+     * Loads the exchange's wallet, or creates it on first start. A missing, damaged or mismatched
+     * key with existing deployment state stops the app (fail closed, ADR-0009 D11).
+     */
+    @PostConstruct
+    synchronized void loadExchangeKey() {
+        exchange = RoleWallet.loadOrCreate(Path.of(dataDir), EXCHANGE_ROLE, RANDOM).account();
+    }
+
+    /** The exchange's payment key hash: the vault's parameter. */
+    synchronized byte[] exchangeKeyHash() {
+        return RoleWallet.keyHash(exchange);
+    }
+
     synchronized void ensureReady() throws Exception {
         if (solvency != null) return;
         var s = new SolvencyAttestation(CUSTOMERS);
-        exchange = funding.newWallet("solvency/exchange", 5_000);
+        funding.topUpIfBelow("solvency/exchange", exchange, 5_000);
         book = List.of(customer("alice", 500 * LOVELACE), customer("bob", 1_200 * LOVELACE),
                 customer("carol", 300 * LOVELACE), customer("dave", 0));
         // The auditor registers its keys (possession proved on-chain); the exchange admits the entry.
@@ -130,15 +157,22 @@ public class SolvencyService {
         long reserves = reservesAda * LOVELACE;
         long now = DevKit.chainTimeMillis(backend);
         Period next = new Period(now + leadSeconds * 1000, now + (leadSeconds + lengthSeconds) * 1000);
-        var proof = proveSolvent(reserves);
+        // Fresh salts and blindings in a shuffled order: the proof, the entries and the deliveries
+        // all follow this list, so nothing links this attestation's entries to an earlier one's.
+        List<Customer> attested = SolvencyAttestation.forAttestation(book);
+        var proof = proveSolvent(reserves, attested);
         PlutusScript v = solvency.vault(PointsService.pkh(exchange), next);
-        var entries = SolvencyAttestation.entries(book);
-        if (garbageFor != null && !garbageFor.isBlank()) entries = SolvencyAttestation.withGarbageFor(entries, book, garbageFor);
+        var entries = SolvencyAttestation.entries(attested);
+        if (garbageFor != null && !garbageFor.isBlank()) entries = SolvencyAttestation.withGarbageFor(entries, attested, garbageFor);
         var auditor = auditorRegistry.admitted(backend);
         String tx = DemoErrors.require(SolvencyAttestation.attest(backend, v, exchange, reserves, entries,
-                SolvencyAttestation.auditorDelivery(book, auditor.viewKey()), proof, DevKit.slotAt(backend, next.start())),
+                SolvencyAttestation.auditorDelivery(attested, auditor.viewKey()), proof, DevKit.slotAt(backend, next.start())),
                 "Attestation");
         DevKit.waitForTx(backend, tx);
+        // Each customer's record now carries this period's salt and blinding (sent with their
+        // statement); the book keeps its own order.
+        book = book.stream().map(c -> attested.stream().filter(a -> a.id().equals(c.id())).findFirst().orElseThrow())
+                .toList();
         period = next;
         vault = v;
         attestTx = tx;
@@ -152,15 +186,17 @@ public class SolvencyService {
 
     /**
      * The "cheat": add a second attestation for the same period once it has begun (here, the same
-     * book again). The vault refuses anything whose validity range ends after the period start.
+     * book again, freshly salted and shuffled like any attestation). The vault refuses anything
+     * whose validity range ends after the period start.
      */
     public synchronized Map<String, Object> attestAgain() throws Exception {
         ensureReady();
         if (vault == null) throw new IllegalStateException("attest first");
-        var proof = proveSolvent(attestedReserves);
+        List<Customer> again = SolvencyAttestation.forAttestation(book);
+        var proof = proveSolvent(attestedReserves, again);
         long until = DevKit.chainTimeMillis(backend) + 60_000;
         DemoErrors.require(SolvencyAttestation.attest(backend, vault, exchange, attestedReserves,
-                SolvencyAttestation.entries(book), SolvencyAttestation.auditorDelivery(book,
+                SolvencyAttestation.entries(again), SolvencyAttestation.auditorDelivery(again,
                         auditorRegistry.admitted(backend).viewKey()), proof, DevKit.slotAt(backend, until)),
                 "A second attestation inside the period");
         throw new IllegalStateException("unexpected: the vault accepted an attestation after the period start");
@@ -227,35 +263,55 @@ public class SolvencyService {
         return Map.of("summary", "Reserve released after the period; attestation token burned", "txHash", tx);
     }
 
+    /**
+     * The public view (ADR-0009 D10): what a chain observer can read about the period, and the
+     * vault's entries as they are on-chain. It names no customer and no balance, so nothing in it
+     * pairs a customer with an id hash, a commitment or a position. The book is in
+     * {@link #operatorView()}.
+     */
     public synchronized Map<String, Object> state() throws Exception {
         ensureReady();
-        Map<String, Object> body = new LinkedHashMap<>();
-        long now = DevKit.chainTimeMillis(backend);
-        body.put("chainTime", now);
-        body.put("phase", phase());
-        body.put("constraints", solvency.circuit().numConstraints());
-        body.put("exchangeAddress", exchange.baseAddress());
-        List<Map<String, Object>> privateBook = new ArrayList<>();
-        long total = 0;
-        for (Customer c : book) {
-            total += c.balance();
-            privateBook.add(Map.of("id", c.id(), "balance", c.balance() / LOVELACE,
-                    "salt", HexUtil.encodeHexString(c.salt()).substring(0, 12) + "…",
-                    "blinding", PointsService.shortHex(c.blinding()),
-                    "idHash", HexUtil.encodeHexString(c.idHash()).substring(0, 12) + "…",
-                    "check", lastChecks.getOrDefault(c.id(), "")));
-        }
-        body.put("book", privateBook);
-        body.put("liabilitiesAda", total / LOVELACE);
+        PublicPeriod live = null;
         if (period != null) {
-            body.put("period", Map.of("start", period.start(), "end", period.end()));
-            body.put("vaultAddress", SolvencyAttestation.address(vault));
-            body.put("vaultPolicy", Plutus.policyId(vault));
-            body.put("attestTx", attestTx);
-            body.put("reservesAda", attestedReserves / LOVELACE);
-            if (releaseTx != null) body.put("releaseTx", releaseTx);
+            live = new PublicPeriod(period, SolvencyAttestation.address(vault), Plutus.policyId(vault), attestTx,
+                    attestedReserves, releaseTx, SolvencyAttestation.liveEntries(backend, vault));
+        }
+        return publicView(DevKit.chainTimeMillis(backend), phase(), solvency.circuit().numConstraints(),
+                exchange.baseAddress(), book.size(), live);
+    }
+
+    /**
+     * The exchange operator's view, which the demo shows because the server holds everyone's keys
+     * (demo custody): the book with customer ids, balances, this period's salts and blindings, id
+     * hashes, the last check results and the total liabilities. Never part of the public view.
+     */
+    public synchronized Map<String, Object> operatorView() throws Exception {
+        ensureReady();
+        return operatorView(book, lastChecks);
+    }
+
+    /** A live or past attestation as anyone reads it: the vault, its transactions and its on-chain entries. */
+    record PublicPeriod(Period period, String vaultAddress, String vaultPolicy, String attestTx,
+                        long reservesLovelace, String releaseTx, List<SolvencyAttestation.Entry> onChain) {}
+
+    static Map<String, Object> publicView(long chainTime, String phase, int constraints, String exchangeAddress,
+                                          int customers, PublicPeriod live) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("view", "public");
+        body.put("chainTime", chainTime);
+        body.put("phase", phase);
+        body.put("constraints", constraints);
+        body.put("exchangeAddress", exchangeAddress);
+        body.put("customers", customers);
+        if (live != null) {
+            body.put("period", Map.of("start", live.period().start(), "end", live.period().end()));
+            body.put("vaultAddress", live.vaultAddress());
+            body.put("vaultPolicy", live.vaultPolicy());
+            body.put("attestTx", live.attestTx());
+            body.put("reservesAda", live.reservesLovelace() / LOVELACE);
+            if (live.releaseTx() != null) body.put("releaseTx", live.releaseTx());
             List<Map<String, Object>> entries = new ArrayList<>();
-            for (var e : SolvencyAttestation.liveEntries(backend, vault)) {
+            for (var e : live.onChain()) {
                 entries.add(Map.of("idHash", HexUtil.encodeHexString(e.idHash()).substring(0, 12) + "…",
                         "u", PointsService.shortHex(e.commitment().affineU()),
                         "delivery", HexUtil.encodeHexString(e.delivery()).substring(0, 16) + "… (89 B)"));
@@ -265,13 +321,31 @@ public class SolvencyService {
         return body;
     }
 
+    static Map<String, Object> operatorView(List<Customer> book, Map<String, Object> checks) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("view", "operator (the exchange's private book; shown by this demo server only because it holds every key)");
+        List<Map<String, Object>> privateBook = new ArrayList<>();
+        long total = 0;
+        for (Customer c : book) {
+            total += c.balance();
+            privateBook.add(Map.of("id", c.id(), "balance", c.balance() / LOVELACE,
+                    "salt", HexUtil.encodeHexString(c.salt()).substring(0, 12) + "…",
+                    "blinding", PointsService.shortHex(c.blinding()),
+                    "idHash", HexUtil.encodeHexString(c.idHash()).substring(0, 12) + "…",
+                    "check", checks.getOrDefault(c.id(), "")));
+        }
+        body.put("book", privateBook);
+        body.put("liabilitiesAda", total / LOVELACE);
+        return body;
+    }
+
     // ------------------------------------------------------------------
 
-    private Groth16ProofBLS381 proveSolvent(long reserves) {
+    private Groth16ProofBLS381 proveSolvent(long reserves, List<Customer> customers) {
         try {
-            return solvency.prove(reserves, book);
+            return solvency.prove(reserves, customers);
         } catch (RuntimeException e) {
-            long liabilities = book.stream().mapToLong(Customer::balance).sum();
+            long liabilities = customers.stream().mapToLong(Customer::balance).sum();
             throw new DemoErrors.NoProof("Liabilities (" + liabilities / LOVELACE + " ADA) exceed the reserves ("
                     + reserves / LOVELACE + " ADA), so no proof of solvency exists.", e);
         }

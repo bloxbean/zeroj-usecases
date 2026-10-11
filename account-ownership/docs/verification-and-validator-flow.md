@@ -1,6 +1,6 @@
 # Account-Ownership — Verification & On-Chain Validator Flow
 
-**Targets circuit:** `account-ownership-proof`  ·  **Status:** implemented on `feat/circuit-v3-recipient` (validator compiles + 5 VM tests; on-chain measured ~2.8×10⁹ steps)
+**Targets circuit:** `account-ownership-proof` (v4, packed public inputs)  ·  **Status:** implemented; voucher payouts per [ADR-0009](../../docs/adr/0009-privacy-and-binding-hardening-of-the-original-demos.md) D6 (on-chain measured ~2.3×10⁹ steps)
 
 Reference for how a proof is produced and verified — off-chain and on-chain. Generic — no specific
 operator is assumed.
@@ -19,8 +19,9 @@ payout to `recipient`."**
   bound into the proof, so a copied proof **cannot be redirected**; the on-chain validator enforces
   that the payout goes to `recipient` for the datum's amount.
 - The full derivation path (**`account`, `role`, `index`**) is a **secret** witness, so the proof
-  covers any `m/1852'/1815'/account'/role/index` address while keeping the path private; the public
-  `pkh` pins the exact one.
+  covers any `m/1852'/1815'/account'/role/index` address while keeping the path private from chain
+  observers; the public `pkh` pins the exact one. Anyone holding the account's xpub can derive its
+  addresses and so find the path of `pkh`.
 
 ---
 
@@ -40,7 +41,7 @@ payout to `recipient`."**
   proof.
 - **Packed encoding:** each 28-byte hash is packed **big-endian into one field element**
   (`Σ bᵢ·256^(27-i)`; 224 bits fit in the ~253-bit scalar field), so the circuit has **2 public
-  inputs**. On-chain verification is O(#public inputs), so the claim tx costs **~2.8×10⁹ CPU steps**
+  inputs**. On-chain verification is O(#public inputs), so the claim tx costs **~2.3×10⁹ CPU steps**
   — comfortably under the ~10×10⁹ per-tx limit (packing the two hashes is what keeps it there; one
   field element per byte would be 56 inputs and would not fit). The prover packs with
   `new BigInteger(1, bytes)`; the validator re-derives the same scalars with
@@ -88,9 +89,16 @@ author. The tool reports the address → recipient it validated against.
 |---|---|---|
 | `pkh` | 28 bytes | the account this voucher refunds (must equal the proof's `pkh` public input) |
 | `refundAmount` | integer (lovelace) | the amount the recipient must receive |
+| `funderPkh` | 28 bytes | the payment key hash of whoever funded the voucher; it gets the remainder back |
+| `maxFee` | integer (lovelace) | the fee slack: how much of the voucher need not go back to the funder |
 
 (The `recipient` is **not** in the datum — it comes from the *proof*, so the destination is the
 prover's choice, not fixed by whoever created the voucher.)
+
+The voucher holds only ADA. Creation refuses `refundAmount < 0`, `maxFee < 0`,
+`refundAmount + maxFee > voucher`, and a remainder `voucher − refundAmount − maxFee` that is positive
+but below the min-UTxO of its tagged output. The demo locks 10 ADA with a 2 ADA refund and
+`maxFee` = 2 ADA, so 6 ADA goes back to the funder.
 
 > **No claim deadline by default.** The genuine owner should be able to claim **whenever** they
 > want — a hard deadline would *lock the user's own refund away* if they are slow to claim, which is
@@ -98,7 +106,8 @@ prover's choice, not fixed by whoever created the voucher.)
 > it is at most an **optional operator policy** (e.g. a very long expiry plus an operator-multisig
 > reclaim path for truly abandoned vouchers). Off by default — funds stay claimable indefinitely.
 
-**Redeemer:** `Groth16Proof(piA, piB, piC)`.
+**Redeemer:** `OwnershipRedeemer(piA, piB, piC, recipient)` — the compressed proof and the 28-byte
+recipient payment key hash it is bound to.
 
 ---
 
@@ -109,20 +118,34 @@ On spend, the validator (parameterized with the circuit VK) checks **all** of:
 1. **Proof valid.** `Groth16.verify([pkh, recipient], piA, piB, piC, vk)` — the pairing check over
    the two public inputs. `pkh`/`recipient` are read from the datum + the transaction (see step 2),
    in circuit public-input order.
-2. **Correct recipient, correct amount.** There exists a transaction **output** whose **payment
-   credential == `recipient`** (the proof's second public input) and whose **value ≥
-   `refundAmount`** (datum). This is the critical check: a *presence-only* check would let a
-   front-running submitter pay the recipient a token amount and skim the rest — the **amount bound
-   closes that**.
+2. **Exact payout, tagged with this voucher** (ADR-0009 D6). Only outputs whose inline datum is
+   exactly the spent voucher's `TxOutRef` (`Constr 0 [txId, index]`) count as its payments:
+   - tagged outputs to the **payment credential `recipient`** (the proof's second public input)
+     sum to at least `refundAmount`;
+   - tagged outputs to the **payment credential `funderPkh`** sum to at least the remainder
+     `voucher − refundAmount − maxFee`, and none is needed when it is 0;
+   - if `recipient == funderPkh`, the combined tagged sum covers both;
+   - the voucher's value is ADA-only, and `refundAmount ≥ 0`, `maxFee ≥ 0`,
+     `refundAmount + maxFee ≤ voucher`.
+
+   A *presence-only* check would let a front-running submitter pay the recipient a token amount and
+   skim the rest; a refund-only check would let it keep the remainder; an untagged check would let
+   one output pay two vouchers in one transaction. The tag is unique per voucher, so no output counts
+   for two vouchers of tag-enforcing validators (this one and the reusable-KYC voucher), whatever
+   their stake credentials. Spending a voucher together with a script that counts any paying output
+   is unsafe: that script may count the voucher's outputs.
 3. **Right account.** `datum.pkh == pkh` public input (the voucher is for this account).
 
 **No claim deadline** and **no recipient signature** are required (see §8 for why). Anyone —
-including a fee-sponsor — may submit; the funds still land with the bound recipient at the enforced
-amount, whenever the owner chooses to claim.
+including a fee-sponsor — may submit; the funds still land with the bound recipient and the funder
+at the enforced amounts, whenever the owner chooses to claim. The submitter can keep `maxFee` minus
+the actual fee, so a funder sets `maxFee` close to the expected fee.
 
 The transaction builder constructs the recipient output from the **bech32 in `public-inputs.json`**;
 the validator independently recomputes/compares the payment credential against the proof's public
-input, so a tampered stored address simply fails the check.
+input, so a tampered stored address simply fails the check. The service pays the funder's remainder
+to its enterprise address, apart from the change address, so fee balancing never draws on a tagged
+output.
 
 ---
 
@@ -142,11 +165,11 @@ at **~0.195×10⁹ CPU steps each**, so the input count is the cost lever:
 
 | Public inputs | On-chain CPU steps | Fits `maxTxExUnits` (10×10⁹)? |
 |---|---|---|
-| **2 (packed — shipped)** | **~2.8×10⁹** | ✅ **yes (3.5× margin)** |
+| **2 (packed — shipped)** | **~2.3×10⁹** | ✅ **yes (4× margin)** |
 | 56 (one field element per byte) | ~13.4×10⁹ | ❌ no — ~34% over |
 
 Measured in the UPLC evaluator (`OwnershipProofValidatorVmTest`, which runs the compiled validator
-locally): the packed claim tx is ~2.8×10⁹ steps (~0.45 ADA), mem ~0.25M ≪ the 14M limit. Without
+locally): the packed claim tx is ~2.3×10⁹ steps, mem ~0.35M ≪ the 14M limit. Without
 packing (one field element per byte) it would be 56 inputs → ~13.4×10⁹ steps and a mainnet claim tx
 would be **rejected** for exceeding the per-tx limit. Implementation:
 
@@ -173,8 +196,9 @@ verification). Two constraints on the scheme:
 - **Recipient binding (anti front-run / replay):** the proof authorizes a payout only to `recipient`.
   A copied proof cannot change `recipient` (invalidates it) and cannot be re-proven (no seed), so a
   stolen proof only ever pays the genuine recipient.
-- **Amount enforcement (anti-skim):** the payout to `recipient` must be **≥ `refundAmount`**, so a
-  submitter cannot pay a token amount and keep the rest.
+- **Amount enforcement (anti-skim):** the tagged payout to `recipient` must be **≥ `refundAmount`**
+  and the tagged payout to the funder ≥ the remainder, so a submitter can keep at most `maxFee`
+  minus the fee it paid.
 - **No recipient signature — deliberate:** once the amount is enforced, a front-runner gains nothing
   (funds go to the recipient; they only pay the fee), so a signature adds no security. Requiring one
   would instead **reintroduce fee-starvation** — the recipient is often a fresh/empty address whose
@@ -188,8 +212,10 @@ verification). Two constraints on the scheme:
   handled out-of-band by making the refund a **single-use voucher UTxO** — the eUTxO can be consumed
   exactly once, so the UTxO *is* the nullifier. Recipient binding and the voucher are complementary.
 - **Privacy:** `pkh` and `recipient` are public inputs and therefore public — but both are already
-  public on-chain (the address, and the payout output). The **seed stays secret**. The only new
-  disclosure is the linkage "owner of X → payout to R", which is expected for a refund.
+  public on-chain (the address, and the payout output). The **seed stays secret**. The new
+  disclosure is the linkage "owner of X → payout to R", which is expected for a refund, so a
+  claimant should use a **fresh recipient** address that isn't linked to their other wallets. The
+  derivation path is private from observers, but not from anyone holding the account's xpub.
 
 ### Threat coverage
 
@@ -197,6 +223,8 @@ verification). Two constraints on the scheme:
 |---|---|
 | copy proof, redirect to attacker | recipient binding (§6.2 credential check) |
 | copy proof, pay recipient a little & skim | amount enforcement (§6.2 value check) |
+| copy proof, pay the recipient & keep the remainder | funder remainder check (§6.2) |
+| one output paying two vouchers | outref tags (§6.2) |
 | claim twice | single-use voucher UTxO (nullifier) |
 | claim a non-affected account | voucher exists only for affected accounts + `datum.pkh == pkh` |
 | recover the seed from the proof | zero-knowledge (seed is a secret witness) |
@@ -205,7 +233,10 @@ verification). Two constraints on the scheme:
 
 ## 9. Status
 
-Implemented on `feat/circuit-v3-recipient` (unreleased): circuit + prover + CLI/UI + on-chain
-validator. The validator compiles to UPLC and passes 5 VM tests (valid claim + underpay, wrong
-payee, wrong recipient, wrong pkh); the at-scale 19M setup → prove → off-chain verify passes at
-`-Xmx8g`; on-chain cost measured ~2.8×10⁹ steps.
+Implemented: circuit (v4) + prover + CLI/UI + on-chain validator. `OwnershipProofValidatorVmTest`
+runs the compiled validator: the valid claim, a zero remainder, funder = recipient, and two
+separately paid vouchers are accepted; underpay, wrong payee, wrong recipient, wrong pkh, a third
+party keeping the remainder, outputs shared between two vouchers (same validator with another stake
+part, or a reusable-KYC voucher), untagged payouts, funder = recipient with one obligation paid, a
+non-ADA voucher and out-of-range terms are refused. The at-scale 19M setup → prove → off-chain
+verify passes at `-Xmx8g`; on-chain cost measured ~2.3×10⁹ steps.

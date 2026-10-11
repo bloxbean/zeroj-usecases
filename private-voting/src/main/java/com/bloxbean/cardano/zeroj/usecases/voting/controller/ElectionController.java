@@ -17,7 +17,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/election")
-@CrossOrigin(origins = "*")
 public class ElectionController {
 
     private final ElectionService electionService;
