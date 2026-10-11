@@ -13,16 +13,18 @@ import java.math.BigInteger;
 import java.util.Optional;
 
 /**
- * On-chain sorted linked list validator for nullifier storage.
- * <p>
- * Adapted from LinkedListValidator in julc-examples. Each nullifier is a UTXO
- * holding a unique NFT. Nodes link via datum nextKey fields in sorted order.
- * <p>
- * The MINT policy validates structural mutations (init/insert).
- * The SPEND validator delegates to the MINT policy via the coupling pattern.
- * <p>
- * Insert additionally requires that the ZK proof minting policy ({@code zkPolicyId})
- * also minted in the same transaction, ensuring the Groth16 proof was verified.
+ * On-chain sorted linked list of nullifiers (ADR-0009 D2). Adapted from LinkedListValidator in
+ * julc-examples.
+ *
+ * <p>The minting purpose validates every change to the list; the spending purpose requires that
+ * the list policy mints exactly one token in the same transaction. {@code seedRef}
+ * ({@code txId ‖ I2OSP2(index)}) names an output that {@code InitList} must consume, so the root
+ * is created once and every later list mint is an {@code InsertNode}. An insert may spend exactly
+ * one input at the list address, its anchor, found by its token; so a node can be spent only as
+ * an insert's anchor, and is never removed.
+ *
+ * <p>An insert also requires the ZK policy ({@code zkPolicyId}) to mint exactly the nullifier
+ * whose low 31 bytes are the new key, which the ZK policy mints only for a verified proof.
  */
 @MultiValidator
 public class NullifierListValidator {
@@ -30,7 +32,8 @@ public class NullifierListValidator {
     @Param static byte[] rootKey;       // e.g. "NROOT" — token name for the root NFT
     @Param static byte[] prefix;        // e.g. "N" — prefix for node token names (1 byte)
     @Param static BigInteger prefixLen; // e.g. 1 — byte length of prefix
-    @Param static byte[] zkPolicyId;    // ZkProofMintingPolicy script hash
+    @Param static byte[] zkPolicyId;    // ZkProofMintingPolicy script hash (one per event)
+    @Param static byte[] seedRef;       // the output InitList must consume
 
     // --- Redeemer variants ---
 
@@ -53,7 +56,8 @@ public class NullifierListValidator {
                         Optional.empty());
                 TxOut rootOutput = txInfo.outputs().get(init.rootOutputIndex().intValue());
                 yield NullifierListLib.validateInit(
-                        rootOutput, txInfo.mint(), policyBytes, rootKey, scriptAddr);
+                        rootOutput, txInfo.mint(), policyBytes, rootKey, scriptAddr,
+                        txInfo.inputs(), seedRef);
             }
             case InsertNode insert -> {
                 Address scriptAddr = new Address(
@@ -62,7 +66,7 @@ public class NullifierListValidator {
                 TxInInfo anchorInput = OutputLib.findInputWithToken(
                         txInfo.inputs(), policyBytes, policyBytes, insert.anchorTokenName());
                 yield NullifierListLib.validateInsert(
-                        anchorInput.resolved(), txInfo.outputs(),
+                        anchorInput.resolved(), txInfo.inputs(), txInfo.outputs(),
                         txInfo.mint(), policyBytes, rootKey, prefix, prefixLen.intValue(),
                         scriptAddr, zkPolicyId);
             }
@@ -73,6 +77,6 @@ public class NullifierListValidator {
     public static boolean spend(PlutusData datum, PlutusData redeemer, ScriptContext ctx) {
         TxInfo txInfo = ctx.txInfo();
         byte[] ownHash = ContextsLib.ownHash(ctx);
-        return NullifierListLib.requireListTokensMintedOrBurned(txInfo.mint(), ownHash);
+        return NullifierListLib.requireSingleListMint(txInfo.mint(), ownHash);
     }
 }

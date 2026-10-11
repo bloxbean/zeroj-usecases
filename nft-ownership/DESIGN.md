@@ -1,515 +1,355 @@
 # Design: Private NFT Ownership on Cardano
 
-A detailed walkthrough of how this demo works — from ZK circuits to on-chain verification.
+How this demo works — from the ZK circuit to on-chain verification — after the ADR-0009 D2
+hardening ([ADR](../docs/adr/0009-privacy-and-binding-hardening-of-the-original-demos.md)).
 
 ## Table of Contents
 
 - [The Problem](#the-problem)
 - [The Solution](#the-solution)
+- [Threat Model and Trust](#threat-model-and-trust)
 - [System Architecture](#system-architecture)
-- [ZK Circuit](#zk-circuit)
+- [ZK Circuit (Version 2)](#zk-circuit-version-2)
   - [What the Circuit Proves](#what-the-circuit-proves)
-  - [Signals (Inputs and Outputs)](#signals-inputs-and-outputs)
+  - [Signals](#signals)
   - [Circuit Logic Step by Step](#circuit-logic-step-by-step)
-  - [Poseidon Hash](#poseidon-hash)
+  - [Encodings](#encodings)
   - [Merkle Tree](#merkle-tree)
   - [Nullifier](#nullifier)
+- [Registration (the Indexer)](#registration-the-indexer)
 - [Proof Generation (Off-Chain)](#proof-generation-off-chain)
-  - [Groth16 Prover](#groth16-prover)
-  - [Trusted Setup](#trusted-setup)
 - [On-Chain Verification](#on-chain-verification)
-  - [Two-Validator Design](#two-validator-design)
+  - [One Event, Two Scripts](#one-event-two-scripts)
   - [ZkProofMintingPolicy](#zkproofmintingpolicy)
   - [NullifierListValidator](#nullifierlistvalidator)
-  - [How They Work Together](#how-they-work-together)
 - [Sorted Linked List (On-Chain Nullifier Storage)](#sorted-linked-list-on-chain-nullifier-storage)
-  - [Why a Linked List?](#why-a-linked-list)
-  - [How Insertion Works](#how-insertion-works)
-  - [UTXO Contention](#utxo-contention)
 - [Transaction Flow](#transaction-flow)
-  - [Init: Deploy Root Sentinel](#init-deploy-root-sentinel)
-  - [Insert: Record Nullifier On-Chain](#insert-record-nullifier-on-chain)
-- [Data Flow (End to End)](#data-flow-end-to-end)
 - [What Each Party Sees](#what-each-party-sees)
-- [Security Properties](#security-properties)
+- [Security Properties and Limitations](#security-properties-and-limitations)
+- [Keys and Roles](#keys-and-roles)
 - [Cost Analysis](#cost-analysis)
 
 ---
 
 ## The Problem
 
-On Cardano, proving you own an NFT requires revealing your wallet address:
-
-```
-Verifier: "Prove you own a ZeroJTicket NFT"
-You:      "Here's my wallet addr1_abc... — check the UTXO set"
-Verifier: ✓ Verified
-
-But now everyone knows:
-  - Your wallet address
-  - Every other token you hold
-  - Your full transaction history
-  - Your ADA balance
-```
-
-This is a privacy problem for token-gated events, anonymous DAO voting, anti-sybil airdrops, and more.
+On Cardano, proving you own an NFT usually means revealing your wallet address, and with it every
+other token you hold, your history and your balance. That is a privacy problem for token-gated
+events, anonymous DAO voting and airdrops.
 
 ## The Solution
 
-With zero-knowledge proofs, you prove ownership without revealing anything:
+The holder proves, in zero knowledge, that one leaf of a published snapshot of holders is theirs,
+and publishes a nullifier that is the same for every use of that leaf in one event. The proof is
+verified on-chain with Plutus V3's BLS12-381 builtins, and the nullifier is admitted once by an
+on-chain sorted list.
 
-```
-Verifier: "Prove you own a ZeroJTicket NFT"
-You:      "Here's a 192-byte proof"
-Verifier: ✓ Verified
+The nullifier is `Poseidon(Poseidon(s, t), contextId)`, where `s` is the holder's 252-bit secret
+and `t` the token. It does not reveal which NFT was used. Version 1 of the circuit published
+`Poseidon(t, contextId)`, which anyone could compute for every token of the collection: it showed
+which NFT, and so which wallet, was used.
 
-Nobody knows:
-  - Which wallet holds the NFT
-  - Which specific NFT was used
-  - Any other information about the holder
-```
+## Threat Model and Trust
 
-The proof is verified on-chain via Cardano's Plutus V3 BLS12-381 builtins. A nullifier (one-time token) prevents using the same proof twice.
+Privacy claims are against a **chain observer** (reads every datum, token name, redeemer and
+public input) and a **mempool observer** (can copy a pending transaction's redeemer and submit its
+own transaction first).
+
+| Party | May try | Prevented by |
+|-------|---------|--------------|
+| Holder | use one holding twice | one registration per token, each from an authenticated holding (indexer) + one list entry per nullifier (list script) |
+| Holder | re-insert a nullifier, or remove a node | list: nodes are never spent outside an insert, never burned |
+| Holder | register one token under two keys | the indexer refuses a second registration for a token |
+| Anyone | register a token it does not hold | the indexer requires a CIP-8 signature by the payment key of the token's on-chain holder |
+| Observer | link the nullifier to a token | the nullifier absorbs the holder's 252-bit secret |
+| Anyone | reuse a proof for another event or snapshot | root and context are parameters of the event's ZK policy |
+| Mempool observer | spend a holder's proof first | **not prevented** (deferred, see limitations) |
+
+**Trusted:** the indexer (here, `SnapshotService` in the demo server) builds the event's snapshot
+with one registration per token, from authenticated holders. It cannot check which token a leaf
+commits to (the leaf hides `t`), so what it guarantees is at most one leaf per authenticated
+holding. The demo server also holds the custody
+wallet and the holder secrets (operator view, ADR-0009 D10), so privacy does not hold against it.
 
 ## System Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  USER (Browser or curl)                                       │
-│                                                               │
-│  1. Register as NFT holder (secretKey + tokenName)            │
-│  2. Request ZK proof                                          │
-│  3. Submit proof for gated access                             │
+│  USER (Browser or curl) — the demo operator's view            │
+│  1. Mint NFTs into custody   2. Register (server draws s)      │
+│  3. Build snapshot            4. Prove   5. Access             │
 └────────────────────┬─────────────────────────────────────────┘
                      │ REST API (http://localhost:8085)
                      ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  SPRING BOOT BACKEND                                          │
-│                                                               │
-│  ProverService          — compiles circuit, generates proofs  │
-│  SnapshotService        — builds Merkle tree of holders       │
-│  OnChainNullifierService — manages on-chain linked list       │
-│  MintService            — mints NFTs on Cardano               │
+│  CustodyWallet           — random persisted key; holds NFTs,  │
+│                            signs CIP-8 registrations          │
+│  SnapshotService         — the indexer: checks registrations, │
+│                            one registration per token, tree   │
+│  ProverService           — circuit v2, dev setup, proofs      │
+│  OnChainNullifierService — per-event scripts, list inserts    │
+│  MintService             — mints NFTs into custody            │
 └────────────────────┬─────────────────────────────────────────┘
-                     │ Cardano transactions
+                     │ Cardano transactions / indexer queries
                      ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  CARDANO (Yaci DevKit)                                        │
-│                                                               │
-│  ZkProofMintingPolicy    — Groth16 BLS12-381 pairing check   │
-│  NullifierListValidator  — sorted linked list of nullifiers  │
-│                                                               │
-│  On-chain state:                                              │
-│    ROOT → node(null_A) → node(null_B) → ∅                    │
-│    Each node is a UTXO with an NFT + inline datum             │
+│  ZkProofMintingPolicy(root, context, VK) — Groth16 check      │
+│  NullifierListValidator(zkPolicy, seed)  — sorted list        │
+│    ROOT → node(n_A) → node(n_B) → ∅                           │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-## ZK Circuit
+## ZK Circuit (Version 2)
 
 ### What the Circuit Proves
 
-The circuit proves a single statement:
+> "I know a secret `s` and a token `t` such that `Poseidon(Poseidon(s, 0), t)` is a leaf of the
+> tree with root `snapshotRoot`, and `nullifier = Poseidon(Poseidon(s, t), contextId)`."
 
-> "I know a secret key and a token name such that their combined hash
-> is a leaf in the published Merkle tree of NFT holders."
-
-This is equivalent to proving: "I own an NFT from this collection" — without revealing which wallet, which NFT, or any other information.
-
-### Signals (Inputs and Outputs)
-
-Think of "signals" as the variables in the ZK proof. Some are secret (only the prover knows them), and some are public (everyone can see them).
+### Signals
 
 ```
-SECRET (only the NFT holder knows these):
-  secretKey    — identifies the wallet (never revealed)
-  tokenName    — identifies which NFT
-  sibling_0..9 — Merkle proof path (10 values for depth 10)
-  pathBit_0..9 — direction at each tree level (left=0, right=1)
+PUBLIC (in this order):
+  snapshotRoot — the event's snapshot root (a ZK policy parameter)
+  contextId    — the event (a ZK policy parameter)
+  isOwner      — must be 1
+  nullifier    — Poseidon(Poseidon(s, t), contextId)
 
-PUBLIC (visible to everyone):
-  snapshotRoot — the Merkle root of all holders (published on-chain)
-  contextId    — what this proof is for (e.g., "event-123", "airdrop-456")
-
-OUTPUT (computed by the circuit):
-  isOwner      — always 1 if the proof is valid
-  nullifier    — a unique one-time token (prevents reuse)
+SECRET:
+  secretKey    — the holder secret s (252 bits, SecureRandom)
+  tokenName    — t, the NFT's asset name as a field element
+  sibling_i    — Merkle path siblings
+  pathBit_i    — Merkle path directions (boolean)
 ```
 
 ### Circuit Logic Step by Step
 
 ```
-Step 1: Derive an owner identifier from the secret key
-        ownerHash = Poseidon(secretKey, 0)
-
-        This is a one-way hash. Given ownerHash, nobody can find secretKey.
-        The snapshot builder uses the same formula to compute ownerHash
-        for each registered holder.
-
-Step 2: Compute the leaf (what the holder's entry looks like in the tree)
-        leaf = Poseidon(ownerHash, tokenName)
-
-Step 3: Verify the leaf is in the Merkle tree
-        Walk up the tree from the leaf to the root using the siblings
-        and path bits. The computed root must match snapshotRoot.
-
-        For each level i (bottom to top):
-          if pathBit[i] == 0:  current = Poseidon(current, sibling[i])
-          if pathBit[i] == 1:  current = Poseidon(sibling[i], current)
-
-        Assert: computed root == snapshotRoot
-
-Step 4: Compute the nullifier (anti-replay token)
-        nullifier = Poseidon(tokenName, contextId)
-
-        Same NFT + same context = same nullifier (prevents double use).
-        Different context = different nullifier (allows reuse for other events).
-
-Step 5: Assert isOwner = 1 (all checks passed)
+Step 1: ownerHash  = Poseidon(secretKey, 0)
+Step 2: leaf       = Poseidon(ownerHash, tokenName)          (unchanged from version 1)
+Step 3: Merkle path from leaf to snapshotRoot                 (asserted)
+Step 4: holderTok  = Poseidon(secretKey, tokenName)
+        nullifier' = Poseidon(holderTok, contextId)
+Step 5: assert isOwner ∧ (nullifier' == nullifier)
 ```
 
-This circuit compiles to **10,847 R1CS constraints** at depth 10 (supporting 1,024 holders).
+All hashes are Poseidon over the BLS12-381 scalar field (ZeroJ `PoseidonParamsBLS12_381T3`).
 
-### Poseidon Hash
+### Encodings
 
-Poseidon is a hash function designed specifically for ZK circuits. It works over prime fields (not bytes), making it efficient inside a circuit. Each Poseidon hash adds ~650 constraints.
-
-We use the BLS12-381 scalar field (`r = 0x73eda753...`), matching Cardano's Plutus V3 BLS builtins.
+- `t`: the asset name's bytes as a big-endian integer; 1–31 bytes and no leading zero byte, so
+  each name has exactly one field value.
+- `contextId`: the event label (`zk.default-context`, e.g. `nft-demo-v1`) encoded the same way.
+- `s`: 252 random bits from `SecureRandom`, redrawn if shorter than 240 bits. The API refuses a
+  secret below 2^240 (a typed-in number such as `42`) or wider than 252 bits.
+- The ZK token name is the nullifier's canonical 32-byte big-endian encoding (`0 ≤ n < r`); the
+  list key is `slice(1, 31, name)`.
 
 ### Merkle Tree
 
-A Merkle tree lets you prove a value is in a set without revealing the entire set.
-
-```
-Depth 10 tree (1,024 leaves):
-
-              Root
-             /    \
-           H01    H23
-          /  \   /  \
-         H0  H1 H2  H3
-        / \  ...
-       L0 L1 ...        ← 1,024 leaves
-
-Each leaf: Poseidon(ownerHash, tokenName)
-Each internal node: Poseidon(leftChild, rightChild)
-```
-
-To prove leaf L5 is in the tree, you provide:
-- The 10 siblings along the path from L5 to the root
-- The 10 path direction bits (left or right at each level)
-
-The verifier recomputes the root from the leaf + siblings and checks it matches.
+A depth-10 Poseidon tree (1,024 leaves); empty leaves are 0. A leaf is
+`Poseidon(Poseidon(s, 0), t)`; an internal node is `Poseidon(left, right)`.
 
 ### Nullifier
 
-The nullifier prevents using the same proof twice:
-
 ```
-Alice uses ZeroJTicket#42 for event-123:
-  nullifier = Poseidon(42, "event-123") = 0xABC
+Holder of ZeroJTicket_1 with secret s, event "nft-demo-v1":
+  n = Poseidon(Poseidon(s, t_1), ctx)
 
-Alice tries again for the same event:
-  nullifier = Poseidon(42, "event-123") = 0xABC  ← same! Rejected.
-
-Alice uses ZeroJTicket#42 for airdrop-456:
-  nullifier = Poseidon(42, "airdrop-456") = 0xDEF  ← different context, allowed.
+Same holder, same event:   same n  → the list refuses the second insert
+Same holder, other event:  other n → allowed
+Observer: knows every t and ctx, but not s → cannot compute n for any token
 ```
 
-The nullifier is stored on-chain. Before granting access, the system checks if the nullifier already exists.
+**The use count now rests on the snapshot.** In version 1 the nullifier depended only on the
+token, so the circuit itself gave one nullifier per NFT. In version 2 each leaf gives one
+nullifier per event, and a holder who registered two leaves for one NFT would get two. The indexer
+prevents that by admitting one registration per token, each signed by the token's on-chain
+holder, so the snapshot has at most one leaf per authenticated holding (I4).
+
+The indexer cannot check that a leaf registered under token A commits to A: the leaf hides `t`.
+A holder of A could register a leaf over another token B; if B's holder also registers, two
+leaves prove "B". The count is unchanged — at most one use per authenticated registration — but
+the guarantee is one use per registered holding, not one use per specific NFT.
+
+## Registration (the Indexer)
+
+`SnapshotService.registerHolder(policyId, assetName, leaf, signature)`:
+
+1. Refuses when the snapshot is built (registration is frozen) or the collection differs from the
+   event's.
+2. Refuses a second leaf for a token already registered.
+3. Checks the CIP-8 `COSE_Sign1` signature (CCL's CIP-30 `signData` format):
+   - the payload is exactly `"zeroj.demo.nft.register.v2" ‖ I2OSP32(contextId) ‖ I2OSP32(t) ‖ I2OSP32(leaf)`;
+   - the Ed25519 signature verifies;
+   - the address in the protected header is a base or enterprise address whose payment credential
+     is the key hash of the signing key (not a script, not a reward address);
+   - the chain indexer shows that this address holds exactly one unit of the token.
+4. Any failure, including the indexer being unavailable, refuses the registration.
+
+`buildSnapshot()` builds the tree once and freezes registration. A new event is a new run.
 
 ## Proof Generation (Off-Chain)
 
-### Groth16 Prover
-
-Groth16 is a ZK proof system that produces very small proofs (192 bytes) with fast verification. The prover:
-
-1. Takes the circuit (10,847 constraints) and the witness (all signal values)
-2. Performs elliptic curve operations on BLS12-381 (scalar multiplications, multi-scalar multiplication, FFT)
-3. Outputs three curve points: `(A, B, C)` — the proof
-
-This is done entirely in **pure Java** — no native code, no external tools. It takes ~7-30 seconds depending on CPU.
-
-### Trusted Setup
-
-Groth16 requires a one-time "trusted setup" that generates proving and verification keys. In this demo, we use a **dev-only single-party setup** (generated at startup). For production, you'd use an MPC (multi-party computation) ceremony.
-
-The setup produces:
-- **Proving key** — used by the prover (large, kept on the server)
-- **Verification key** — used by the on-chain verifier (small, baked into the Plutus script)
+Groth16 over BLS12-381, in pure Java. The setup is a **dev-only single-party setup** generated at
+startup; its verification key is baked into the ZK policy. Production needs an MPC ceremony.
 
 ## On-Chain Verification
 
-### Two-Validator Design
+### One Event, Two Scripts
 
-The on-chain verification uses two Plutus V3 scripts that work together in a single transaction:
+Building the snapshot deploys the event:
 
 ```
-┌─────────────────────────────────────┐
-│  ZkProofMintingPolicy               │
-│                                     │
-│  Validates the Groth16 proof        │
-│  (BLS12-381 pairing check)          │
-│  Mints 1 "ZK token" as proof        │
-│  that verification passed            │
-└────────────────┬────────────────────┘
-                 │ both run in the same transaction
-┌────────────────┴────────────────────┐
-│  NullifierListValidator             │
-│                                     │
-│  Validates sorted linked list       │
-│  insertion (data structure check)   │
-│  Checks that ZK token was minted    │
-│  (couples to proof verification)    │
-└─────────────────────────────────────┘
+ZkProofMintingPolicy(snapshotRoot, contextId, VK)    → zkPolicyId
+NullifierListValidator(rootKey, prefix, 1, zkPolicyId, seedRef)  → list policy = list address
+InitList: consumes the seed output, mints the root token into the root node
 ```
 
-**Why two scripts?** Separation of concerns:
-- The ZK policy handles **cryptographic correctness** (is the proof valid?)
-- The list validator handles **data structure correctness** (is the linked list maintained?)
-- They're coupled: the list validator checks that the ZK policy minted in the same tx
+Both scripts run in every access transaction.
 
 ### ZkProofMintingPolicy
 
-This is a `@MintingValidator` (Julc annotation). It runs when tokens are minted under its policy.
+A `@MintingValidator`. Parameters: `snapshotRoot`, `contextId`, the VK. Redeemer:
+`(piA, piB, piC, nullifier)`.
 
-**What it does:**
-1. Decompresses the proof points (piA, piB, piC) from compressed BLS12-381 format
-2. Decompresses the 9 verification key points (baked in at deploy time via `@Param`)
-3. Extracts the 4 public inputs from the redeemer: snapshotRoot, contextId, isOwner, nullifier
-4. Computes `vk_x = IC[0] + pub[0]*IC[1] + pub[1]*IC[2] + pub[2]*IC[3] + pub[3]*IC[4]`
-5. Performs the Groth16 pairing check:
-   - `e(A, B) * e(-alpha, beta) == e(vk_x, gamma) * e(C, delta)`
-   - Uses Plutus V3 BLS12-381 builtins: `bls12_381_millerLoop`, `bls12_381_mulMlResult`, `bls12_381_finalVerify`
-6. Checks that exactly 1 token was minted with name = nullifier bytes
-7. Checks isOwner = 1
+1. `snapshotRoot` and `contextId` are canonical field elements.
+2. The mint map under this policy is exactly `{n: 1}`, `|n| = 32`.
+3. `0 ≤ nullifier < r` and `n = I2OSP32(nullifier)`.
+4. Groth16 verifies against `[snapshotRoot, contextId, 1, nullifier]`.
 
-**Cost:** ~4 miller loops + 4 scalar multiplications + 1 final verify. This fits within Cardano's execution budget.
+A proof for another snapshot or event fails step 4, because those inputs come from the
+parameters, not the redeemer. The policy does not itself limit how often a valid proof mints:
+access is a list node, and the list admits each nullifier once. A ZK token outside the list grants
+nothing.
 
 ### NullifierListValidator
 
-This is a `@MultiValidator` (Julc annotation) with two purposes:
+A `@MultiValidator`. Parameters: `rootKey`, `prefix`, `prefixLen`, `zkPolicyId`, `seedRef`.
 
-**MINT purpose** — validates the linked list operation:
-- `InitList`: creates the root sentinel node (one-time setup)
-- `InsertNode`: inserts a new nullifier in sorted order
+**MINT, `InitList`:**
+- the transaction consumes the seed output (so the root exists once);
+- it spends no input at the list address;
+- the mint map under the list policy is exactly `{rootKey: 1}`;
+- the root token is in the root output, at the list address, holding only lovelace and the
+  root token, with datum `ListElement((), "")`.
 
-**SPEND purpose** — allows spending list nodes only when the MINT policy also runs:
-```java
-return NullifierListLib.requireListTokensMintedOrBurned(txInfo.mint(), ownHash);
-```
-This is the "coupling pattern": the SPEND validator delegates all logic to the MINT validator.
+**MINT, `InsertNode`:**
+- exactly one input at the list's payment credential: the anchor, found by its token;
+- the mint map under the list policy is exactly one entry, `{prefix ‖ key: 1}` (no burns);
+- the mint map under `zkPolicyId` is exactly `{n: 1}`, `|n| = 32`, and `key = slice(1, 31, n)`;
+- the new node holds exactly lovelace, its list token and the ZK token, at the list address,
+  with datum `ListElement((), anchor.oldNext)`;
+- the continuing anchor holds exactly the anchor's tokens, at the list address, with datum
+  `ListElement(anchor.userData, key)`;
+- `anchorKey < key < anchor.oldNext` (with the root and the end as open bounds).
 
-### How They Work Together
-
-In a single Cardano transaction:
-
-```
-Inputs:
-  - Admin wallet (pays fees)
-  - Predecessor node UTXO (the node we're inserting after)
-
-Minting:
-  - NullifierListValidator mints 1 list NFT (token name = "N" + nullifier_key)
-    → validates sorted insertion
-  - ZkProofMintingPolicy mints 1 ZK token (token name = nullifier_full)
-    → validates Groth16 proof
-
-Outputs:
-  - Updated predecessor (datum.nextKey = new nullifier key)
-  - New node (datum.nextKey = predecessor's old nextKey) + both tokens
-
-Spend:
-  - NullifierListValidator (SPEND) allows spending the predecessor
-    because it sees its own policy in the mint field
-```
+**SPEND:** the list policy mints exactly one token, quantity 1, in the same transaction. The seed
+makes every later list mint an insert, and an insert allows exactly one list input, its anchor. So
+a node can be spent only as an insert's anchor, its tokens move into the continuing anchor, and
+nodes are never removed.
 
 ## Sorted Linked List (On-Chain Nullifier Storage)
 
-### Why a Linked List?
-
-On Cardano's UTXO model, you can't store a growing list in a single UTXO (16KB datum limit). Instead, each nullifier is its own UTXO, linked in sorted order.
+Each nullifier is its own UTxO, linked in sorted order:
 
 ```
-ROOT(0x00) → node(0x3A) → node(0x5C) → node(0x8F) → ∅
-
-Each node is a UTXO at the script address:
-  - Holds an NFT (unique identifier)
-  - Has an inline datum: { userData, nextKey }
-  - nextKey points to the next node (empty = end of list)
+ROOT → node(0x3A…) → node(0x5C…) → ∅
 ```
 
-**How does sorted order prove non-existence?** If you want to insert `0x4B`, you find the predecessor where `0x3A < 0x4B < 0x5C`. If no such position exists, the nullifier already exists in the list.
+Inserting `0x4B…` spends `node(0x3A…)` and produces the updated anchor (`next = 0x4B…`) and the
+new node (`next = 0x5C…`). If no anchor with `anchorKey < key < next` exists, the key is already
+in the list. Different inserts usually touch different anchors, so they can proceed in parallel.
 
-### How Insertion Works
-
-```
-Before: ROOT → node(0x3A) → node(0x5C) → ∅
-
-Insert 0x4B:
-  1. Find predecessor: node(0x3A) where 0x3A < 0x4B < 0x5C
-  2. Consume predecessor UTXO
-  3. Create two new UTXOs:
-     - Updated predecessor: { nextKey: 0x4B }
-     - New node: { nextKey: 0x5C }
-
-After: ROOT → node(0x3A) → node(0x4B) → node(0x5C) → ∅
-```
-
-The on-chain validator checks:
-- Sorted order: `predecessor.key < new.key < predecessor.oldNext`
-- Predecessor updated correctly
-- New node points to predecessor's old next
-- Exactly 1 new NFT minted
-- ZK proof verified (via ZK minting policy)
-
-### UTXO Contention
-
-Different nullifier insertions touch **different** nodes in the list, so they can happen in parallel:
-
-```
-Insert 0x11 → touches ROOT          (first in list)
-Insert 0x77 → touches node(0x5C)    (different node — no contention!)
-```
-
-Contention only occurs when two insertions target the same predecessor. As the list grows, this becomes increasingly unlikely (~0.1% for 1,000+ entries).
+Two nullifiers that share their low 31 bytes get the same key; the second insert fails closed.
 
 ## Transaction Flow
 
-### Init: Deploy Root Sentinel
-
-A one-time transaction creates the root node (runs at app startup):
+### Init: Deploy Root Sentinel (when the snapshot is built)
 
 ```
-Mint: 1 token (listPolicy, "NROOT")
-Output: UTXO at script address
-  Value: 2 ADA + 1 NROOT token
-  Datum: { userData: (), nextKey: "" }  ← empty nextKey = end of list
-
-Validator: NullifierListValidator (MINT, InitList)
-  ✓ Output at script address
-  ✓ nextKey is empty
-  ✓ Exactly 1 NROOT token minted
+Inputs:  the seed output (operator wallet)
+Mint:    {listPolicy: {"NROOT": 1}}
+Output:  list address, 2 ADA + NROOT, datum ListElement((), "")
+Checks:  NullifierListValidator MINT (InitList)
 ```
 
-### Insert: Record Nullifier On-Chain
-
-Each access request creates a transaction:
+### Insert: Record a Nullifier On-Chain
 
 ```
 Inputs:
-  [0] Predecessor UTXO (e.g., ROOT with NROOT token)
-  [1] Admin wallet (fees + ADA for new node)
+  anchor node (the only list input)
+  operator wallet (fees, collateral, ADA for the new node)
 
 Mint:
-  [listPolicy] 1 token named "N" + nullifier_key_31bytes   ← list NFT
-  [zkPolicy]   1 token named nullifier_full_32bytes        ← ZK proof token
+  listPolicy: {"N" ‖ slice(1, 31, n): 1}
+  zkPolicy:   {n: 1}                       n = I2OSP32(nullifier)
 
 Outputs:
-  [0] Updated predecessor at script address
-      Value: 2 ADA + predecessor's NFT
-      Datum: { userData: (), nextKey: nullifier_key }
+  continuing anchor: anchor's value, datum ListElement(userData, key)
+  new node:          2 ADA + list token + ZK token, datum ListElement((), anchor.oldNext)
 
-  [1] New node at script address
-      Value: 2 ADA + list NFT + ZK token
-      Datum: { userData: (), nextKey: predecessor's old nextKey }
-
-  [2] Change back to admin wallet
-
-Validators that run:
-  1. ZkProofMintingPolicy (MINT)
-     ✓ Groth16 pairing check passes
-     ✓ Token name = nullifier bytes
-     ✓ Exactly 1 ZK token minted
-     ✓ isOwner = 1
-
-  2. NullifierListValidator (MINT, InsertNode)
-     ✓ Sorted order maintained
-     ✓ Predecessor updated correctly
-     ✓ New node linked correctly
-     ✓ Exactly 1 list NFT minted
-     ✓ ZK policy also minted in this tx
-
-  3. NullifierListValidator (SPEND)
-     ✓ Own policy appears in mint field (coupling check)
-```
-
-## Data Flow (End to End)
-
-```
-User                    Backend                         Cardano
- │                        │                               │
- │  POST /register        │                               │
- │  (secretKey, token) ──>│                               │
- │                        │  ownerHash=Poseidon(sk,0)     │
- │                        │  leaf=Poseidon(ownerHash,tok)  │
- │                        │  store leaf in memory          │
- │                        │                               │
- │  POST /snapshot/build  │                               │
- │ ──────────────────────>│                               │
- │                        │  Build Merkle tree             │
- │                        │  Compute root                  │
- │                        │                               │
- │  POST /prove           │                               │
- │  (secretKey, token) ──>│                               │
- │                        │  Find leaf in tree             │
- │                        │  Get Merkle path (siblings)    │
- │                        │  Compute witness               │
- │                        │  Groth16 prove (~7-30s)        │
- │  <── proof + nullifier │                               │
- │                        │                               │
- │  POST /access          │                               │
- │  (nullifier) ─────────>│                               │
- │                        │  Check not already used        │
- │                        │  Compress proof to BLS bytes   │
- │                        │  Find predecessor in list      │
- │                        │  Build Cardano tx:             │
- │                        │    - Spend predecessor         │
- │                        │    - Mint ZK token (proof)     │
- │                        │    - Mint list NFT (node)      │
- │                        │    - Output updated pred       │
- │                        │    - Output new node           │
- │                        │  ──── submit tx ──────────────>│
- │                        │                               │  Validate:
- │                        │                               │  - Groth16 pairing ✓
- │                        │                               │  - Sorted insertion ✓
- │                        │                               │  - Coupling check ✓
- │                        │  <──── tx confirmed ──────────│
- │  <── access granted    │                               │
- │      + txHash          │                               │
+Scripts:
+  ZkProofMintingPolicy (MINT): Groth16 over [root, context, 1, nullifier]
+  NullifierListValidator (MINT, InsertNode): the rules above
+  NullifierListValidator (SPEND): one list mint in this transaction
 ```
 
 ## What Each Party Sees
 
-| Data | NFT Holder | Verifier | Public Chain |
-|------|-----------|----------|--------------|
-| Wallet address | Yes | **No** | **No** |
-| Which specific NFT | Yes | **No** | **No** |
-| Other tokens in wallet | Yes | **No** | **No** |
-| ADA balance | Yes | **No** | **No** |
-| "Owns an NFT from this collection" | Yes | Yes | Yes |
-| Nullifier (one-time token) | Yes | Yes | Yes |
-| Proof (192 bytes) | Yes | Yes | Yes |
+| Data | Holder | Demo server (operator) | Chain / mempool observer |
+|------|--------|------------------------|--------------------------|
+| Which NFT was used | Yes | Yes | **No** |
+| Which wallet holds it | Yes | Yes (custody) | **No** (from the gate) |
+| Holder secret `s` | Yes | Yes (drew it) | **No** |
+| Snapshot root, event context | Yes | Yes | Yes |
+| Nullifier, proof | Yes | Yes | Yes |
+| "Some snapshot holder used the gate" | Yes | Yes | Yes |
 
-## Security Properties
+## Security Properties and Limitations
 
-| Property | How it's achieved |
-|----------|-------------------|
-| **Privacy** | ZK proof reveals nothing about wallet, NFT, or holdings |
-| **Soundness** | Groth16 proof is computationally infeasible to forge |
-| **One-time use** | Nullifier = Poseidon(tokenName, contextId) — deterministic, stored on-chain |
-| **Reusability** | Different contextId produces different nullifier (same NFT, different event) |
-| **Trustless verification** | Pairing check runs on-chain in Plutus V3 (no off-chain trust) |
-| **Concurrent access** | Sorted linked list — different insertions touch different nodes |
-| **Non-censorship** | Sorted order proves non-existence — can't silently reject valid nullifiers |
+| Property | How it is achieved |
+|----------|--------------------|
+| Soundness of a gate entry | Groth16 verified on-chain against the event's root and context (parameters) |
+| One entry per proof, never removed | list: key = proved nullifier, one list input, exact mint, no burns, one-shot root |
+| At most one use per registered holding per event | one authenticated registration per token (indexer) + one entry per nullifier (list) |
+| Nullifier hides the token | it absorbs the holder's 252-bit secret |
+| Holder authentication | CIP-8 signature by the payment key of the on-chain holder |
+
+Limitations (stated, not prevented):
+- **The indexer decides the snapshot.** It is trusted to admit one registration per token from
+  authenticated holders.
+- **Per holding, not per NFT.** The indexer cannot see which token a leaf commits to, so a proof
+  may name a token other than the one it was registered under; uses stay at most one per
+  authenticated registration.
+- **Front-running.** A mempool observer can submit a holder's proof first and spend its
+  nullifier; the access then goes to that transaction. The fix — a fresh one-time beneficiary key
+  hash as a public input, with the gate's output paid to it — is deferred to keep circuit
+  version 2 minimal.
+- **Using the gate shows that some snapshot holder acted.**
+- **The holder lookup** checks that the signing address holds exactly one unit of the token. It
+  relies on the collection minting each name once (here, the demo server's per-run policy key).
+- **Operator view.** The demo server holds the custody wallet and draws the holder secrets
+  (D10). Privacy holds against chain and mempool observers only.
+- **Dev setup and no external review.**
+
+## Keys and Roles
+
+| Role | Key | Lifecycle |
+|------|-----|-----------|
+| NFT custody wallet (holds NFTs, signs registrations) | random 24-word key (`CustodyWallet`) | written atomically, owner-only, in `demo.data-dir`, next to the deployment state with its address; loaded on restart; removed with the state by `./demo.sh nft --clean-cache`; a missing, corrupt or mismatched key with existing state stops startup |
+| List operator (fees, collateral, seed, inserts) | DevKit's well-known mnemonic | public devnet role; gates no privacy claim; replace in a real deployment |
+| Collection policy | random per run, in memory | mints the demo NFTs |
 
 ## Cost Analysis
 
 | Operation | Cost | Frequency |
 |-----------|------|-----------|
-| Root sentinel deployment | ~2 ADA | Once per collection |
-| ZK proof generation | Free (off-chain computation) | Per access request |
-| Nullifier insertion tx | ~2 ADA locked per node | Per access request |
-| Off-chain verification | Free | Per status check |
+| Event deployment (root sentinel) | ~2 ADA locked + fee | once per event |
+| ZK proof generation | off-chain computation | per access |
+| Nullifier insertion | ~2 ADA locked per node + fee | per access |
 
-Each nullifier node locks ~2 ADA in a UTXO. For an event with 1,000 attendees, that's ~2,000 ADA locked (reclaimable after the event if remove operations are added).
+Each nullifier node locks ~2 ADA. Nodes are never removed, so the ADA stays locked; reclaiming it
+would need a reviewed post-event removal design.

@@ -4,7 +4,7 @@
 
 const BASE_URL = '/api';
 
-async function post(path: string, body: Record<string, string> = {}): Promise<any> {
+async function post(path: string, body: Record<string, unknown> = {}): Promise<any> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -19,19 +19,22 @@ async function get(path: string): Promise<any> {
 }
 
 export const api = {
-  // Snapshot
-  registerHolder: (secretKey: string, tokenName: string) =>
-    post('/snapshot/register', { secretKey, tokenName }),
+  // NFTs (minted into the server's custody wallet)
+  mint: (collectionName: string, count: number) =>
+    post('/mint', { collectionName, count }),
+  mintStatus: () => get('/mint/status'),
+
+  // Snapshot. Without a secret the server draws a fresh 252-bit holder secret.
+  registerHolder: (tokenName: string, secretKey?: string) =>
+    post('/snapshot/register', { tokenName, ...(secretKey ? { secretKey } : {}) }),
   buildSnapshot: () => post('/snapshot/build'),
   snapshotStatus: () => get('/snapshot/status'),
 
-  // Proof
-  generateProof: (secretKey: string, tokenName: string, contextId?: string) =>
-    post('/prove', { secretKey, tokenName, ...(contextId ? { contextId } : {}) }),
+  // Proof (for this run's event)
+  generateProof: (secretKey: string, tokenName: string) =>
+    post('/prove', { secretKey, tokenName }),
 
-  // Verify & Access
-  verifyProof: (nullifier: string, snapshotRoot: string) =>
-    post('/verify', { nullifier, snapshotRoot }),
+  // Access
   requestAccess: (nullifier: string) =>
     post('/access', { nullifier }),
 

@@ -46,10 +46,16 @@ public class CardanoConfig {
         return new BFBackendService(baseUrl, projectId);
     }
 
+    /**
+     * The list operator: pays fees and collateral, supplies the list's seed, and submits inserts.
+     * Derived from DevKit's well-known test mnemonic, so anyone on a devnet can sign as it; it
+     * gates no privacy claim (ADR-0009 D11). The NFTs and their registrations use the private
+     * {@code CustodyWallet} instead.
+     */
     @Bean
     public Account adminAccount() {
         var account = new Account(Networks.testnet(), yaciMnemonic);
-        log.info("Demo admin address ({}): {}", network, account.baseAddress());
+        log.info("List operator address ({}, public devnet role): {}", network, account.baseAddress());
         return account;
     }
 

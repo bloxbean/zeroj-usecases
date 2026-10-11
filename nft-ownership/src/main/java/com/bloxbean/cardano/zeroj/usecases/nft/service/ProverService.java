@@ -69,12 +69,12 @@ public class ProverService {
     }
 
     /**
-     * Generate a ZK proof of NFT ownership.
+     * Generate a ZK proof of NFT ownership (circuit version 2).
      *
-     * @param secretKey    holder's secret key (identifies the wallet)
-     * @param tokenName    NFT asset name (identifies which NFT)
-     * @param snapshotRoot current Merkle root from on-chain snapshot
-     * @param contextId    context for nullifier (event ID, airdrop ID, etc.)
+     * @param secretKey    holder secret (252-bit; refused when short)
+     * @param tokenName    NFT asset name as a field element ({@link NftScheme#tokenField})
+     * @param snapshotRoot the event's snapshot root
+     * @param contextId    the event's context ({@link NftScheme#contextId})
      * @param siblings     Merkle proof siblings (one per tree level)
      * @param pathBits     Merkle path direction bits (0=left, 1=right)
      * @return the generated proof
@@ -86,9 +86,10 @@ public class ProverService {
         if (siblings.length != treeDepth || pathBits.length != treeDepth) {
             throw new IllegalArgumentException("siblings and pathBits must have length " + treeDepth);
         }
+        NftScheme.requireSecret(secretKey);
 
-        // Compute expected nullifier (for return value)
-        BigInteger nullifier = computeNullifier(tokenName, contextId);
+        // Expected nullifier: Poseidon(Poseidon(secretKey, tokenName), contextId)
+        BigInteger nullifier = NftScheme.nullifier(secretKey, tokenName, contextId);
 
         // Build witness inputs
         Map<String, List<BigInteger>> inputs = new HashMap<>();
@@ -138,25 +139,10 @@ public class ProverService {
     }
 
     /**
-     * Compute the nullifier for a given token + context.
+     * The nullifier {@code Poseidon(Poseidon(secretKey, tokenName), contextId)}.
      */
-    public BigInteger computeNullifier(BigInteger tokenName, BigInteger contextId) {
-        // Poseidon(tokenName, contextId) — must match the circuit
-        return computePoseidon(tokenName, contextId);
-    }
-
-    /**
-     * Compute the owner hash from a secret key.
-     */
-    public BigInteger computeOwnerHash(BigInteger secretKey) {
-        return computePoseidon(secretKey, BigInteger.ZERO);
-    }
-
-    /**
-     * Compute a leaf hash: Poseidon(ownerHash, tokenName).
-     */
-    public BigInteger computeLeafHash(BigInteger ownerHash, BigInteger tokenName) {
-        return computePoseidon(ownerHash, tokenName);
+    public BigInteger computeNullifier(BigInteger secretKey, BigInteger tokenName, BigInteger contextId) {
+        return NftScheme.nullifier(secretKey, tokenName, contextId);
     }
 
     public Groth16SetupBLS381.SetupResult getSetupResult() {
@@ -168,23 +154,6 @@ public class ProverService {
     }
 
     // --- Helpers ---
-
-    private final java.util.concurrent.ConcurrentHashMap<String, BigInteger> poseidonCache =
-            new java.util.concurrent.ConcurrentHashMap<>();
-
-    /**
-     * Compute Poseidon(a, b) over BLS12-381 using the standards-compatible preset.
-     * Results are cached for performance. After ADR-0015, this delegates to
-     * {@link org.zeroj.circuit.lib.poseidon.PoseidonHash} —
-     * no more reflection into {@code PoseidonConstants}.
-     */
-    private BigInteger computePoseidon(BigInteger a, BigInteger b) {
-        String key = a.toString(16) + ":" + b.toString(16);
-        return poseidonCache.computeIfAbsent(key, k ->
-                org.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
-                        org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
-                        a, b));
-    }
 
     private static G1Point toG1(org.zeroj.bls12381.ec.JacobianG1BLS381.AffineG1 p) {
         if (p.isInfinity()) return G1Point.INFINITY;
