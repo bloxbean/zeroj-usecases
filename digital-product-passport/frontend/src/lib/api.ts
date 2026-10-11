@@ -9,8 +9,11 @@ export const api = {
   listProducts: (page: number, size: number, type?: string) =>
     get(`/products?page=${page}&size=${size}${type ? '&type=' + type : ''}`),
   addProducts: (count: number, type: string) => post('/products/add', { count, type }),
-  verify: (id: string, type: string) => post('/verify', { id, type }),
-  mint: (id: string) => post('/mint', { id }),
+  verify: (id: string) => post('/verify', { id }),
+  mint: (id: string, forceOnChain: boolean) => post('/mint', { id, forceOnChain }),
+  revoke: (id: string) => post('/revoke', { id }),
+  passport: (id: string) => get(`/passport/${encodeURIComponent(id)}`),
+  manufacturer: (id: string) => get(`/manufacturer/${encodeURIComponent(id)}`),
   anchor: () => post('/anchor'),
   registry: () => get('/registry'),
 };

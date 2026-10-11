@@ -1,25 +1,33 @@
 package com.bloxbean.cardano.zeroj.usecases.dpp.service;
 
-import com.bloxbean.cardano.zeroj.usecases.dpp.mpf.PoseidonCompute;
+import com.bloxbean.cardano.zeroj.usecases.dpp.passport.ApprovedSets;
+import com.bloxbean.cardano.zeroj.usecases.dpp.passport.Claim;
+import com.bloxbean.cardano.zeroj.usecases.dpp.passport.ClaimOpening;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
 
 import java.math.BigInteger;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Generates ZK compliance proofs for DPP claims.
- * <p>
- * Supports: carbon threshold (<=), recycled content (>=), country membership (EU),
- * and inspection chain (N checkpoints in order).
+ * The manufacturer's prover (ADR-0009 D1): proves each claim from the auditor's opening, against
+ * the public threshold or approved-set root. A claim the committed values do not satisfy has no
+ * proof at all; there is no "not compliant" proof.
+ *
+ * <p>Proofs are kept per product: the carbon proof goes into the passport transaction, the other
+ * three are the manufacturer's published off-chain proofs, which readers verify against the
+ * commitments in the passport datum.
  */
 @Service
 public class ComplianceService {
 
     private static final Logger log = LoggerFactory.getLogger(ComplianceService.class);
-    private static final BigInteger AUDITOR_SECRET = BigInteger.valueOf(777777);
 
     @Value("${dpp.carbon-threshold-kg}")
     private int carbonThreshold;
@@ -28,160 +36,68 @@ public class ComplianceService {
     private int recycledThreshold;
 
     private final DppCircuitService circuitService;
-    private final ProductService productService;
+    private final Map<String, Map<Claim, ClaimProof>> proofs = new ConcurrentHashMap<>();
 
-    public ComplianceService(DppCircuitService circuitService, ProductService productService) {
+    public ComplianceService(DppCircuitService circuitService) {
         this.circuitService = circuitService;
-        this.productService = productService;
     }
 
-    /**
-     * Generate a ZK proof that carbon <= threshold.
-     */
-    public ClaimResult proveCarbonCompliance(String productId, int actualCarbon) {
-        BigInteger measurement = BigInteger.valueOf(actualCarbon);
-        BigInteger threshold = BigInteger.valueOf(carbonThreshold);
-        BigInteger prodId = new BigInteger(1, productId.getBytes());
-        BigInteger auditorHash = circuitService.computeAuditorHash(AUDITOR_SECRET, prodId, measurement);
+    /** A proved claim: the statement's public parameter and the proof. */
+    public record ClaimProof(Claim claim, BigInteger param, Groth16ProofBLS381 proof) {}
 
-        long start = System.currentTimeMillis();
-        var result = circuitService.proveThresholdLte(measurement, AUDITOR_SECRET,
-                prodId, threshold, auditorHash);
-        long elapsed = System.currentTimeMillis() - start;
+    /** The outcome of proving one claim; {@code proof} is null when the claim cannot be proved. */
+    public record ClaimResult(Claim claim, boolean proved, long provingTimeMs, ClaimProof proof, String error) {}
 
-        boolean compliant = actualCarbon <= carbonThreshold;
-        log.info("Carbon proof for {}: {} kg (threshold {} kg) → {} ({}ms)",
-                productId, actualCarbon, carbonThreshold, compliant ? "COMPLIANT" : "NOT COMPLIANT", elapsed);
-
-        return new ClaimResult("carbon", compliant, result.proof(), elapsed,
-                Map.of("measurement", actualCarbon, "threshold", carbonThreshold));
+    /** The public parameter of each claim's statement. */
+    public BigInteger param(Claim claim) {
+        return switch (claim) {
+            case CARBON -> BigInteger.valueOf(carbonThreshold);
+            case RECYCLED -> BigInteger.valueOf(recycledThreshold);
+            case ORIGIN -> ApprovedSets.EU_COUNTRIES.root();
+            case INSPECTIONS -> ApprovedSets.INSPECTORS.root();
+        };
     }
 
-    /**
-     * Generate a ZK proof that recycled content >= threshold.
-     */
-    public ClaimResult proveRecycledCompliance(String productId, int actualRecycled) {
-        BigInteger measurement = BigInteger.valueOf(actualRecycled);
-        BigInteger threshold = BigInteger.valueOf(recycledThreshold);
-        BigInteger prodId = new BigInteger(1, productId.getBytes());
-        BigInteger auditorHash = circuitService.computeAuditorHash(AUDITOR_SECRET, prodId, measurement);
-
-        long start = System.currentTimeMillis();
-        var result = circuitService.proveThresholdGte(measurement, AUDITOR_SECRET,
-                prodId, threshold, auditorHash);
-        long elapsed = System.currentTimeMillis() - start;
-
-        boolean compliant = actualRecycled >= recycledThreshold;
-        log.info("Recycled proof for {}: {}% (threshold {}%) → {} ({}ms)",
-                productId, actualRecycled, recycledThreshold, compliant ? "COMPLIANT" : "NOT COMPLIANT", elapsed);
-
-        return new ClaimResult("recycled_content", compliant, result.proof(), elapsed,
-                Map.of("measurement", actualRecycled, "threshold", recycledThreshold));
-    }
-
-    /**
-     * Generate a ZK proof that country is in the EU set.
-     */
-    public ClaimResult proveCountryCompliance(String productId, int countryCode) {
-        var proof = productService.getCountryProof(countryCode);
-        boolean inEu = proof != null;
-
-        if (!inEu) {
-            log.info("Country proof for {}: {} not in EU → NOT COMPLIANT", productId, countryCode);
-            return new ClaimResult("made_in_eu", false, null, 0,
-                    Map.of("country", countryCode, "inEU", false));
-        }
-
-        BigInteger country = BigInteger.valueOf(countryCode);
-        BigInteger prodId = new BigInteger(1, productId.getBytes());
-        BigInteger countryRoot = productService.getEuCountryRoot();
-        // The auditor's commitment to this product's origin (same scheme as the threshold claims)
-        BigInteger auditorHash = circuitService.computeAuditorHash(AUDITOR_SECRET, prodId, country);
-
-        long start = System.currentTimeMillis();
-        var result = circuitService.proveCountryMembership(country, prodId, countryRoot,
-                AUDITOR_SECRET, auditorHash, proof.siblings(), proof.pathBits());
-        long elapsed = System.currentTimeMillis() - start;
-
-        log.info("Country proof for {}: {} in EU → COMPLIANT ({}ms)", productId, countryCode, elapsed);
-        return new ClaimResult("made_in_eu", true, result.proof(), elapsed,
-                Map.of("country", countryCode, "inEU", true));
-    }
-
-    /**
-     * Generate a ZK proof that all inspections passed in order.
-     */
-    public ClaimResult proveInspectionCompliance(String productId, int numInspections) {
-        BigInteger prodId = new BigInteger(1, productId.getBytes());
-        BigInteger inspRoot = productService.getInspectorRoot();
-        var inspKeys = productService.getInspectorKeys();
-
-        // Build inspection data
-        Map<String, List<BigInteger>> inputs = new HashMap<>();
-        List<BigInteger> keys = new ArrayList<>();
-        List<BigInteger> timestamps = new ArrayList<>();
-        for (int i = 0; i < numInspections; i++) {
-            BigInteger timestamp = BigInteger.valueOf(1000 + i * 100);
-            BigInteger inspectorKey = inspKeys.get(i % inspKeys.size());
-            keys.add(inspectorKey);
-            timestamps.add(timestamp);
-            inputs.put("passed_" + i, List.of(BigInteger.ONE));
-            inputs.put("timestamp_" + i, List.of(timestamp));
-            inputs.put("inspectorKey_" + i, List.of(inspectorKey));
-
-            var inspProof = productService.getInspectorProof(inspKeys.get(i % inspKeys.size()));
-            for (int j = 0; j < inspProof.siblings().length; j++) {
-                inputs.put("insp_sibling_" + i + "_" + j, List.of(inspProof.siblings()[j]));
-                inputs.put("insp_pathBit_" + i + "_" + j, List.of(inspProof.pathBits()[j]));
+    /** Proves every claim of a product from its openings, and keeps the proofs that exist. */
+    public List<ClaimResult> proveAll(String serial, List<ClaimOpening> openings) {
+        List<ClaimResult> results = new ArrayList<>();
+        Map<Claim, ClaimProof> kept = proofs.computeIfAbsent(serial, s -> new ConcurrentHashMap<>());
+        for (ClaimOpening o : openings) {
+            long start = System.currentTimeMillis();
+            BigInteger param = param(o.claim());
+            try {
+                var proof = circuitService.circuits().prove(o, param);
+                long ms = System.currentTimeMillis() - start;
+                ClaimProof cp = new ClaimProof(o.claim(), param, proof);
+                kept.put(o.claim(), cp);
+                results.add(new ClaimResult(o.claim(), true, ms, cp, null));
+                log.info("{}: {} claim proved ({} ms)", serial, o.claim().label(), ms);
+            } catch (RuntimeException e) {
+                kept.remove(o.claim());
+                results.add(new ClaimResult(o.claim(), false, System.currentTimeMillis() - start, null,
+                        "the committed values do not satisfy the claim, so no proof exists"));
+                log.info("{}: {} claim cannot be proved", serial, o.claim().label());
             }
         }
-
-        // The auditor's commitment to this product's inspection log
-        BigInteger auditorHash = circuitService.computeInspectionLogHash(AUDITOR_SECRET, prodId, keys, timestamps);
-
-        long start = System.currentTimeMillis();
-        var result = circuitService.proveInspections(prodId, inspRoot, AUDITOR_SECRET, auditorHash, inputs);
-        long elapsed = System.currentTimeMillis() - start;
-
-        log.info("Inspection proof for {}: {}/{} passed → COMPLIANT ({}ms)",
-                productId, numInspections, numInspections, elapsed);
-        return new ClaimResult("inspections", true, result.proof(), elapsed,
-                Map.of("passed", numInspections, "required", numInspections));
-    }
-
-    /**
-     * Generate all applicable compliance proofs for a product.
-     */
-    public List<ClaimResult> proveAllClaims(String productId, Map<String, Integer> claims) {
-        List<ClaimResult> results = new ArrayList<>();
-
-        if (claims.containsKey("carbon_kg")) {
-            results.add(proveCarbonCompliance(productId, claims.get("carbon_kg")));
-        }
-        if (claims.containsKey("carbon_per_unit_kg")) {
-            results.add(proveCarbonCompliance(productId, claims.get("carbon_per_unit_kg")));
-        }
-        if (claims.containsKey("recycled_pct")) {
-            results.add(proveRecycledCompliance(productId, claims.get("recycled_pct")));
-        }
-        if (claims.containsKey("country")) {
-            results.add(proveCountryCompliance(productId, claims.get("country")));
-        }
-        if (claims.containsKey("inspection_count")) {
-            results.add(proveInspectionCompliance(productId, claims.get("inspection_count")));
-        }
-
         return results;
     }
 
-    public int getCarbonThreshold() { return carbonThreshold; }
-    public int getRecycledThreshold() { return recycledThreshold; }
+    /** The kept proof of a claim, if it was proved. */
+    public ClaimProof proof(String serial, Claim claim) {
+        Map<Claim, ClaimProof> kept = proofs.get(serial);
+        return kept == null ? null : kept.get(claim);
+    }
 
-    public record ClaimResult(
-            String claimType,
-            boolean compliant,
-            org.zeroj.crypto.groth16.Groth16ProofBLS381 proof,
-            long provingTimeMs,
-            Map<String, Object> details
-    ) {}
+    /**
+     * A carbon proof against a threshold the manufacturer chose instead of the policy's (the
+     * "skip off-chain check" demonstration): it is a valid proof, of a different statement, and
+     * the passport script refuses it.
+     */
+    public Groth16ProofBLS381 proveCarbonAgainst(ClaimOpening carbon, long chosenThreshold) {
+        return circuitService.circuits().prove(carbon, BigInteger.valueOf(chosenThreshold));
+    }
+
+    public int carbonThreshold() { return carbonThreshold; }
+
+    public int recycledThreshold() { return recycledThreshold; }
 }
