@@ -1,7 +1,8 @@
 FROM eclipse-temurin:25-jdk AS build
 
 ARG USECASE_DIR
-ARG ZEROJ_VERSION=0.1.0-pre12
+# Empty = use zerojVersion from version.properties (copied below); set to override.
+ARG ZEROJ_VERSION=
 ARG PUBLISH_LOCAL_ZEROJ=false
 ARG ZEROJ_PUBLISH_TASKS=":zeroj-api:publishToMavenLocal :zeroj-backend-spi:publishToMavenLocal :zeroj-codec:publishToMavenLocal :zeroj-bls12381:publishToMavenLocal :zeroj-blst:publishToMavenLocal :zeroj-crypto:publishToMavenLocal :zeroj-circuit-dsl:publishToMavenLocal :zeroj-circuit-annotation-api:publishToMavenLocal :zeroj-circuit-annotation-processor:publishToMavenLocal :zeroj-circuit-lib:publishToMavenLocal :zeroj-verifier-groth16:publishToMavenLocal :zeroj-onchain-julc:publishToMavenLocal"
 
@@ -14,11 +15,12 @@ RUN if [ "${PUBLISH_LOCAL_ZEROJ}" = "true" ]; then \
     fi
 
 WORKDIR /workspace/usecase
+COPY version.properties /workspace/version.properties
 COPY gradle/usecase-versions.gradle /workspace/gradle/usecase-versions.gradle
 COPY ${USECASE_DIR}/ ./
 
 RUN chmod +x ./gradlew \
-    && ./gradlew --no-daemon bootJar -x test -PzerojVersion=${ZEROJ_VERSION} \
+    && ./gradlew --no-daemon bootJar -x test ${ZEROJ_VERSION:+-PzerojVersion=${ZEROJ_VERSION}} \
     && jar_file="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-plain.jar' | head -n 1)" \
     && test -n "${jar_file}" \
     && cp "${jar_file}" /workspace/app.jar
