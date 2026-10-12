@@ -30,6 +30,14 @@ repositories {
         url = uri("https://central.sonatype.com/repository/maven-snapshots")
         content { snapshotsOnly() }
     }
+    // ZeroJ commit snapshots published by ZeroJ's bloxbean-snapshot workflow.
+    maven {
+        url = uri("https://repo.bloxbean.org/maven/snapshots")
+        content {
+            snapshotsOnly()
+            includeGroup("org.zeroj")
+        }
+    }
     maven {
         url = uri("https://repo.spring.io/milestone")
     }

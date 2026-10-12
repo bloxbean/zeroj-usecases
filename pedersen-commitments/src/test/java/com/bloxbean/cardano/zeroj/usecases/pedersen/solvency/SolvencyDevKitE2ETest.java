@@ -9,9 +9,13 @@ import com.bloxbean.cardano.zeroj.usecases.pedersen.common.E2E;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.common.Plutus;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.solvency.SolvencyAttestation.Customer;
 import org.junit.jupiter.api.Test;
+import org.zeroj.circuit.lib.jubjub.NoteViewingKey;
 
+import java.math.BigInteger;
+import java.security.SecureRandom;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -47,9 +51,12 @@ class SolvencyDevKitE2ETest {
         assertThrows(RuntimeException.class, () -> solvency.prove(reserves - 1, book), "insolvent books have no proof");
         var proof = solvency.prove(reserves, book);
 
-        // Before the period: attest, with a validity range ending at the period start.
+        // Before the period: attest, with a validity range ending at the period start. Each entry's
+        // opening is delivered to its customer, and the total's to the auditor (ADR-0007 N6).
+        NoteViewingKey auditor = NoteViewingKey.generate(new SecureRandom());
+        byte[] auditorDelivery = SolvencyAttestation.auditorDelivery(book, auditor.readerKey());
         var attested = SolvencyAttestation.attest(backend, vault, exchange, reserves,
-                SolvencyAttestation.entries(book), proof, DevKit.slotAt(backend, period.start()));
+                SolvencyAttestation.entries(book), auditorDelivery, proof, DevKit.slotAt(backend, period.start()));
         assertTrue(attested.isSuccessful(), "attest: " + attested.getResponse());
         DevKit.waitForTx(backend, attested.getValue());
 
@@ -58,27 +65,33 @@ class SolvencyDevKitE2ETest {
         while (DevKit.chainTimeMillis(backend) < period.start() + 2_000) Thread.sleep(2_000);
         var entries = SolvencyAttestation.liveEntries(backend, vault);
         for (Customer c : book) {
-            assertTrue(SolvencyAttestation.customerCheck(entries, c), c.id() + " is listed once and opens");
+            assertEquals(SolvencyAttestation.Check.LISTED_ONCE_CORRECT,
+                    SolvencyAttestation.customerCheck(entries, c, SolvencyCircuitTest.KEYS.get(c.id())),
+                    c.id() + " decrypts their entry from the chain");
         }
-        assertFalse(SolvencyAttestation.customerCheck(entries, Customer.of("eve", 1)), "a stranger has no entry");
-        assertTrue(SolvencyAttestation.auditorCheck(entries, SolvencyAttestation.auditOpening(book)),
-                "the auditor opens total liabilities from the on-chain entries");
+        NoteViewingKey eve = NoteViewingKey.generate(new SecureRandom());
+        assertEquals(SolvencyAttestation.Check.MISSING,
+                SolvencyAttestation.customerCheck(entries, Customer.of("eve", 1, eve.readerKey()), eve), "a stranger has no entry");
+        var live = SolvencyAttestation.liveAttestations(backend, vault);
+        assertEquals(1, live.size());
+        assertEquals(BigInteger.valueOf(reserves), SolvencyAttestation.auditorCheck(live.getFirst(), auditor).orElseThrow(),
+                "the auditor opens total liabilities from its on-chain delivery");
 
         // Inside the period nothing changes: a second attestation (here, the same reserves for
         // the same book again, valid until a minute from now) and an early release are rejected.
         E2E.assertScriptRejected(SolvencyAttestation.attest(backend, vault, exchange, reserves,
-                SolvencyAttestation.entries(book), proof,
+                SolvencyAttestation.entries(book), auditorDelivery, proof,
                 DevKit.slotAt(backend, DevKit.chainTimeMillis(backend) + 60_000)), "an attestation inside the period");
         String tokenUnit = Plutus.policyId(vault) + HexUtil.encodeHexString(SolvencyAttestation.ATTEST_TOKEN);
-        Utxo live = DevKit.utxosOf(backend, vaultAddress, attested.getValue()).stream()
+        Utxo liveUtxo = DevKit.utxosOf(backend, vaultAddress, attested.getValue()).stream()
                 .filter(u -> u.getAmount().stream().anyMatch(a -> a.getUnit().equals(tokenUnit)))
                 .findFirst().orElseThrow();
-        E2E.assertScriptRejected(SolvencyAttestation.release(backend, vault, exchange, live,
+        E2E.assertScriptRejected(SolvencyAttestation.release(backend, vault, exchange, liveUtxo,
                 DevKit.slotAt(backend, DevKit.chainTimeMillis(backend))), "a release inside the period");
 
         // After the period: released, attestation token burned.
         while (DevKit.chainTimeMillis(backend) < period.end() + 2_000) Thread.sleep(3_000);
-        var released = SolvencyAttestation.release(backend, vault, exchange, live, DevKit.slotAt(backend, period.end()) + 1);
+        var released = SolvencyAttestation.release(backend, vault, exchange, liveUtxo, DevKit.slotAt(backend, period.end()) + 1);
         assertTrue(released.isSuccessful(), "release: " + released.getResponse());
         DevKit.waitForTx(backend, released.getValue());
         System.out.println("Solvency on DevKit: attest " + attested.getValue() + ", release " + released.getValue());

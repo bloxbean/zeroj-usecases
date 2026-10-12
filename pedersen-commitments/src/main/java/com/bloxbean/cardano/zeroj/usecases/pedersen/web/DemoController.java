@@ -24,13 +24,19 @@ public class DemoController {
     private static final Logger log = LoggerFactory.getLogger(DemoController.class);
 
     private final PointsService points;
+    private final PayrollService payroll;
+    private final AuctionService auction;
     private final CreditService credit;
     private final SolvencyService solvency;
     private final Map<String, String> readiness = new ConcurrentHashMap<>(
-            Map.of("points", "starting", "credit", "starting", "solvency", "starting"));
+            Map.of("points", "starting", "payroll", "starting", "auction", "starting", "credit", "starting",
+                    "solvency", "starting"));
 
-    public DemoController(PointsService points, CreditService credit, SolvencyService solvency) {
+    public DemoController(PointsService points, PayrollService payroll, AuctionService auction, CreditService credit,
+                          SolvencyService solvency) {
         this.points = points;
+        this.payroll = payroll;
+        this.auction = auction;
         this.credit = credit;
         this.solvency = solvency;
     }
@@ -39,6 +45,8 @@ public class DemoController {
     @EventListener(ApplicationReadyEvent.class)
     public void warmUp() {
         warm("points", () -> points.ensureReady());
+        warm("payroll", () -> payroll.ensureReady());
+        warm("auction", () -> auction.ensureReady());
         warm("credit", () -> credit.ensureReady());
         warm("solvency", () -> solvency.ensureReady());
     }
@@ -74,14 +82,21 @@ public class DemoController {
         return points.state();
     }
 
+    /** Issue; an optional {@code reported} amount is the trusted issuer lying to the auditor. */
     @PostMapping("/points/issue")
     public Map<String, Object> issue(@RequestBody Map<String, Object> r) throws Exception {
-        return points.issue(str(r, "to"), num(r, "amount"));
+        return points.issue(str(r, "to"), num(r, "amount"), optionalNum(r, "reported"));
     }
 
+    /** Transfer; an optional {@code cheat} is garbageDelivery, retiredKey or stakeVariant. */
     @PostMapping("/points/transfer")
     public Map<String, Object> transfer(@RequestBody Map<String, Object> r) throws Exception {
-        return points.transfer(str(r, "from"), str(r, "to"), num(r, "amount"));
+        return points.transfer(str(r, "from"), str(r, "to"), num(r, "amount"), (String) r.get("cheat"));
+    }
+
+    @PostMapping("/points/rotate")
+    public Map<String, Object> rotatePoints() throws Exception {
+        return points.rotate();
     }
 
     @PostMapping("/points/redeem")
@@ -92,6 +107,69 @@ public class DemoController {
     @PostMapping("/points/steal")
     public Map<String, Object> steal(@RequestBody Map<String, Object> r) throws Exception {
         return points.steal(str(r, "thief"), str(r, "victim"));
+    }
+
+    // --- Confidential payroll ----------------------------------------------------------------
+
+    @GetMapping("/payroll")
+    public Map<String, Object> payrollState() throws Exception {
+        return payroll.state();
+    }
+
+    /** Pay; an optional {@code reported} amount is the employer trying to under-report. */
+    @PostMapping("/payroll/pay")
+    public Map<String, Object> pay(@RequestBody Map<String, Object> r) throws Exception {
+        return payroll.pay(str(r, "to"), num(r, "amount"), optionalNum(r, "reported"));
+    }
+
+    @PostMapping("/payroll/transfer")
+    public Map<String, Object> payrollTransfer(@RequestBody Map<String, Object> r) throws Exception {
+        return payroll.transfer(str(r, "from"), str(r, "to"), num(r, "amount"), (String) r.get("cheat"));
+    }
+
+    @PostMapping("/payroll/cash-out")
+    public Map<String, Object> cashOut(@RequestBody Map<String, Object> r) throws Exception {
+        return payroll.cashOut(str(r, "from"), num(r, "amount"));
+    }
+
+    @PostMapping("/payroll/rotate")
+    public Map<String, Object> rotatePayroll() throws Exception {
+        return payroll.rotate();
+    }
+
+    // --- Sealed-bid auction ------------------------------------------------------------------
+
+    @GetMapping("/auction")
+    public Map<String, Object> auctionState() throws Exception {
+        return auction.state();
+    }
+
+    @PostMapping("/auction/open")
+    public Map<String, Object> openLot(@RequestBody Map<String, Object> r) throws Exception {
+        return auction.open((String) r.get("item"), num(r, "deposit"), num(r, "reserve"));
+    }
+
+    /** A sealed bid; an optional {@code copyFrom} bidder is the copy cheat. */
+    @PostMapping("/auction/bid")
+    public Map<String, Object> bid(@RequestBody Map<String, Object> r) throws Exception {
+        return auction.bid(str(r, "bidder"), num(r, "amount"), (String) r.get("copyFrom"));
+    }
+
+    /** Settles; an optional {@code claimWinner} (1-based) is the auctioneer naming another winner. */
+    @PostMapping("/auction/settle")
+    public Map<String, Object> settle(@RequestBody Map<String, Object> r) throws Exception {
+        Long claim = optionalNum(r, "claimWinner");
+        return auction.settle(claim == null ? null : claim.intValue());
+    }
+
+    @PostMapping("/auction/refund")
+    public Map<String, Object> refund() throws Exception {
+        return auction.refund();
+    }
+
+    @PostMapping("/auction/no-bids")
+    public Map<String, Object> noBids() throws Exception {
+        return auction.noBids();
     }
 
     // --- B. Committed credential ------------------------------------------------------------
@@ -127,7 +205,7 @@ public class DemoController {
 
     @PostMapping("/solvency/attest")
     public Map<String, Object> attest(@RequestBody Map<String, Object> r) throws Exception {
-        return solvency.attest(num(r, "reservesAda"));
+        return solvency.attest(num(r, "reservesAda"), (String) r.get("garbageFor"));
     }
 
     @PostMapping("/solvency/attest-again")
@@ -156,6 +234,12 @@ public class DemoController {
         Object v = r.get(key);
         if (v == null) throw new IllegalArgumentException("missing " + key);
         return v.toString();
+    }
+
+    private static Long optionalNum(Map<String, Object> r, String key) {
+        Object v = r.get(key);
+        if (v == null || (v instanceof String s && s.isBlank())) return null;
+        return num(r, key);
     }
 
     private static long num(Map<String, Object> r, String key) {

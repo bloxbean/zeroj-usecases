@@ -6,6 +6,7 @@
   let busy = $state('');
   let result = $state<any>(null);
   let reservesAda = $state(2000);
+  let garbageFor = $state('dave');
   let rows = $state<{ id: string; balance: number }[]>([]);
   let offset = 0;            // chain time − local time, from the last state fetch
   let now = $state(Date.now());
@@ -46,8 +47,11 @@
   <p class="hint">The exchange publishes one Pedersen commitment per customer balance and proves
     <code>Σ balances ≤ reserves</code> while hiding every balance and the total. The reserve is locked in a vault for a
     public <em>attestation period</em>: attestations only before it starts, release only after it ends, so the same funds
-    cannot back attestations one after another. Customers check their own entry; an auditor opens the total by
-    homomorphism. Circuit: {state?.constraints ?? '…'} constraints (4 customers).</p>
+    cannot back attestations one after another. Each entry carries its customer's opening <strong>encrypted on-chain</strong>
+    to the customer's viewing key, and the attestation carries the total's opening encrypted to the auditor's registered
+    viewing key (<code>confidential-note-jubjub-v1</code>): customers and the auditor check from the chain alone, and an
+    entry the customer cannot open is on-chain evidence against the exchange. Circuit: {state?.constraints ?? '…'}
+    constraints (4 customers).</p>
 
   <div class="actions">
     <div class="action">
@@ -75,6 +79,13 @@
       <button class="primary" disabled={!!busy || !state?.period} onclick={() => act('Auditor opens the total', '/solvency/audit')}>Auditor opens the total</button>
     </div>
     <div class="action cheat">
+      <h4>Attest with a garbage delivery</h4>
+      <label>for <select bind:value={garbageFor}>{#each state?.book ?? [] as c}<option>{c.id}</option>{/each}</select></label>
+      <p class="hint">The exchange attests honestly but gives {garbageFor} an encrypted opening that does not open. The vault can
+        only check its length; {garbageFor}'s check reports it as unopenable.</p>
+      <button class="danger" disabled={!!busy || live} onclick={() => act('Proving solvency and attesting with a garbage delivery', '/solvency/attest', { reservesAda, garbageFor })}>Attest with garbage</button>
+    </div>
+    <div class="action cheat">
       <h4>Try to cheat inside the period</h4>
       <button class="danger" disabled={!!busy || !live} onclick={() => act('Submitting another attestation', '/solvency/attest-again')}>Attest again</button>
       <button class="danger" disabled={!!busy || !live} onclick={() => act('Releasing the reserve', '/solvency/release')}>Release the reserve</button>
@@ -85,7 +96,7 @@
   {#if busy}<p class="busy">{busy}… (proving and waiting for the block)</p>{/if}
   <Outcome {result} />
   {#if result?.ok && result.data.liabilitiesAda !== undefined}
-    <div class="card">Auditor: the sum of all commitments opens to total liabilities of
+    <div class="card">Auditor: its on-chain delivery opens, against the sum of all on-chain commitments, to total liabilities of
       <strong>{result.data.liabilitiesAda} ADA</strong> against {result.data.reservesAda} ADA locked —
       {result.data.ok ? 'verified' : 'NOT verified'}. No single balance is revealed.</div>
   {/if}
@@ -102,7 +113,7 @@
     {/if}
     <div class="columns">
       <div class="panel private">
-        <h3>Private — the exchange's book and each customer's opening</h3>
+        <h3>Private — the exchange's book (customers recover their own opening from the chain)</h3>
         <p>Total liabilities: <strong>{state.liabilitiesAda} ADA</strong> (never published)</p>
         <table>
           <thead><tr><th>customer</th><th>balance</th><th>salt</th><th>blinding</th><th>id hash</th><th>last check</th></tr></thead>
@@ -118,9 +129,9 @@
         {#if state.period}
           <p>Reserve locked: <strong>{state.reservesAda} ADA</strong> at <code>{state.vaultAddress.substring(0, 30)}…</code></p>
           <table>
-            <thead><tr><th>id hash</th><th>commitment u</th></tr></thead>
+            <thead><tr><th>id hash</th><th>commitment u</th><th>encrypted opening</th></tr></thead>
             <tbody>
-              {#each state.onChain ?? [] as e}<tr><td><code>{e.idHash}</code></td><td><code>{e.u}</code></td></tr>{/each}
+              {#each state.onChain ?? [] as e}<tr><td><code>{e.idHash}</code></td><td><code>{e.u}</code></td><td><code>{e.delivery}</code></td></tr>{/each}
             </tbody>
           </table>
           <p class="hint">Attestation tx <code>{state.attestTx.substring(0, 20)}…</code></p>

@@ -3,6 +3,8 @@
   import Points from './tabs/Points.svelte';
   import Credit from './tabs/Credit.svelte';
   import Solvency from './tabs/Solvency.svelte';
+  import Payroll from './tabs/Payroll.svelte';
+  import Auction from './tabs/Auction.svelte';
 
   let tab = $state('points');
   let status = $state<any>(null);
@@ -21,15 +23,17 @@
   <p class="subtitle">Hiding, binding and additive commitments with zero-knowledge proofs, verified by Plutus V3 on Yaci DevKit</p>
 
   <div class="notice">
-    <strong>Demo server.</strong> This server creates every wallet and holds every opening (amounts, blindings,
-    profiles, customer balances) and key on the users' behalf; real users would each keep their own.
+    <strong>Demo server.</strong> This server creates every wallet and holds every key on the users' behalf — spending
+    keys, note viewing keys, the auditor's keys — and scans the chain for them; real users would each keep their own and
+    scan in their own wallet (ZeroJ ADR-0055 D9). Note balances are recovered from the chain, not kept in memory.
     The <em>On-chain</em> panels show what anyone can read from the ledger.
   </div>
 
   {#if !status?.ready}
     <div class="card">
       <p><strong>Starting…</strong> compiling circuits, loading or generating development keys and funding demo wallets.
-        The first start takes a few minutes; later starts reuse the cached keys.</p>
+        Each tab opens as soon as its demo is ready. Cached keys are re-validated point by point on every start (about
+        two minutes); the very first start also generates them, which takes longer.</p>
       {#if status?.demos}
         <p>
           {#each Object.entries(status.demos) as [name, s]}
@@ -42,12 +46,16 @@
 
   <nav>
     <button class:active={tab === 'points'} onclick={() => (tab = 'points')}>A. Confidential points</button>
+    <button class:active={tab === 'payroll'} onclick={() => (tab = 'payroll')}>Confidential payroll</button>
+    <button class:active={tab === 'auction'} onclick={() => (tab = 'auction')}>Sealed-bid auction</button>
     <button class:active={tab === 'credit'} onclick={() => (tab = 'credit')}>B. Committed credential</button>
     <button class:active={tab === 'solvency'} onclick={() => (tab = 'solvency')}>C. Hidden-liability solvency</button>
   </nav>
 
   {#if status?.demos?.[tab] === 'ready'}
     {#if tab === 'points'}<Points />{/if}
+    {#if tab === 'payroll'}<Payroll />{/if}
+    {#if tab === 'auction'}<Auction />{/if}
     {#if tab === 'credit'}<Credit />{/if}
     {#if tab === 'solvency'}<Solvency />{/if}
   {:else if status}

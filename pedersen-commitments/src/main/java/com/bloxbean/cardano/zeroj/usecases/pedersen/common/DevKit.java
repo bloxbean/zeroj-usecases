@@ -62,9 +62,31 @@ public final class DevKit {
         Thread.sleep(3_000);
     }
 
+    /** The unpadded execution units of every script, summed, from the most recent evaluation. */
+    public record Budget(long steps, long memory) {
+        public double stepsPercent() { return 100.0 * steps / 10_000_000_000L; }
+        public double memoryPercent() { return 100.0 * memory / 16_500_000L; }
+    }
+
+    private static final ThreadLocal<Budget> LAST_BUDGET = ThreadLocal.withInitial(() -> new Budget(0, 0));
+
+    /**
+     * The complete transaction's script cost (all purposes) from the most recent evaluation on
+     * this thread, so concurrent demos never see each other's figures.
+     */
+    public static Budget lastBudget() {
+        return LAST_BUDGET.get();
+    }
+
     /**
      * A Julc evaluator with slot-to-POSIX conversion anchored at the latest block (one-second
-     * slots), padded by 25% so fee estimates do not under-shoot.
+     * slots), padded by 5% so fee estimates do not under-shoot, but never beyond the protocol's
+     * per-transaction maximum. The unpadded total is kept in {@link #lastBudget()}.
+     *
+     * <p>Script evaluation is deterministic: the margin only covers the difference between the
+     * transaction the units are measured on and the balanced one that is submitted (its fee and
+     * change amounts). The units are part of the fee, so a larger margin is paid on every
+     * transaction.
      */
     public static TransactionEvaluator evaluator(BackendService backend) {
         var latest = call(() -> backend.getBlockService().getLatestBlock());
@@ -77,15 +99,37 @@ public final class DevKit {
         return (tx, utxos) -> {
             var result = evaluator.evaluateTx(tx, utxos);
             if (result.isSuccessful() && result.getValue() != null) {
+                long steps = 0;
+                long memory = 0;
+                for (EvaluationResult eval : result.getValue()) {
+                    steps += eval.getExUnits().getSteps().longValueExact();
+                    memory += eval.getExUnits().getMem().longValueExact();
+                }
+                LAST_BUDGET.set(new Budget(steps, memory));
+                var params = call(() -> backend.getEpochService().getProtocolParameters());
+                long maxSteps = Long.parseLong(params.getMaxTxExSteps());
+                long maxMem = Long.parseLong(params.getMaxTxExMem());
+                // Spread at most the remaining headroom over the redeemers, up to +5% each.
+                long stepRoom = Math.max(0, maxSteps - steps);
+                long memRoom = Math.max(0, maxMem - memory);
                 for (EvaluationResult eval : result.getValue()) {
                     ExUnits u = eval.getExUnits();
-                    eval.setExUnits(new ExUnits(
-                            u.getMem().add(u.getMem().divide(BigInteger.valueOf(4)).max(BigInteger.valueOf(50_000))),
-                            u.getSteps().add(u.getSteps().divide(BigInteger.valueOf(4)))));
+                    long s0 = u.getSteps().longValueExact();
+                    long m0 = u.getMem().longValueExact();
+                    // stepRoom · s0 overflows a long (about 2e9 · 8e9), so share the headroom in BigInteger.
+                    long padSteps = Math.min(s0 / 20, share(stepRoom, s0, steps));
+                    long padMem = Math.min(Math.max(m0 / 20, 10_000), share(memRoom, m0, memory));
+                    eval.setExUnits(new ExUnits(BigInteger.valueOf(m0 + padMem), BigInteger.valueOf(s0 + padSteps)));
                 }
             }
             return result;
         };
+    }
+
+    /** {@code room · part / total}, without overflow; 0 when {@code total} is 0. */
+    static long share(long room, long part, long total) {
+        if (total == 0) return 0;
+        return BigInteger.valueOf(room).multiply(BigInteger.valueOf(part)).divide(BigInteger.valueOf(total)).longValueExact();
     }
 
     /** The slot whose start time is the latest at or before {@code posixMillis}. */

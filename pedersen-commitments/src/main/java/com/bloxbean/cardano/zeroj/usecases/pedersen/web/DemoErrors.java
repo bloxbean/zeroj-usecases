@@ -50,6 +50,20 @@ public class DemoErrors {
         }
     }
 
+    /** A computation that may find no satisfying witness. */
+    public interface Prover<T> {
+        T prove();
+    }
+
+    /** The prover's result, or {@link NoProof} with {@code noProofMessage} if the relation does not hold. */
+    public static <T> T prove(Prover<T> prover, String noProofMessage) {
+        try {
+            return prover.prove();
+        } catch (RuntimeException e) {
+            throw new NoProof(noProofMessage, e);
+        }
+    }
+
     /** The submitted transaction's hash, or {@link Rejected} if it failed. */
     public static String require(Result<String> result, String what) {
         if (!result.isSuccessful()) throw new Rejected(what, String.valueOf(result.getResponse()));

@@ -1,10 +1,12 @@
 package com.bloxbean.cardano.zeroj.usecases.pedersen.credential;
 
+import com.bloxbean.cardano.zeroj.usecases.pedersen.common.CostProfiler;
 import com.bloxbean.cardano.client.crypto.Blake2bUtil;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.common.Fields;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.credential.CreditGate.Profile;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.credential.circuit.CreditProfileProof;
 import com.bloxbean.cardano.zeroj.usecases.pedersen.credential.onchain.CreditGatePolicy;
+import org.julclang.compiler.CompileResult;
 import org.julclang.core.PlutusData;
 import org.julclang.core.Program;
 import org.julclang.ledger.Address;
@@ -48,6 +50,7 @@ class CreditGateVmTest extends ContractTest {
     private static final byte[] MALLORY = filled(28, (byte) 0x3e);
 
     private static Program program;
+    private static CompileResult compiled;
     private static Profile profile;
     private static PedersenVectorCommitment commitment;
     private static SnarkjsToCardano.ProofCompressed proof;
@@ -62,8 +65,8 @@ class CreditGateVmTest extends ContractTest {
         // Valid, but for lower thresholds than the gate's.
         lowThresholdProof = ProverToCardano.compressProof(gate.prove(profile, 40_000, 600));
         var vk = gate.circuit().compressedVk();
-        program = new CreditGateVmTest().compileValidator(CreditGatePolicy.class, Path.of("src/main/java"))
-                .program().applyParams(
+        compiled = new CreditGateVmTest().compileValidatorWithSourceMap(CreditGatePolicy.class, Path.of("src/main/java"));
+        program = compiled.program().applyParams(
                         PlutusData.bytes(Fields.i2osp(CreditProfileProof.SCHEMA.digest(), 32)),
                         PlutusData.bytes(BUREAU),
                         PlutusData.integer(BigInteger.valueOf(CreditCircuitTest.MIN_INCOME)),
@@ -82,7 +85,9 @@ class CreditGateVmTest extends ContractTest {
     @Test
     @DisplayName("Credit gate: a qualifying issued credential mints a badge; every mutation is rejected")
     void gate() {
-        var ok = evaluate(program, context(Mutation.NONE));
+        var ctx = context(Mutation.NONE);
+        var ok = evaluate(program, ctx);
+        CostProfiler.profile("credit gate", program, compiled, ctx);
         assertSuccess(ok);
         System.out.println("[CreditGatePolicy] budget: " + ok.budgetConsumed());
         for (Mutation m : Mutation.values()) {

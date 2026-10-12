@@ -30,6 +30,14 @@ repositories {
         url = uri("https://central.sonatype.com/repository/maven-snapshots")
         content { snapshotsOnly() }
     }
+    // ZeroJ commit snapshots published by ZeroJ's bloxbean-snapshot workflow.
+    maven {
+        url = uri("https://repo.bloxbean.org/maven/snapshots")
+        content {
+            snapshotsOnly()
+            includeGroup("org.zeroj")
+        }
+    }
     maven {
         url = uri("https://repo.spring.io/milestone")
     }
@@ -59,6 +67,7 @@ dependencies {
     implementation "org.zeroj:zeroj-circuit-annotation-api:${zerojVersion}"
     annotationProcessor "org.zeroj:zeroj-circuit-annotation-processor:${zerojVersion}"
     implementation "org.zeroj:zeroj-crypto:${zerojVersion}"
+    implementation "org.zeroj:zeroj-bls12381:${zerojVersion}"
     implementation "org.zeroj:zeroj-codec:${zerojVersion}"
     implementation "org.zeroj:zeroj-verifier-groth16:${zerojVersion}"
     implementation "org.zeroj:zeroj-onchain-julc:${zerojVersion}"
@@ -92,6 +101,9 @@ tasks.register('walkthrough', JavaExec) {
 
 bootRun {
     jvmArgs '--enable-native-access=ALL-UNNAMED', '-Dzeroj.allowInsecureTrustedSetup=true'
+    // Spring Boot's optimized launch (-XX:TieredStopAtLevel=1) disables C2, which makes the
+    // pure-Java key validation, proving and verification several times slower.
+    optimizedLaunch = false
 }
 
 // Fork the compiler for the Julc annotation processor on Java 25
