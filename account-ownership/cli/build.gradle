@@ -35,7 +35,7 @@ repositories {
     maven { url = uri("https://repo.spring.io/milestone") }
 }
 
-def zerojVersion = ver('zerojVersion', '0.1.0-pre12')
+def zerojVersion = ver('zerojVersion', '0.1.0-pre13')
 def julcVersion  = ver('julcVersion', '0.1.0-pre18')
 def cclVersion   = ver('cclVersion', '0.8.0-pre5')
 

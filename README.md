@@ -102,10 +102,10 @@ For the Docker demo path:
 - Docker with Compose v2
 - Yaci DevKit running on the host
 
-Docker demos use the released ZeroJ version configured by `ZEROJ_VERSION`
-(`0.1.0-pre12` by default). A sibling ZeroJ checkout is optional and only needed
-when you explicitly opt into publishing a local ZeroJ build during Docker image
-builds.
+Docker demos build against the ZeroJ version in `version.properties` (`zerojVersion`), the
+same one the Gradle builds use; set `ZEROJ_VERSION` to override it. A sibling ZeroJ checkout is
+optional and only needed when you explicitly opt into publishing a local ZeroJ build during
+Docker image builds.
 
 For direct Java runs:
 
