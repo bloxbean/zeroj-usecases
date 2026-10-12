@@ -17,6 +17,7 @@ Usecases (canonical name, optional aliases, and default UI port):
   digital-product-passport  (dpp)                8088
   selective-disclosure      (selective)          8091
   reusable-kyc              (kyc)                8092
+  pedersen-commitments      (pedersen)           8093
 
 Options:
   --run          Run the happy-path curl flow after the UI is healthy.
@@ -129,6 +130,13 @@ case "${USECASE}" in
     VOLUME="reusable-kyc-data"
     PORT="${REUSABLE_KYC_PORT:-8092}"
     HEALTH="/api/kyc/status"
+    ;;
+  pedersen|pedersen-commitments)
+    PROFILE="pedersen-commitments"
+    SERVICE="pedersen-commitments"
+    VOLUME="pedersen-commitments-data"
+    PORT="${PEDERSEN_COMMITMENTS_PORT:-8093}"
+    HEALTH="/api/status"
     ;;
   *)
     echo "Unknown usecase: ${USECASE}" >&2
@@ -297,6 +305,19 @@ run_flow() {
       fi
       # no nonce here: the on-chain header is derived from the voucher UTxO + recipient
       post_json "/api/kyc/claim" "{\"recipientAddress\":\"${recipient}\"}"
+      ;;
+    pedersen-commitments)
+      # /api/status answers while the demos warm up; wait until all three are ready.
+      for _ in $(seq 1 120); do
+        curl -fsS "${BASE_URL}/api/status" | grep -q '"ready":true' && break
+        sleep 3
+      done
+      post_json "/api/points/issue" '{"to":"alice","amount":1000}'
+      post_json "/api/points/transfer" '{"from":"alice","to":"bob","amount":700}'
+      post_json "/api/points/redeem" '{"from":"bob","price":120}'
+      post_json "/api/credit/issue" '{"income":85000,"creditScore":720,"birthYear":1990,"country":356}'
+      post_json "/api/credit/claim" '{"who":"alice","minIncome":50000,"minScore":650}'
+      post_json "/api/solvency/attest" '{"reservesAda":2000}'
       ;;
   esac
 }

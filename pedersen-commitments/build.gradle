@@ -1,0 +1,143 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.0-M3'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.bloxbean.cardano.zeroj.usecases'
+// Release version: repo-wide version.properties (single source), overridable with -PreleaseVersion.
+version = project.findProperty('releaseVersion') ?: {
+    for (def dir = projectDir; dir != null; dir = dir.parentFile) {
+        def vf = new File(dir, 'version.properties')
+        if (vf.isFile()) { def p = new Properties(); vf.withInputStream { p.load(it) }; return p.getProperty('version') }
+    }
+    return '0.1.0-SNAPSHOT'
+}()
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+springBoot {
+    mainClass = 'com.bloxbean.cardano.zeroj.usecases.pedersen.PedersenCommitmentsApplication'
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+    maven {
+        url = uri("https://central.sonatype.com/repository/maven-snapshots")
+        content { snapshotsOnly() }
+    }
+    maven {
+        url = uri("https://repo.spring.io/milestone")
+    }
+}
+
+def usecaseVersionsScript = {
+    def dir = projectDir
+    while (dir != null) {
+        def candidate = new File(dir, 'gradle/usecase-versions.gradle')
+        if (candidate.isFile()) {
+            return candidate
+        }
+        dir = dir.parentFile
+    }
+    throw new GradleException('Could not find gradle/usecase-versions.gradle')
+}()
+apply from: usecaseVersionsScript
+
+dependencies {
+    // Spring Boot — the web UI and its REST API
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
+    // ZeroJ — circuits, Pedersen gadgets, Groth16 prover/verifier, on-chain verifier library
+    implementation "org.zeroj:zeroj-api:${zerojVersion}"
+    implementation "org.zeroj:zeroj-circuit-dsl:${zerojVersion}"
+    implementation "org.zeroj:zeroj-circuit-lib:${zerojVersion}"
+    implementation "org.zeroj:zeroj-circuit-annotation-api:${zerojVersion}"
+    annotationProcessor "org.zeroj:zeroj-circuit-annotation-processor:${zerojVersion}"
+    implementation "org.zeroj:zeroj-crypto:${zerojVersion}"
+    implementation "org.zeroj:zeroj-codec:${zerojVersion}"
+    implementation "org.zeroj:zeroj-verifier-groth16:${zerojVersion}"
+    implementation "org.zeroj:zeroj-onchain-julc:${zerojVersion}"
+    annotationProcessor "org.zeroj:zeroj-onchain-julc:${zerojVersion}"
+
+    // Julc — Java to Plutus V3
+    implementation "org.julclang:julc-stdlib:${julcVersion}"
+    annotationProcessor "org.julclang:julc-annotation-processor:${julcVersion}"
+    implementation "org.julclang:julc-cardano-client-lib:${julcVersion}"
+    runtimeOnly "org.julclang:julc-vm-java:${julcVersion}"
+
+    // Cardano Client Lib — transactions against Yaci DevKit
+    implementation "com.bloxbean.cardano:cardano-client-lib:${cclVersion}"
+    implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cclVersion}"
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation "org.julclang:julc-testkit:${julcVersion}"
+    testRuntimeOnly "org.julclang:julc-vm-java:${julcVersion}"
+}
+
+// The narrated CLI walkthrough of all three demos on a running Yaci DevKit (no UI).
+tasks.register('walkthrough', JavaExec) {
+    group = 'application'
+    description = 'Runs the three Pedersen demos end to end on Yaci DevKit from the command line.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.bloxbean.cardano.zeroj.usecases.pedersen.PedersenDemos'
+    jvmArgs '--enable-native-access=ALL-UNNAMED', '-Dzeroj.allowInsecureTrustedSetup=true'
+}
+
+bootRun {
+    jvmArgs '--enable-native-access=ALL-UNNAMED', '-Dzeroj.allowInsecureTrustedSetup=true'
+}
+
+// Fork the compiler for the Julc annotation processor on Java 25
+compileJava {
+    options.compilerArgs.add('-proc:full')
+    options.fork = true
+    options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED']
+}
+compileTestJava {
+    options.compilerArgs.add('-proc:full')
+    options.fork = true
+    options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED']
+}
+
+test {
+    useJUnitPlatform()
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    maxHeapSize = '4g'
+    systemProperty "zeroj.allowInsecureTrustedSetup", "true"
+    systemProperty "zeroj.yaci.e2e", System.getenv("ZEROJ_YACI_E2E") ?: ""
+    environment "ZEROJ_YACI_E2E", System.getenv("ZEROJ_YACI_E2E") ?: ""
+    testLogging {
+        events "passed", "failed", "skipped"
+        showStandardStreams = true
+    }
+}
+
+// === Frontend build (Svelte + Vite) ===
+
+def frontendDir = file('frontend')
+
+tasks.register('npmInstall', Exec) {
+    workingDir frontendDir
+    commandLine 'npm', 'install'
+    inputs.file(new File(frontendDir, 'package.json'))
+    outputs.dir(new File(frontendDir, 'node_modules'))
+}
+
+tasks.register('buildFrontend', Exec) {
+    dependsOn 'npmInstall'
+    workingDir frontendDir
+    commandLine 'npm', 'run', 'build'
+    inputs.dir(new File(frontendDir, 'src'))
+    outputs.dir(file('src/main/resources/static'))
+}
+
+if (project.hasProperty('withFrontend')) {
+    processResources.dependsOn buildFrontend
+}

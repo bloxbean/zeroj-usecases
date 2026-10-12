@@ -101,6 +101,8 @@ test {
     useJUnitPlatform()
     jvmArgs '--enable-native-access=ALL-UNNAMED'
     systemProperty "zeroj.allowInsecureTrustedSetup", "true"
+    systemProperty "zeroj.yaci.e2e", System.getenv("ZEROJ_YACI_E2E") ?: ""
+    environment "ZEROJ_YACI_E2E", System.getenv("ZEROJ_YACI_E2E") ?: ""
     testLogging {
         events "passed", "failed", "skipped"
         showStandardStreams = true

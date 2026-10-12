@@ -1,0 +1,7 @@
+{
+  "usecase": "pedersen-commitments",
+  "devOnly": true,
+  "trustedSetup": "single-party development setup",
+  "artifacts": [],
+  "note": "No setup files are committed for this demo. The four circuits (points-transfer, points-redeem, credit-profile-check, hidden-liability-solvency-n4) are set up on first start and cached in /app/data, keyed by an R1CS digest."
+}

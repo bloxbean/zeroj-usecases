@@ -8,6 +8,7 @@ import com.bloxbean.cardano.client.backend.api.DefaultProtocolParamsSupplier;
 import com.bloxbean.cardano.client.backend.api.DefaultScriptSupplier;
 import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier;
 import org.julclang.clientlib.eval.JulcTransactionEvaluator;
+import org.julclang.clientlib.eval.SlotConfig;
 
 import java.math.BigInteger;
 
@@ -22,7 +23,8 @@ final class LocalJulcEvaluator {
         var evaluator = new JulcTransactionEvaluator(
                 new DefaultUtxoSupplier(backendService.getUtxoService()),
                 new DefaultProtocolParamsSupplier(backendService.getEpochService()),
-                new DefaultScriptSupplier(backendService.getScriptService()));
+                new DefaultScriptSupplier(backendService.getScriptService()),
+                slotConfig(backendService));
         return (tx, utxos) -> {
             var result = evaluator.evaluateTx(tx, utxos);
             if (result.isSuccessful() && result.getValue() != null) {
@@ -32,6 +34,24 @@ final class LocalJulcEvaluator {
             }
             return result;
         };
+    }
+
+    /**
+     * Slot-to-POSIX conversion anchored at the latest block, with one-second slots (DevKit and
+     * every post-Shelley network). Without it the evaluator hands scripts raw slot numbers, and a
+     * time-sensitive script such as the ballot policy's deadline check would be evaluated wrongly
+     * here (the node itself always uses POSIX time).
+     */
+    private static SlotConfig slotConfig(BackendService backendService) {
+        try {
+            var latest = backendService.getBlockService().getLatestBlock();
+            if (latest.isSuccessful() && latest.getValue() != null) {
+                return new SlotConfig(latest.getValue().getSlot(), latest.getValue().getTime() * 1000, 1000);
+            }
+        } catch (Exception e) {
+            // fall through
+        }
+        throw new IllegalStateException("cannot read the latest block to anchor slot-to-time conversion");
     }
 
     private static ExUnits pad(ExUnits units) {
