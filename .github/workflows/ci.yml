@@ -1,0 +1,140 @@
+name: Usecase CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: usecase-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  projects:
+    name: Discover usecase builds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.projects.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: projects
+        run: |
+          matrix=$(python3 .github/scripts/usecase-ci.py matrix)
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and test (${{ matrix.name }})
+    needs: projects
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.projects.outputs.matrix) }}
+    env:
+      USECASE: ${{ matrix.path }}
+      ZEROJ_YACI_E2E: ${{ matrix.yaci && 'true' || 'false' }}
+      ZEROJ_YACI_STORE_URL: http://localhost:8080/api/v1/
+      ZEROJ_YACI_ADMIN_URL: http://localhost:10000
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Yaci DevKit
+        if: matrix.yaci
+        run: npm install --global @bloxbean/yaci-devkit@0.12.0-beta5
+
+      - name: Start Yaci DevKit
+        if: matrix.yaci
+        run: |
+          mkdir -p ci-logs
+          # Keep one-second slots: the demos' local evaluators use that slot configuration.
+          nohup yaci-devkit up --enable-yaci-store > ci-logs/yaci-devkit.log 2>&1 < /dev/null &
+          echo "$!" > ci-logs/yaci-devkit.pid
+
+      - name: Wait for an indexed block and protocol parameters
+        if: matrix.yaci
+        timeout-minutes: 10
+        run: |
+          for attempt in $(seq 1 100); do
+            if ! kill -0 "$(cat ci-logs/yaci-devkit.pid)" 2>/dev/null; then
+              cat ci-logs/yaci-devkit.log
+              echo 'Yaci DevKit exited before becoming ready' >&2
+              exit 1
+            fi
+            if curl --fail --silent --show-error --max-time 5 \
+                "${ZEROJ_YACI_STORE_URL}blocks/latest" > ci-logs/latest-block.json 2>/dev/null \
+              && jq -e '.height > 0 and .slot > 0' ci-logs/latest-block.json > /dev/null \
+              && curl --fail --silent --show-error --max-time 5 \
+                "${ZEROJ_YACI_STORE_URL}epochs/latest/parameters" > ci-logs/protocol-parameters.json 2>/dev/null \
+              && jq -e '.cost_models.PlutusV3 | length > 0' ci-logs/protocol-parameters.json > /dev/null \
+              && curl --fail --silent --show-error --max-time 5 \
+                "${ZEROJ_YACI_ADMIN_URL}/local-cluster/api/admin/devnet/tip" > ci-logs/devnet-tip.json 2>/dev/null; then
+              echo 'Yaci DevKit and Store are ready'
+              exit 0
+            fi
+            echo "Waiting for Yaci DevKit ($attempt/100)"
+            sleep 5
+          done
+          tail -n 200 ci-logs/yaci-devkit.log
+          echo 'Yaci DevKit did not become ready' >&2
+          exit 1
+
+      - name: Build and test, including available frontends and Yaci E2E tests
+        run: |
+          args=(build --no-daemon --console=plain --max-workers=2)
+          if [[ -f "$USECASE/frontend/package-lock.json" ]]; then
+            npm ci --prefix "$USECASE/frontend"
+            # Use the lockfile installation above instead of the modules' npm install task.
+            args+=(-PwithFrontend -x npmInstall)
+          fi
+          if [[ "$ZEROJ_YACI_E2E" == true ]]; then
+            args+=(-Dkyc.e2e=true)
+          fi
+          ./gradlew -p "$USECASE" "${args[@]}"
+
+      - name: Require Yaci E2E tests to execute
+        if: matrix.yaci
+        run: python3 .github/scripts/usecase-ci.py check-e2e "$USECASE"
+
+      - name: Upload test reports and DevKit logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-${{ matrix.name }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            ${{ matrix.path }}/**/build/reports/tests/
+            ${{ matrix.path }}/**/build/test-results/
+            ci-logs/
+
+  result:
+    name: All usecases passed
+    if: always()
+    needs: [projects, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      PROJECTS_RESULT: ${{ needs.projects.result }}
+      BUILD_RESULT: ${{ needs.build.result }}
+    steps:
+      - run: test "$PROJECTS_RESULT" = success && test "$BUILD_RESULT" = success

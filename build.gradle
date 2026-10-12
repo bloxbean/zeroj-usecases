@@ -7,6 +7,7 @@ plugins {
 apply from: file('gradle/usecase-versions.gradle')
 
 def usecaseProjects = [
+        'account-ownership',
         'digital-product-passport',
         'identity-kyc',
         'nft-ownership',
@@ -14,6 +15,7 @@ def usecaseProjects = [
         'private-voting',
         'pedersen-commitments',
         'proof-of-reserves',
+        'reusable-kyc',
         'selective-disclosure',
         'examples/minimal-circuits/batch-threshold-matrix',
         'examples/minimal-circuits/zk-mpf-private-registry',

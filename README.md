@@ -287,6 +287,24 @@ removed from `~/.m2/repository/org/zeroj`.
 For Docker builds, use `PUBLISH_LOCAL_ZEROJ=true` and point
 `ZEROJ_SOURCE_CONTEXT` at the local checkout as shown in the Docker section.
 
+## Continuous Integration
+
+[Usecase CI](.github/workflows/ci.yml) runs on pull requests, pushes to `main`, and manual
+dispatch. It discovers every independent Gradle build from its tracked `settings.gradle`
+(currently 14), including the account-ownership CLI and desktop UI, and runs `build` with
+Java 25. Svelte frontends are rebuilt from their npm lockfiles, with frontend tests where
+the module provides them.
+
+Projects with `*YaciE2ETest` or `*DevKitE2ETest` tests get a fresh, isolated devnet using the
+npm package `@bloxbean/yaci-devkit@0.12.0-beta5`. CI waits for indexed blocks and Plutus V3
+protocol parameters, enables `ZEROJ_YACI_E2E=true` and `-Dkyc.e2e=true`, and fails if any of
+those tests are skipped or missing. Test reports and DevKit startup logs are uploaded even
+when a build fails. `All usecases passed` is the aggregate status for branch protection.
+
+Account ownership's large `-Daor.e2e=true` setup/proving test and circuit measurement remain
+opt-in; its normal CLI and headless JavaFX tests run in CI. Native installers and binaries
+remain covered by the existing release workflows.
+
 ## Demo Cache
 
 `demo-cache/` contains development setup artifacts used to make Docker demos
