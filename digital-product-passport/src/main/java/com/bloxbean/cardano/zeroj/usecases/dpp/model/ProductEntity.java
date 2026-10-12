@@ -3,6 +3,11 @@ package com.bloxbean.cardano.zeroj.usecases.dpp.model;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
+/**
+ * A product or batch in the manufacturer's own database. The measurements here are the
+ * manufacturer's private data (ADR-0009 D10): no public endpoint returns them, and they never go
+ * on-chain or into the MPF registry.
+ */
 @Entity
 @Table(name = "products")
 public class ProductEntity {
@@ -17,11 +22,14 @@ public class ProductEntity {
     private int carbonKg;
     private int recycledPct;
     private int country;
-    private int inspectionCount;
+    /** Passed inspections as {@code inspectorId:unixSeconds}, comma-separated; null for none. */
+    private String inspections;
     private int unitCount; // for batches (0 for individual products)
 
     private boolean minted;
-    private String mintTxHash;
+    private String passportTxHash;
+    private Integer passportIndex;
+    private boolean revoked;
 
     private LocalDateTime createdAt;
     private LocalDateTime mintedAt;
@@ -29,7 +37,7 @@ public class ProductEntity {
     public ProductEntity() {}
 
     public ProductEntity(String serialNumber, String name, String manufacturer, String productType,
-                          int carbonKg, int recycledPct, int country, int inspectionCount, int unitCount) {
+                          int carbonKg, int recycledPct, int country, String inspections, int unitCount) {
         this.serialNumber = serialNumber;
         this.name = name;
         this.manufacturer = manufacturer;
@@ -37,7 +45,7 @@ public class ProductEntity {
         this.carbonKg = carbonKg;
         this.recycledPct = recycledPct;
         this.country = country;
-        this.inspectionCount = inspectionCount;
+        this.inspections = inspections;
         this.unitCount = unitCount;
         this.createdAt = LocalDateTime.now();
     }
@@ -57,14 +65,18 @@ public class ProductEntity {
     public void setRecycledPct(int recycledPct) { this.recycledPct = recycledPct; }
     public int getCountry() { return country; }
     public void setCountry(int country) { this.country = country; }
-    public int getInspectionCount() { return inspectionCount; }
-    public void setInspectionCount(int inspectionCount) { this.inspectionCount = inspectionCount; }
+    public String getInspections() { return inspections; }
+    public void setInspections(String inspections) { this.inspections = inspections; }
     public int getUnitCount() { return unitCount; }
     public void setUnitCount(int unitCount) { this.unitCount = unitCount; }
     public boolean isMinted() { return minted; }
     public void setMinted(boolean minted) { this.minted = minted; }
-    public String getMintTxHash() { return mintTxHash; }
-    public void setMintTxHash(String mintTxHash) { this.mintTxHash = mintTxHash; }
+    public String getPassportTxHash() { return passportTxHash; }
+    public void setPassportTxHash(String passportTxHash) { this.passportTxHash = passportTxHash; }
+    public Integer getPassportIndex() { return passportIndex; }
+    public void setPassportIndex(Integer passportIndex) { this.passportIndex = passportIndex; }
+    public boolean isRevoked() { return revoked; }
+    public void setRevoked(boolean revoked) { this.revoked = revoked; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getMintedAt() { return mintedAt; }

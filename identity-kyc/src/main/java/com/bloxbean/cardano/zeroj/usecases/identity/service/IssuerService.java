@@ -1,7 +1,6 @@
 package com.bloxbean.cardano.zeroj.usecases.identity.service;
 
 import org.zeroj.circuit.lib.jubjub.EdDSAJubjub;
-import org.zeroj.circuit.lib.jubjub.JubjubCurve;
 import org.zeroj.circuit.lib.jubjub.JubjubMessage;
 import org.zeroj.circuit.lib.jubjub.JubjubPoint;
 import jakarta.annotation.PostConstruct;
@@ -11,6 +10,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
+import java.nio.file.Path;
+import java.security.SecureRandom;
 import java.util.*;
 
 /**
@@ -33,21 +34,24 @@ import java.util.*;
  * signature is verifiable inside a ZK proof against the public key, with
  * no shared secret. This is the foundation for W3C VC, DID, and Atala PRISM
  * interop.
+ *
+ * <h2>Issuer key</h2>
+ * The key is generated with {@link SecureRandom} on first start and persisted in the demo data
+ * directory by {@link IssuerKeyStore} (ADR-0009 D11); a restart loads it. Earlier versions derived
+ * it from a seed published in this file, so anyone could sign credentials the deployed validator
+ * accepted. If the deployment state exists but the key is missing, unreadable or doesn't match,
+ * the demo stops instead of creating a new key.
  */
 @Service
 public class IssuerService {
 
     private static final Logger log = LoggerFactory.getLogger(IssuerService.class);
 
-    /**
-     * Issuer's secret scalar. In production this would be loaded from a
-     * KMS / HSM / encrypted config; for the demo we derive deterministically
-     * from a fixed seed so it survives restarts.
-     */
-    private static final BigInteger ISSUER_SECRET_SEED = new BigInteger(
-            "deadbeefcafef00d1234567890abcdefdeadbeefcafef00d1234567890abcdef", 16);
-
     private final CredentialService credentialService;
+
+    /** The demo data directory: the issuer key and its deployment state (ADR-0009 D11). */
+    @Value("${demo.data-dir:./data}")
+    private String dataDir;
 
     @Value("${zk.country-tree-depth}")
     private int countryTreeDepth;
@@ -74,12 +78,9 @@ public class IssuerService {
 
     @PostConstruct
     public void setup() {
-        BigInteger sk = ISSUER_SECRET_SEED.mod(JubjubCurve.SUBGROUP_ORDER);
-        if (sk.signum() == 0) {
-            sk = BigInteger.ONE; // pathological; never hit for the configured seed
-        }
-        issuerKeypair = EdDSAJubjub.keypairFromSecret(sk);
-        log.info("Issuer EdDSA-Jubjub keypair generated. Public key (u, v):");
+        // In production this key would live in a KMS / HSM; the demo keeps it in its data directory.
+        issuerKeypair = IssuerKeyStore.loadOrCreate(Path.of(dataDir), "identity-kyc", new SecureRandom());
+        log.info("Issuer EdDSA-Jubjub key loaded from {}. Public key (u, v):", Path.of(dataDir).toAbsolutePath());
         log.info("  u = 0x{}", issuerKeypair.pk().affineU().toString(16));
         log.info("  v = 0x{}", issuerKeypair.pk().affineV().toString(16));
 

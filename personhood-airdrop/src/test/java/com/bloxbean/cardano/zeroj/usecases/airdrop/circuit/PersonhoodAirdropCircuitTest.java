@@ -9,6 +9,7 @@ import org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigInteger;
+import java.security.SecureRandom;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,9 +25,10 @@ class PersonhoodAirdropCircuitTest {
 
     @Test
     void compatibilitySignatureSatisfiesRegisteredKeyCircuit() {
-        var keypair = EdDSAJubjub.keypairFromSecret(BigInteger.valueOf(42));
-        BigInteger personhoodId = BigInteger.valueOf(0x100).shiftLeft(160)
-                .or(BigInteger.valueOf("Alice".hashCode() & 0xffffffffL));
+        var random = new SecureRandom();
+        var keypair = EdDSAJubjub.generateKeypair(random);
+        // Holder-chosen, as in HolderWallet (ADR-0009 D3.1).
+        BigInteger personhoodId = new BigInteger(252, random);
         BigInteger epoch = BigInteger.ONE;
         BigInteger recipient = BigInteger.valueOf(99);
 

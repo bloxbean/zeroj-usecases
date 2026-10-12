@@ -46,6 +46,9 @@ java --enable-native-access=ALL-UNNAMED \
 
 Startup time is machine-dependent. The demo compiles an 11,258-constraint circuit and performs a fresh, development-only trusted setup on every start.
 
+On first start the issuer's signing key is generated and written to `./data` (see
+[Issuer key](#issuer-key)). Run from the same directory to keep it.
+
 ### Open UI: **http://localhost:8087**
 
 ## Test Users
@@ -117,9 +120,40 @@ the signature; no issuer secret is shared with the holder.
   to script parameters
 - If valid, funds are released
 
+## Issuer key
+
+The issuer's EdDSA-Jubjub key is generated with `SecureRandom` on first start
+([ADR-0009](../docs/adr/0009-privacy-and-binding-hardening-of-the-original-demos.md) D11). Earlier
+versions derived it from a seed published in `IssuerService`, so anyone could sign credentials that
+the deployed validator accepted. That seed is gone, and `OldIssuerSeedRefusedVmTest` checks that a
+credential signed with it is refused.
+
+`IssuerKeyStore` keeps two files in the demo data directory (`demo.data-dir`, default `./data`;
+`/app/data` in Docker):
+
+| File | Holds |
+|---|---|
+| `issuer-eddsa-jubjub.key` | the secret scalar, owner-only (`0600`) |
+| `issuer-deployment.properties` | the deployment state: the issuer public key the validator is parameterised with |
+
+Both are written atomically (a temp file in the same directory, then a rename).
+- **Restart.** A restart loads the key.
+- **Fail closed.** If the deployment state exists but the key is missing, unreadable or doesn't
+  match the recorded public key, the demo stops with an error. It never creates a new key silently.
+- **Reset.** `./demo.sh identity-kyc --clean-cache` (or deleting `./data`) removes the key and the
+  deployment state together. That is a fresh deployment, with a new key and new script hashes.
+
+The demo has no other persistent state: its trusted setup is regenerated on every start, so the
+validator's address also changes on every start.
+
 ## Key Difference from NFT/Voting Demos
 
 This demo is **stateless** — no nullifiers, no linked list. The proof can be reused for ongoing DeFi access. This is appropriate for KYC where you want to prove eligibility repeatedly, not one-time access.
+
+**This is a replayable demo gate.** The validator checks the proof, not the transaction spending
+it. A proof copied from the chain, or from a pending transaction, can open any other UTxO at the
+same gate, and anyone can spend the gate's funds with it. A real deployment must bind the proof to
+the output it spends (for example, the spent `TxOutRef` and the payout address as public inputs).
 
 | Pattern | NFT Ownership | Private Voting | Identity KYC |
 |---------|--------------|----------------|--------------|
@@ -152,6 +186,7 @@ identity-kyc/
 │   ├── service/
 │   │   ├── CredentialService.java             # Circuit + prover
 │   │   ├── IssuerService.java                 # Credential issuance
+│   │   ├── IssuerKeyStore.java                # Random issuer key, persisted (ADR-0009 D11)
 │   │   ├── OnChainCredentialService.java      # Lock/unlock on-chain
 │   │   └── ProofCompressor.java
 │   └── onchain/
@@ -159,6 +194,24 @@ identity-kyc/
 ├── frontend/                                   # Svelte 5 + Vite
 └── README.md
 ```
+
+## Limitations
+
+- **Replayable gate.** See above: the gate is stateless, and a published proof opens any UTxO
+  locked at the same script.
+- **Unsalted credentials.** The issuer signs `Poseidon(age, country)` with no salt. The digest has a
+  small domain (a few hundred ages times a few hundred countries), so anyone who sees a digest or a
+  signature together with the issuer key can recover the attributes by trying them all. Two holders
+  with the same age and country get the same digest and the same signature (the nonce is
+  deterministic), so their credentials are interchangeable.
+- **No holder binding.** The credential names no holder. Anyone holding a copy of
+  `(age, country, signature)` can prove with it.
+- **Demo trust model.** The demo server holds the issuer key and every holder's credential, and
+  proves on their behalf. Its API is the operator's view. Privacy holds against chain and mempool
+  observers, not against the demo server. The admin wallet (lock, unlock, fees) comes from DevKit's
+  well-known test mnemonic in `application.yml`. Anyone can sign as it on a devnet, and a real
+  deployment must replace it. Compose publishes the port on `127.0.0.1` only. Authenticated operator
+  access is the first change a production deployment needs.
 
 ## Notes
 

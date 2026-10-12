@@ -10,5 +10,6 @@ export const api = {
   addAccounts: (count: number) => post('/accounts/add', { count }),
   buildTree: () => post('/build-tree'),
   prove: (reservesAda: number, forceOnChain?: boolean) => post('/prove', { reservesAda, forceOnChain }),
-  verifyAccount: (accountId: string) => get(`/verify/${accountId}`),
+  deployment: () => get('/deployment'),
+  verifyAccount: (accountId: string) => get(`/verify/${encodeURIComponent(accountId)}`),
 };

@@ -9,8 +9,8 @@ cardano:
   network: yaci
   yaci:
     base-url: http://localhost:8080/api/v1/
+    # Yaci DevKit admin API, used to fund the faucet admin wallet (demo.topup.enabled).
     admin-url: http://localhost:10000
-    mnemonic: "test test test test test test test test test test test test test test test test test test test test test test test sauce"
   preprod:
     blockfrost-url: https://cardano-preprod.blockfrost.io/api/v0
     blockfrost-project-id: ${BLOCKFROST_PROJECT_ID:}
@@ -21,8 +21,24 @@ zk:
   # 2^14 = 16,384 is sufficient. This SRS is development/test-only.
   pot-power: 14
 
+airdrop:
+  # Demo data directory: setup cache, the issuer and faucet admin keys, and the deployment state
+  # (ADR-0009 D11). Keys and state are reset only together: ./demo.sh airdrop --clean-cache.
+  data-dir: ./data
+
 faucet:
-  # ADA paid out per successful claim.
+  # ADA paid out per successful claim. The minting policy requires at least this much to the
+  # proved recipient's key credential (FaucetMintingPolicy parameter `payout`).
   ada-per-claim: 2
-  # Demo "epoch" identifier — in production this would be Cardano epoch number.
-  current-epoch: 1
+  # Airdrop round n (1 <= n < 2^32). The policy's epoch is the domain tag
+  # Poseidon2(Poseidon2(tag("zeroj.airdrop.epoch.v1"), deploymentId), n); changing n starts a
+  # new round under a new policy id, with fresh nullifiers.
+  round: 1
+  # ADA requested from DevKit for the faucet admin wallet at each start (demo.topup.enabled).
+  admin-topup-ada: 1000
+
+demo:
+  topup:
+    # Fund the faucet admin wallet through Yaci DevKit's top-up API. Set DEMO_TOPUP_ENABLED=false
+    # on other networks and fund the logged admin address manually.
+    enabled: true

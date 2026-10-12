@@ -1,13 +1,13 @@
 package com.bloxbean.cardano.zeroj.usecases.airdrop.controller;
 
-import com.bloxbean.cardano.client.account.Account;
-import com.bloxbean.cardano.client.address.Address;
 import com.bloxbean.cardano.zeroj.usecases.airdrop.service.AirdropProofService;
+import com.bloxbean.cardano.zeroj.usecases.airdrop.service.HolderWallet;
 import com.bloxbean.cardano.zeroj.usecases.airdrop.service.OnChainAirdropService;
-import com.bloxbean.cardano.zeroj.usecases.airdrop.service.PersonhoodIssuerService;
+import com.bloxbean.cardano.zeroj.usecases.airdrop.service.PaidNullifierLedger;
+import com.bloxbean.cardano.zeroj.usecases.airdrop.service.PersonhoodIssuer;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,56 +15,79 @@ import java.math.BigInteger;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
+/**
+ * Demo API (ADR-0009 D3, D10). The server holds the demo holders' wallets (custodial), so this
+ * API is the operator's view; privacy holds against chain and mempool observers, not against
+ * the demo server. Even so, {@code /status} and {@code /history} return no names next to
+ * nullifiers and no bits of any {@code personhoodId}. There is no CORS policy: the UI is
+ * same-origin, and a permissive one would let any website the operator visits read this API.
+ */
 @RestController
 @RequestMapping("/api/airdrop")
-@CrossOrigin
 public class AirdropController {
 
     private static final Logger log = LoggerFactory.getLogger(AirdropController.class);
+    private static final List<String> DEMO_HOLDERS = List.of("Alice", "Bob", "Charlie", "Diana", "Eve");
 
-    private final PersonhoodIssuerService issuerService;
+    private final PersonhoodIssuer issuer;
+    private final HolderWallet wallet;
     private final AirdropProofService proofService;
     private final OnChainAirdropService onChainService;
-    private final Account adminAccount;
-
-    @Value("${faucet.ada-per-claim}")
-    private int adaPerClaim;
-
-    @Value("${faucet.current-epoch}")
-    private long currentEpoch;
 
     private final ConcurrentLinkedDeque<ClaimRecord> history = new ConcurrentLinkedDeque<>();
 
-    public AirdropController(PersonhoodIssuerService issuerService,
+    public AirdropController(PersonhoodIssuer issuer,
+                             HolderWallet wallet,
                              AirdropProofService proofService,
-                             OnChainAirdropService onChainService,
-                             Account adminAccount) {
-        this.issuerService = issuerService;
+                             OnChainAirdropService onChainService) {
+        this.issuer = issuer;
+        this.wallet = wallet;
         this.proofService = proofService;
         this.onChainService = onChainService;
-        this.adminAccount = adminAccount;
+    }
+
+    /**
+     * Enrols the demo holders once. Each samples its own identifier; the issuer signs only
+     * {@code Poseidon(personhoodId, 0)}. A holder whose credential was lost cannot be re-enrolled.
+     */
+    @PostConstruct
+    public void enrollDemoHolders() {
+        for (String name : DEMO_HOLDERS) {
+            if (wallet.get(name) != null) continue;
+            try {
+                wallet.enroll(name);
+            } catch (PersonhoodIssuer.AlreadyIssuedException e) {
+                log.warn("{} was already issued a credential that the holder wallet no longer has;"
+                        + " it cannot be re-issued", name);
+            }
+        }
     }
 
     @GetMapping("/status")
     public ResponseEntity<?> status() {
-        var users = issuerService.list().stream().map(c -> Map.of(
-                "name", c.name(),
-                "personhoodId", "0x" + c.personhoodId().toString(16).substring(0, 16) + "...",
-                "alreadyClaimedThisEpoch", onChainService.alreadyClaimed(
-                        org.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
-                                org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
-                                c.personhoodId(), BigInteger.valueOf(currentEpoch))))).toList();
-        var pk = issuerService.getIssuerPublicKey();
-        return ResponseEntity.ok(Map.of(
-                "users", users,
-                "issuerPkU", "0x" + pk.affineU().toString(16).substring(0, 16) + "...",
-                "issuerPkV", "0x" + pk.affineV().toString(16).substring(0, 16) + "...",
-                "currentEpoch", currentEpoch,
-                "adaPerClaim", adaPerClaim,
-                "totalClaims", onChainService.totalClaims(),
-                "policyId", safePolicyId()));
+        BigInteger epoch = onChainService.getPolicyEpoch();
+        List<Map<String, Object>> users = new ArrayList<>();
+        for (String name : wallet.holders()) {
+            var cred = wallet.get(name);
+            boolean claimed = epoch != null && onChainService.alreadyClaimed(
+                    HolderWallet.nullifier(cred.personhoodId(), epoch));
+            users.add(Map.of("name", name, "alreadyClaimedThisRound", claimed));
+        }
+        var pk = issuer.publicKey();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("users", users);
+        body.put("issuerPkU", "0x" + pk.affineU().toString(16).substring(0, 16) + "...");
+        body.put("issuerPkV", "0x" + pk.affineV().toString(16).substring(0, 16) + "...");
+        body.put("round", onChainService.getRound());
+        body.put("policyEpoch", epoch == null ? "(not deployed)" : "0x" + epoch.toString(16).substring(0, 16) + "...");
+        body.put("adaPerClaim", onChainService.getPayoutLovelace() / 1_000_000L);
+        body.put("totalClaims", onChainService.totalClaims());
+        body.put("policyId", safePolicyId());
+        body.put("faucetAdmin", onChainService.getAdminAddress());
+        return ResponseEntity.ok(body);
     }
 
+    /** Claims made through this server since it started. No names: a claim is not linked to a holder. */
     @GetMapping("/history")
     public ResponseEntity<?> history() {
         return ResponseEntity.ok(Map.of("claims", List.copyOf(history)));
@@ -72,56 +95,59 @@ public class AirdropController {
 
     /**
      * Claim airdrop. Body: { "name": "Alice", "recipient": "addr_test1..." (optional) }.
-     * If recipient is omitted, defaults to the faucet admin (for demo).
+     * {@code name} selects a holder in the custodial demo wallet. The recipient's payment
+     * credential must be a key hash; script addresses are refused. If it is omitted, the payout
+     * goes to the faucet admin's own address (demo default).
      */
     @PostMapping("/claim")
     public ResponseEntity<?> claim(@RequestBody Map<String, String> request) {
         try {
             String name = request.get("name");
-            var cred = issuerService.get(name);
+            var cred = name == null ? null : wallet.get(name);
             if (cred == null) {
-                return ResponseEntity.badRequest().body(Map.of("error", "Unknown personhood: " + name));
+                return ResponseEntity.badRequest().body(Map.of("error", "No credential in the holder wallet for: " + name));
             }
-            String recipientAddr = request.getOrDefault("recipient", adminAccount.baseAddress());
+            String recipientAddr = request.getOrDefault("recipient", onChainService.getAdminAddress());
+            byte[] recipientKeyHash;
+            try {
+                recipientKeyHash = OnChainAirdropService.recipientKeyHash(recipientAddr);
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            }
+            BigInteger recipientField = new BigInteger(1, recipientKeyHash);
+            BigInteger epoch = onChainService.getPolicyEpoch();
+            if (epoch == null) {
+                return ResponseEntity.status(503).body(Map.of("error", "The faucet is not deployed yet"));
+            }
+            BigInteger nullifier = HolderWallet.nullifier(cred.personhoodId(), epoch);
+            if (onChainService.alreadyClaimed(nullifier)) {
+                return alreadyClaimed(nullifier);
+            }
 
-            BigInteger recipientField = recipientToField(recipientAddr);
-            BigInteger epoch = BigInteger.valueOf(currentEpoch);
-
-            log.info("Generating airdrop proof for {} (epoch={})...", name, currentEpoch);
+            log.info("Generating airdrop proof (round={})...", onChainService.getRound());
             long start = System.currentTimeMillis();
             var claimProof = proofService.prove(
-                    issuerService.getIssuerPublicKey(),
+                    issuer.publicKey(),
                     cred.signature(),
                     cred.personhoodId(),
                     epoch,
                     recipientField);
             long provingMs = System.currentTimeMillis() - start;
 
-            if (onChainService.alreadyClaimed(claimProof.nullifier())) {
-                return ResponseEntity.status(409).body(Map.of(
-                        "error", "Already claimed in epoch " + currentEpoch,
-                        "name", name,
-                        "nullifier", "0x" + claimProof.nullifier().toString(16).substring(0, 16) + "..."));
-            }
+            String txHash = onChainService.submitClaim(claimProof.proof(), claimProof.nullifier(), recipientAddr);
 
-            String txHash = onChainService.submitClaim(
-                    claimProof.proof(),
-                    issuerService.getIssuerPublicKey().affineU(),
-                    issuerService.getIssuerPublicKey().affineV(),
-                    epoch, claimProof.nullifier(), recipientField,
-                    recipientAddr, (long) adaPerClaim * 1_000_000L);
-
-            var rec = new ClaimRecord(name,
-                    "0x" + claimProof.nullifier().toString(16).substring(0, 16) + "...",
-                    txHash, currentEpoch, adaPerClaim, recipientAddr, provingMs);
-            history.addFirst(rec);
-            return ResponseEntity.ok(Map.of(
-                    "name", name,
-                    "txHash", txHash,
-                    "nullifier", "0x" + claimProof.nullifier().toString(16).substring(0, 16) + "...",
-                    "ada", adaPerClaim,
-                    "recipient", recipientAddr,
-                    "provingTimeMs", provingMs));
+            long ada = onChainService.getPayoutLovelace() / 1_000_000L;
+            history.addFirst(new ClaimRecord(shortHex(claimProof.nullifier()), txHash,
+                    onChainService.getRound(), ada, recipientAddr, provingMs));
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("txHash", txHash);
+            body.put("nullifier", shortHex(claimProof.nullifier()));
+            body.put("ada", ada);
+            body.put("recipient", recipientAddr);
+            body.put("provingTimeMs", provingMs);
+            return ResponseEntity.ok(body);
+        } catch (PaidNullifierLedger.AlreadyPaidException e) {
+            return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
             log.error("Claim failed", e);
             String msg = e.getMessage();
@@ -131,28 +157,24 @@ public class AirdropController {
         }
     }
 
+    private ResponseEntity<?> alreadyClaimed(BigInteger nullifier) {
+        return ResponseEntity.status(409).body(Map.of(
+                "error", "Already claimed in round " + onChainService.getRound(),
+                "nullifier", shortHex(nullifier)));
+    }
+
     private String safePolicyId() {
-        try { return onChainService.getPolicyId(); } catch (Exception e) { return "(uninitialized)"; }
+        String id = onChainService.getPolicyId();
+        return id == null ? "(not deployed)" : id;
     }
 
-    private static BigInteger recipientToField(String addressBech32) {
-        // Reduce the recipient's payment-key hash to a BLS12-381 scalar so it
-        // fits as a public input. This commits the proof to the recipient.
-        try {
-            var addr = new Address(addressBech32);
-            byte[] pkh = addr.getPaymentCredentialHash().orElse(new byte[28]);
-            // Treat as positive big-endian, reduce mod field prime.
-            BigInteger n = new BigInteger(1, pkh);
-            return n.mod(org.zeroj.circuit.FieldConfig.BLS12_381.prime());
-        } catch (Exception e) {
-            // Fallback: hash the address string into the field (demo-only).
-            return new BigInteger(1, addressBech32.getBytes())
-                    .mod(org.zeroj.circuit.FieldConfig.BLS12_381.prime());
-        }
+    private static String shortHex(BigInteger value) {
+        return "0x" + String.format("%064x", value).substring(0, 16) + "...";
     }
 
-    public record ClaimRecord(String name, String nullifier, String txHash,
-                              long epoch, int ada, String recipient, long provingMs) {}
+    /** One claim, as the history shows it: no holder name. */
+    public record ClaimRecord(String nullifier, String txHash, long round, long ada,
+                              String recipient, long provingMs) {}
 
     private static boolean isOnChainRejection(String message) {
         return message != null && (message.contains("script")

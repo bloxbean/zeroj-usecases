@@ -6,11 +6,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
-@CrossOrigin(origins = "*")
 public class MintController {
 
     private static final Logger log = LoggerFactory.getLogger(MintController.class);
@@ -30,13 +30,13 @@ public class MintController {
                     : 3;
 
             log.info("Minting {} NFTs for collection '{}'", count, collectionName);
-            var result = mintService.mintToAdmin(collectionName, count);
+            var result = mintService.mintToCustody(collectionName, count);
 
             return ResponseEntity.ok(Map.of(
                     "policyId", result.policyId(),
                     "tokenNames", result.tokenNames(),
                     "mintTxHash", result.mintTxHash(),
-                    "adminAddress", mintService.getAdminAddress()));
+                    "custodyAddress", mintService.getCustodyAddress()));
         } catch (Exception e) {
             log.error("Mint failed", e);
             boolean onChainRejection = isOnChainRejection(e.getMessage());
@@ -50,7 +50,8 @@ public class MintController {
         return ResponseEntity.ok(Map.of(
                 "policyId", mintService.getPolicyId(),
                 "mintedTokens", mintService.getMintedTokens(),
-                "adminAddress", mintService.getAdminAddress()));
+                "custodyAddress", mintService.getCustodyAddress(),
+                "operatorAddress", mintService.getAdminAddress()));
     }
 
     private static boolean isOnChainRejection(String message) {
@@ -59,7 +60,7 @@ public class MintController {
     }
 
     private static Map<String, Object> errorBody(Throwable throwable, boolean onChainRejection) {
-        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        Map<String, Object> body = new LinkedHashMap<>();
         body.put("error", throwable.getMessage());
         body.put("onChainRejection", onChainRejection);
         if (onChainRejection) {

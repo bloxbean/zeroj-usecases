@@ -3,16 +3,18 @@ package com.bloxbean.cardano.zeroj.usecases.reserves.controller;
 import com.bloxbean.cardano.zeroj.usecases.reserves.service.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigInteger;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/reserves")
-@CrossOrigin(origins = "*")
 public class ReservesController {
 
     private static final Logger log = LoggerFactory.getLogger(ReservesController.class);
@@ -22,29 +24,48 @@ public class ReservesController {
     private final ReserveCircuitService circuitService;
     private final OnChainReserveService onChainService;
 
-    // Proof cache: reserves amount → proof result
-    private final ConcurrentHashMap<String, ReserveCircuitService.ProofResult> proofCache = new ConcurrentHashMap<>();
+    private final String customerIndexerUrl;
 
     public ReservesController(AccountService accountService, MerkleSumTreeService treeService,
-                               ReserveCircuitService circuitService, OnChainReserveService onChainService) {
+                               ReserveCircuitService circuitService, OnChainReserveService onChainService,
+                               @Value("${reserves.customer-indexer-url:http://localhost:8080/api/v1/}") String customerIndexerUrl) {
         this.accountService = accountService;
         this.treeService = treeService;
         this.circuitService = circuitService;
         this.onChainService = onChainService;
+        this.customerIndexerUrl = customerIndexerUrl;
     }
 
     @GetMapping("/status")
     public ResponseEntity<?> status() {
+        var snapshot = treeService.snapshot();
         return ResponseEntity.ok(Map.of(
                 "accountCount", accountService.getAccountCount(),
                 "totalLiabilitiesAda", accountService.getTotalBalanceAda(),
-                "treeBuilt", treeService.isBuilt(),
-                "treeRoot", treeService.isBuilt() ? treeService.getRoot().toString(16).substring(0, 16) + "..." : "not built",
+                "treeBuilt", snapshot != null,
+                "treeRoot", snapshot != null ? snapshot.root().toString(16).substring(0, 16) + "..." : "not built",
                 "treeDepth", circuitService.getTreeDepth(),
                 "maxAccounts", 1 << circuitService.getTreeDepth()));
     }
 
-    /** Paginated account list */
+    /**
+     * The attestation policy and clock, and the indexer the customer page reads. A customer pins
+     * these from a published source; the page warns when this server later reports different ones.
+     */
+    @GetMapping("/deployment")
+    public ResponseEntity<?> deployment() {
+        var d = onChainService.deployment();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("policyId", d.policyId());
+        body.put("scriptAddress", onChainService.getScriptAddress());
+        body.put("genesisMs", d.genesisMs());
+        body.put("periodMs", d.periodMs());
+        body.put("custodianPkh", d.custodianPkh());
+        body.put("indexerUrl", customerIndexerUrl);
+        return ResponseEntity.ok(body);
+    }
+
+    /** Paginated account list: the demo custodian's operator view (ADR-0009 D10). */
     @GetMapping("/accounts")
     public ResponseEntity<?> listAccounts(
             @RequestParam(defaultValue = "0") int page,
@@ -71,12 +92,12 @@ public class ReservesController {
                 "totalLiabilitiesAda", accountService.getTotalBalanceAda()));
     }
 
-    /** Build Merkle Sum Tree from all accounts */
+    /** Build a fresh salted tree from all accounts (new salts every time). */
     @PostMapping("/build-tree")
     public ResponseEntity<?> buildTree() {
         try {
             var result = treeService.buildTree();
-            var response = new java.util.HashMap<String, Object>();
+            var response = new HashMap<String, Object>();
             response.put("root", result.root().toString(16));
             response.put("totalLiabilitiesLovelace", result.totalLiabilities().toString());
             response.put("totalLiabilitiesAda", result.totalLiabilities().doubleValue() / 1_000_000);
@@ -87,19 +108,24 @@ public class ReservesController {
         }
     }
 
-    /** Generate solvency proof. POST { "reservesAda": 10000 } */
+    /**
+     * Prove solvency and mint the current period's attestation. POST { "reservesAda": 10000 }.
+     * The reserves figure is the custodian's declaration: the proof checks it against the sum of
+     * the balances, not against any holdings.
+     */
     @PostMapping("/prove")
     public ResponseEntity<?> prove(@RequestBody Map<String, Object> request) {
         try {
-            if (!treeService.isBuilt()) {
+            var snapshot = treeService.snapshot();
+            if (snapshot == null) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Build tree first"));
             }
 
             double reservesAda = ((Number) request.get("reservesAda")).doubleValue();
             boolean forceOnChain = Boolean.TRUE.equals(request.get("forceOnChain"));
             BigInteger reserves = BigInteger.valueOf((long) (reservesAda * 1_000_000));
-            BigInteger liabilities = treeService.getTotalLiabilities();
-            BigInteger root = treeService.getRoot();
+            BigInteger liabilities = snapshot.totalLiabilities();
+            BigInteger root = snapshot.root();
             boolean solvent = reserves.compareTo(liabilities) >= 0;
 
             log.info("Generating solvency proof: reserves={} ADA, liabilities={} ADA, solvent={}",
@@ -107,11 +133,8 @@ public class ReservesController {
 
             long start = System.currentTimeMillis();
             var result = circuitService.prove(reserves, root, liabilities,
-                    treeService.getLeafIds(), treeService.getLeafBalances());
+                    snapshot.leafIds(), snapshot.leafBalances());
             long elapsed = System.currentTimeMillis() - start;
-
-            String cacheKey = reservesAda + "_" + root.toString(16).substring(0, 8);
-            proofCache.put(cacheKey, result);
 
             log.info("Solvency proof generated in {}ms (solvent={})", elapsed, solvent);
 
@@ -126,18 +149,25 @@ public class ReservesController {
                         "message", "INSOLVENT — reserves < liabilities. Enable 'Skip off-chain check' to test on-chain rejection."));
             }
 
-            // On-chain attestation
-            String txHash = onChainService.publishAttestation(result.proof(),
-                    reserves, root, liabilities, solvent);
+            // On-chain attestation: the mint itself verifies the proof.
+            long period = onChainService.periods().periodAt(onChainService.chainTimeMs());
+            String txHash;
+            try {
+                txHash = onChainService.publishAttestation(result.proof(), period, reserves, root, liabilities);
+                treeService.markAttested(snapshot, period);
+            } catch (OnChainReserveService.AlreadyAttestedException e) {
+                return ResponseEntity.status(409).body(Map.of("error", e.getMessage(), "onChainRejection", false));
+            }
 
             return ResponseEntity.ok(Map.of(
                     "solvent", solvent,
                     "reservesAda", reservesAda,
                     "liabilitiesAda", liabilities.doubleValue() / 1_000_000,
+                    "period", period,
                     "txHash", txHash,
                     "provingTimeMs", elapsed,
                     "message", solvent
-                            ? "SOLVENT — Groth16 proof verified ON-CHAIN!"
+                            ? "SOLVENT — attestation token minted; the minting policy verified the Groth16 proof."
                             : "INSOLVENT — on-chain validator REJECTED the proof."));
         } catch (Exception e) {
             log.error("Prove failed", e);
@@ -147,53 +177,42 @@ public class ReservesController {
         }
     }
 
-    /** Verify individual account inclusion */
+    /**
+     * The customer's inclusion data in the last attested snapshot: salt, balance, leaf index and
+     * sibling path. The customer's page recomputes the root and compares it with the on-chain
+     * attestation itself.
+     * <p>
+     * This is the demo custodian's operator view (ADR-0009 D10): it answers anyone, and the salt
+     * it returns is what keeps a leaf's balance from being guessed.
+     */
     @GetMapping("/verify/{accountId}")
     public ResponseEntity<?> verifyInclusion(@PathVariable String accountId) {
         try {
-            if (!treeService.isBuilt()) {
+            var snapshot = treeService.customerSnapshot();
+            if (snapshot == null) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Build tree first"));
             }
-
             var account = accountService.getAccount(accountId);
             if (account == null) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Unknown account: " + accountId));
             }
-
-            var proof = treeService.getInclusionProof(accountId);
+            var proof = snapshot.inclusionProof(accountId);
             if (proof == null) {
                 return ResponseEntity.ok(Map.of(
                         "accountId", accountId,
                         "included", false,
-                        "message", "Account NOT in Merkle tree — exchange may be excluding your balance!"));
+                        "message", "Account NOT in the attested snapshot — the custodian must rebuild the tree and attest again."));
             }
-
-            // Verify the proof off-chain
-            BigInteger leafHash = PoseidonCompute.poseidon(
-                    accountService.getAccountIdHash(accountId),
-                    BigInteger.valueOf(account.getBalanceLovelace()));
-
-            BigInteger computed = leafHash;
-            for (int i = 0; i < proof.siblings().length; i++) {
-                if (proof.pathBits()[i].equals(BigInteger.ZERO)) {
-                    computed = PoseidonCompute.poseidon(computed, proof.siblings()[i]);
-                } else {
-                    computed = PoseidonCompute.poseidon(proof.siblings()[i], computed);
-                }
-            }
-
-            boolean rootMatches = computed.equals(proof.root());
-
-            return ResponseEntity.ok(Map.of(
-                    "accountId", accountId,
-                    "name", account.getName(),
-                    "balanceAda", account.getBalanceAda(),
-                    "included", true,
-                    "rootMatches", rootMatches,
-                    "leafIndex", proof.leafIndex(),
-                    "message", rootMatches
-                            ? "✅ Account verified — your balance is correctly included in the solvency proof."
-                            : "❌ Root mismatch — the tree may have been tampered with!"));
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("accountId", accountId);
+            body.put("name", account.getName());
+            body.put("included", true);
+            body.put("salt", proof.salt().toString());
+            body.put("balanceLovelace", proof.balance().toString());
+            body.put("balanceAda", proof.balance().doubleValue() / 1_000_000);
+            body.put("leafIndex", proof.leafIndex());
+            body.put("siblings", Arrays.stream(proof.siblings()).map(BigInteger::toString).toList());
+            return ResponseEntity.ok(body);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }

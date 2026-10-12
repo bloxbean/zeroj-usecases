@@ -51,13 +51,17 @@ public class PredicateProofService {
     @Value("${credential.current-year}")
     private int currentYear;
 
+    /** The setup cache lives in the demo data directory, next to the issuer key. */
+    @Value("${demo.data-dir:./data}")
+    private String dataDir;
+
     private CompiledPredicate adultResident;
     private CompiledPredicate seniorDoctor;
 
     @PostConstruct
     public void init() {
         log.info("Compiling predicate circuits...");
-        var cacheDir = Path.of("./data");
+        var cacheDir = Path.of(dataDir);
         try { Files.createDirectories(cacheDir); } catch (Exception ignore) {}
 
         org.zeroj.crypto.plonk.PtauImporterBLS381.SRS[] srsHolder =

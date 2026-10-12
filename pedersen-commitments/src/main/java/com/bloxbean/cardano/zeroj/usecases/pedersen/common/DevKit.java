@@ -1,0 +1,195 @@
+package com.bloxbean.cardano.zeroj.usecases.pedersen.common;
+
+import com.bloxbean.cardano.client.api.TransactionEvaluator;
+import com.bloxbean.cardano.client.api.model.EvaluationResult;
+import com.bloxbean.cardano.client.api.model.Result;
+import com.bloxbean.cardano.client.api.model.Utxo;
+import com.bloxbean.cardano.client.backend.api.BackendService;
+import com.bloxbean.cardano.client.backend.api.DefaultProtocolParamsSupplier;
+import com.bloxbean.cardano.client.backend.api.DefaultScriptSupplier;
+import com.bloxbean.cardano.client.backend.api.DefaultUtxoSupplier;
+import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService;
+import com.bloxbean.cardano.client.plutus.spec.ExUnits;
+import org.julclang.clientlib.eval.JulcTransactionEvaluator;
+import org.julclang.clientlib.eval.SlotConfig;
+
+import java.math.BigInteger;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Yaci DevKit access for the demos. URLs default to a local DevKit and can be overridden with
+ * {@code ZEROJ_YACI_STORE_URL} and {@code ZEROJ_YACI_ADMIN_URL}.
+ *
+ * <p>Script costs are evaluated locally with Julc ({@link #evaluator}), because DevKit's
+ * {@code /evaluate} endpoint cannot initialise blst in its aarch64 container. The node still
+ * validates every submitted transaction.
+ */
+public final class DevKit {
+
+    public static final String STORE_URL = env("ZEROJ_YACI_STORE_URL", "http://localhost:8080/api/v1/");
+    public static final String ADMIN_URL = env("ZEROJ_YACI_ADMIN_URL", "http://localhost:10000");
+
+    private DevKit() {}
+
+    public static BackendService backend() {
+        return new BFBackendService(STORE_URL, "");
+    }
+
+    public static boolean reachable() {
+        try {
+            var request = HttpRequest.newBuilder().uri(URI.create(STORE_URL + "blocks/latest"))
+                    .timeout(Duration.ofSeconds(3)).GET().build();
+            return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString()).statusCode() == 200;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static void topUp(String address, int ada) throws Exception {
+        var request = HttpRequest.newBuilder()
+                .uri(URI.create(ADMIN_URL + "/local-cluster/api/addresses/topup"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(
+                        "{\"address\":\"" + address + "\",\"adaAmount\":" + ada + "}"))
+                .build();
+        HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+        Thread.sleep(3_000);
+    }
+
+    /** The unpadded execution units of every script, summed, from the most recent evaluation. */
+    public record Budget(long steps, long memory) {
+        public double stepsPercent() { return 100.0 * steps / 10_000_000_000L; }
+        public double memoryPercent() { return 100.0 * memory / 16_500_000L; }
+    }
+
+    private static final ThreadLocal<Budget> LAST_BUDGET = ThreadLocal.withInitial(() -> new Budget(0, 0));
+
+    /**
+     * The complete transaction's script cost (all purposes) from the most recent evaluation on
+     * this thread, so concurrent demos never see each other's figures.
+     */
+    public static Budget lastBudget() {
+        return LAST_BUDGET.get();
+    }
+
+    /**
+     * A Julc evaluator with slot-to-POSIX conversion anchored at the latest block (one-second
+     * slots), padded by 5% so fee estimates do not under-shoot, but never beyond the protocol's
+     * per-transaction maximum. The unpadded total is kept in {@link #lastBudget()}.
+     *
+     * <p>Script evaluation is deterministic: the margin only covers the difference between the
+     * transaction the units are measured on and the balanced one that is submitted (its fee and
+     * change amounts). The units are part of the fee, so a larger margin is paid on every
+     * transaction.
+     */
+    public static TransactionEvaluator evaluator(BackendService backend) {
+        var latest = call(() -> backend.getBlockService().getLatestBlock());
+        var slotConfig = new SlotConfig(latest.getSlot(), latest.getTime() * 1000, 1000);
+        var evaluator = new JulcTransactionEvaluator(
+                new DefaultUtxoSupplier(backend.getUtxoService()),
+                new DefaultProtocolParamsSupplier(backend.getEpochService()),
+                new DefaultScriptSupplier(backend.getScriptService()),
+                slotConfig);
+        return (tx, utxos) -> {
+            var result = evaluator.evaluateTx(tx, utxos);
+            if (result.isSuccessful() && result.getValue() != null) {
+                long steps = 0;
+                long memory = 0;
+                for (EvaluationResult eval : result.getValue()) {
+                    steps += eval.getExUnits().getSteps().longValueExact();
+                    memory += eval.getExUnits().getMem().longValueExact();
+                }
+                LAST_BUDGET.set(new Budget(steps, memory));
+                var params = call(() -> backend.getEpochService().getProtocolParameters());
+                long maxSteps = Long.parseLong(params.getMaxTxExSteps());
+                long maxMem = Long.parseLong(params.getMaxTxExMem());
+                // Spread at most the remaining headroom over the redeemers, up to +5% each.
+                long stepRoom = Math.max(0, maxSteps - steps);
+                long memRoom = Math.max(0, maxMem - memory);
+                for (EvaluationResult eval : result.getValue()) {
+                    ExUnits u = eval.getExUnits();
+                    long s0 = u.getSteps().longValueExact();
+                    long m0 = u.getMem().longValueExact();
+                    // stepRoom · s0 overflows a long (about 2e9 · 8e9), so share the headroom in BigInteger.
+                    long padSteps = Math.min(s0 / 20, share(stepRoom, s0, steps));
+                    long padMem = Math.min(Math.max(m0 / 20, 10_000), share(memRoom, m0, memory));
+                    eval.setExUnits(new ExUnits(BigInteger.valueOf(m0 + padMem), BigInteger.valueOf(s0 + padSteps)));
+                }
+            }
+            return result;
+        };
+    }
+
+    /** {@code room · part / total}, without overflow; 0 when {@code total} is 0. */
+    static long share(long room, long part, long total) {
+        if (total == 0) return 0;
+        return BigInteger.valueOf(room).multiply(BigInteger.valueOf(part)).divide(BigInteger.valueOf(total)).longValueExact();
+    }
+
+    /** The slot whose start time is the latest at or before {@code posixMillis}. */
+    public static long slotAt(BackendService backend, long posixMillis) {
+        var latest = call(() -> backend.getBlockService().getLatestBlock());
+        return latest.getSlot() + (Math.floorDiv(posixMillis, 1000L) - latest.getTime());
+    }
+
+    /** The chain's current POSIX time in milliseconds, from the latest block. */
+    public static long chainTimeMillis(BackendService backend) {
+        return call(() -> backend.getBlockService().getLatestBlock()).getTime() * 1000;
+    }
+
+    public static void waitForTx(BackendService backend, String txHash) throws InterruptedException {
+        for (int i = 0; i < 40; i++) {
+            Thread.sleep(1_500);
+            try {
+                var r = backend.getTransactionService().getTransaction(txHash);
+                if (r.isSuccessful() && r.getValue() != null) return;
+            } catch (Exception ignored) {
+                // not indexed yet
+            }
+        }
+        throw new IllegalStateException("transaction not confirmed: " + txHash);
+    }
+
+    /** Every UTxO at {@code address} created by {@code txHash}. */
+    public static List<Utxo> utxosOf(BackendService backend, String address, String txHash) throws Exception {
+        List<Utxo> out = new ArrayList<>();
+        for (int page = 1; ; page++) {
+            var result = backend.getUtxoService().getUtxos(address, 100, page);
+            if (!result.isSuccessful() || result.getValue() == null || result.getValue().isEmpty()) break;
+            for (Utxo u : result.getValue()) {
+                if (u.getTxHash().equals(txHash)) out.add(u);
+            }
+            if (result.getValue().size() < 100) break;
+        }
+        return out;
+    }
+
+    private interface Call<T> {
+        Result<T> get() throws Exception;
+    }
+
+    private static <T> T call(Call<T> call) {
+        try {
+            var result = call.get();
+            if (!result.isSuccessful() || result.getValue() == null) {
+                throw new IllegalStateException(result.getResponse());
+            }
+            return result.getValue();
+        } catch (IllegalStateException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String env(String name, String fallback) {
+        String v = System.getenv(name);
+        return v == null || v.isBlank() ? fallback : v;
+    }
+}

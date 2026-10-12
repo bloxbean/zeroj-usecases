@@ -55,6 +55,7 @@ document, many predicate proofs.
 | Piece | Role |
 |---|---|
 | `RichCredentialIssuerService` | Jubjub keypair; signs `(dobYear, country, roleId, salaryBracket, nameHash)` once per user |
+| `IssuerKeyStore` | Generates the issuer key on first start and persists it in the demo data directory (ADR-0009 D11) |
 | `AdultResidentProof` | EdDSA verify + `dobYear ≤ currentYear-21` + country Merkle membership (depth 4) |
 | `SeniorDoctorProof`  | EdDSA verify + `roleId == DOCTOR` + `dobYear ≤ currentYear-30` |
 | `PredicateProofService`| Compiles both circuits, shares PoT SRS, runs per-circuit Phase-2 setup |
@@ -67,9 +68,36 @@ document, many predicate proofs.
 ### 3.1 Issuer setup (once)
 
 ```java
-BigInteger sk = secureRandomScalar();
-JubjubPoint pk = JubjubPoint.SUBGROUP_GENERATOR.scalarMul(sk);
+// First start: a fresh key, persisted; later starts load it.
+EdDSAJubjub.Keypair keypair = IssuerKeyStore.loadOrCreate(dataDir, "selective-disclosure", new SecureRandom());
+JubjubPoint pk = keypair.pk();   // pinned as a parameter of both validators
 ```
+
+The key is generated with `EdDSAJubjub.generateKeypair(SecureRandom)`
+([ADR-0009](../docs/adr/0009-privacy-and-binding-hardening-of-the-original-demos.md) D11). Earlier
+versions derived it from a seed published in `RichCredentialIssuerService`, so anyone could sign
+credentials both validators accepted. That seed is gone, and `OldIssuerSeedRefusedVmTest` checks
+that a credential signed with it is refused by both gates.
+
+`IssuerKeyStore` keeps two files in the demo data directory (`demo.data-dir`, default `./data`;
+`/app/data` in Docker), next to the setup cache:
+
+| File | Holds |
+|---|---|
+| `issuer-eddsa-jubjub.key` | the secret scalar, owner-only (`0600`) |
+| `issuer-deployment.properties` | the deployment state: the issuer public key both validators are parameterised with |
+
+Both are written atomically (a temp file in the same directory, then a rename).
+- **Restart.** A restart loads the key. With the cached setups, the gate addresses stay the same,
+  so funds locked before the restart can still be unlocked.
+- **Fail closed.** If the deployment state exists but the key is missing, unreadable or doesn't
+  match the recorded public key, the demo stops with an error. It never creates a new key silently.
+- **Reset.** `./demo.sh selective-disclosure --clean-cache` (or deleting `./data`) removes the key,
+  the deployment state and the setup cache together. That is a fresh deployment, with a new key and
+  new script hashes.
+
+The setup cache is not treated as deployment state. Docker seeds it from the committed
+`demo-cache` before the first start, when no key exists yet.
 
 ### 3.2 Credential issuance (per person)
 
@@ -240,6 +268,25 @@ Or open <http://localhost:8085> for the UI.
 | On-chain verification is cheap | Groth16: 3 pairings, independent of circuit size |
 
 ## 7. What this does NOT yet defend against
+
+- **Replayable gates.** Both gates are stateless demo gates: the validators check the proof, not
+  the transaction spending it. A proof copied from the chain, or from a pending transaction, opens
+  any other UTxO at the same gate, and anyone can spend a gate's funds with it. A real deployment
+  must bind the proof to the output it spends (for example, the spent `TxOutRef` and the payout
+  address as public inputs).
+- **Unsalted credentials.** The issuer signs
+  `Poseidon(dobYear, country, roleId, salaryBracket, nameHash)` with no salt, and
+  `nameHash = Poseidon(name, 0)`. Every field has a small or guessable domain, so anyone who sees a
+  claims digest or a signature together with the issuer key can recover the fields by trying them.
+  Equal fields give an equal digest and, with the deterministic nonce, an equal signature.
+- **No holder binding.** The credential names no holder key, so anyone holding a copy can prove
+  with it (see "Credential theft" below).
+- **Demo trust model.** The demo server holds the issuer key and every holder's credential, and
+  proves on their behalf. Its API is the operator's view. Privacy holds against chain and mempool
+  observers, not against the demo server. The admin wallet (lock, unlock, fees) comes from DevKit's
+  well-known test mnemonic in `application.yml`. Anyone can sign as it on a devnet, and a real
+  deployment must replace it. Compose publishes the port on `127.0.0.1` only. Authenticated operator
+  access is the first change a production deployment needs.
 
 - **Credential theft**: if the full `(credential, sig)` bundle leaks,
   the attacker can also prove any predicate the victim could. Standard

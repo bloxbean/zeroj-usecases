@@ -48,13 +48,18 @@ How it works, in plain terms:
    checks it lands on the address's payment key hash. Because it starts from the **root seed**, only
    someone who has the seed can produce a valid proof. An attacker with just the leaf keys **cannot**.
 2. **Nothing leaks.** The proof reveals only what's already public — the address and the chosen
-   recipient. The seed and the derivation path stay secret (that's the "zero-knowledge" part).
+   recipient. The seed stays secret (that's the "zero-knowledge" part), and the derivation path is
+   private from chain observers. Anyone holding the account's xpub can still derive its addresses
+   and so find the path.
 3. **The refund is bound to a recipient.** The proof is tied to the payout address the owner picked,
    so a copied proof **can't be redirected** — a front-runner gets nothing.
 4. **Verify anywhere.** The proof can be checked **off-chain** in a fraction of a second, or
    **on-chain** by a small Cardano (Plutus) validator that runs the verifier *and* enforces that the
    payout actually goes to the bound recipient. A per-account refund voucher (a UTxO that can be spent
-   only once) prevents double-claims.
+   only once) prevents double-claims. The claim pays the refund to the recipient and the rest of the
+   voucher, less a fee allowance, back to the funder, each in an output tagged with the voucher's
+   outref, so a relayer can't keep the remainder or pay two vouchers with one output
+   ([details](docs/verification-and-validator-flow.md#6-on-chain-validator-flow-the-core)).
 
 The result: the operator refunds the genuine owner, the owner never exposes their seed, the attacker
 can't claim, and the money can't be hijacked on the way.
@@ -147,7 +152,13 @@ required for the optional on-chain verification flow.
 - **Your seed never leaves your machine** — it's read from a hidden prompt, used to build the proof
   in memory, and discarded. It is never written to disk or sent over the network.
 - **The proof discloses only** the address's payment key hash and the recipient — both of which are
-  already public on-chain.
+  already public on-chain. It does link the two, so **use a fresh recipient address** that isn't tied
+  to your other wallets.
+- **The derivation path is private from observers**, not from anyone holding the account's xpub (a
+  wallet service or watch-only wallet can derive the addresses and find which one is proven).
+- **Voucher fee slack.** Whoever submits the claim can keep the voucher's `maxFee` minus the actual
+  fee (the demo uses 2 ADA), so a funder should set `maxFee` close to the expected fee. The voucher's
+  funder is the admin account whose mnemonic the CLI or app is given.
 - **Keys come from a trusted setup.** For trying it out, generate a **local, development-only** key
   bundle. For production, the setup is run as a multi-party ceremony (see the CLI docs). A production
   refund program should also confirm the recipient through its own authenticated channel.
