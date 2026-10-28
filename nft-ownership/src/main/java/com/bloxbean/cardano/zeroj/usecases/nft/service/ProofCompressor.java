@@ -1,12 +1,11 @@
 package com.bloxbean.cardano.zeroj.usecases.nft.service;
 
+import org.zeroj.bls12381.Bls12381Codecs;
 import org.zeroj.bls12381.ec.JacobianG1BLS381;
 import org.zeroj.bls12381.ec.JacobianG2BLS381;
 import org.zeroj.crypto.groth16.Groth16ProofBLS381;
 import org.zeroj.crypto.setup.Groth16SetupBLS381;
 import org.zeroj.onchain.julc.groth16.codec.SnarkjsToCardano;
-import supranational.blst.P1_Affine;
-import supranational.blst.P2_Affine;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -31,7 +30,7 @@ final class ProofCompressor {
         byte[] uncompressed = new byte[FP_SIZE * 2];
         writeFp(uncompressed, 0, point.xBigInt());
         writeFp(uncompressed, FP_SIZE, point.yBigInt());
-        return new P1_Affine(uncompressed).compress();
+        return Bls12381Codecs.g1ToCompressed(Bls12381Codecs.g1FromUncompressed(uncompressed));
     }
 
     static byte[] g2Compress(JacobianG2BLS381.AffineG2 point) {
@@ -45,7 +44,7 @@ final class ProofCompressor {
         writeFp(uncompressed, FP_SIZE, point.x().reBigInt());
         writeFp(uncompressed, FP_SIZE * 2, point.y().imBigInt());
         writeFp(uncompressed, FP_SIZE * 3, point.y().reBigInt());
-        return new P2_Affine(uncompressed).compress();
+        return Bls12381Codecs.g2ToCompressed(Bls12381Codecs.g2FromUncompressed(uncompressed));
     }
 
     static SnarkjsToCardano.ProofCompressed compressProof(Groth16ProofBLS381 proof) {

@@ -20,7 +20,7 @@ import java.util.List;
  * <p>Uses ZeroJ's <b>pure-Java</b> {@link Bls12381Codecs} — no native library — so {@code setup}
  * and {@code prove} run on every platform, including Windows where blst isn't packaged. The output
  * is the standard IETF/zkcrypto compressed serialization; it is verified byte-for-byte against
- * blst's {@code compress()} in {@code ProofCompressorTest} so the on-chain redeemer bytes are
+ * independent py_ecc known answers in {@code ProofCompressorTest} so the on-chain redeemer bytes are
  * unchanged.</p>
  */
 public final class ProofCompressor {
