@@ -1,3 +1,8 @@
+# Runtime base image: Amazon Corretto 25 LTS (OpenJDK, GPLv2 + Classpath Exception) on Amazon Linux 2023.
+# 25.0.5.1 fixes CVE-2026-114938 ("Java4Shell"); Temurin has no fixed 25 build yet.
+# Pinned by multi-arch index digest (linux/amd64 + linux/arm64). Override with --build-arg BASE_IMAGE=...
+ARG BASE_IMAGE=amazoncorretto:25.0.5-al2023-headless@sha256:d43cc2b87faf3e80d04659d315dd9f1dba2c1176cc9b48d9daed285856ac056c
+
 FROM eclipse-temurin:25-jdk AS build
 
 ARG USECASE_DIR
@@ -23,7 +28,7 @@ RUN chmod +x ./gradlew \
     && test -n "${jar_file}" \
     && cp "${jar_file}" /workspace/app.jar
 
-FROM eclipse-temurin:25-jre
+FROM ${BASE_IMAGE}
 
 ARG USECASE_DIR
 
@@ -38,9 +43,11 @@ ENV CARDANO_YACI_BASE_URL=http://host.docker.internal:8080/api/v1/
 ENV CARDANO_YACI_ADMIN_URL=http://host.docker.internal:10000
 ENV ZEROJ_ALLOW_INSECURE_TRUSTED_SETUP=true
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# curl and ca-certificates are in the base image; findutils provides find, which
+# docker/run-spring-usecase.sh uses to seed the demo cache.
+RUN dnf install -y findutils \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
 
 WORKDIR /app
 COPY --from=build /workspace/app.jar /app/app.jar
