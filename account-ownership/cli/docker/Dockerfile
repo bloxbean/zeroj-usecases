@@ -7,7 +7,11 @@
 #   docker build -f docker/Dockerfile -t account-ownership-recovery-cli:local .
 #
 # The key bundle and proofs are NOT baked in — bind-mount them at run time (see docker-compose.yml).
-FROM eclipse-temurin:25-jre
+# Runtime base image: Amazon Corretto 25 LTS (OpenJDK, GPLv2 + Classpath Exception) on Amazon Linux 2023.
+# 25.0.5.1 fixes CVE-2026-114938 ("Java4Shell"); Temurin has no fixed 25 build yet.
+# Pinned by multi-arch index digest (linux/amd64 + linux/arm64). Override with --build-arg BASE_IMAGE=...
+ARG BASE_IMAGE=amazoncorretto:25.0.5-al2023-headless@sha256:d43cc2b87faf3e80d04659d315dd9f1dba2c1176cc9b48d9daed285856ac056c
+FROM ${BASE_IMAGE}
 
 WORKDIR /work
 COPY build/libs/account-ownership-recovery-cli-*-all.jar /app/app.jar
