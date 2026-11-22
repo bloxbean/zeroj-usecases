@@ -20,7 +20,9 @@ import java.math.BigInteger;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -97,12 +99,18 @@ class BallotCircuitTest {
     @DisplayName("No witness for: vote = 2, mismatched k, another key, identity key, off-curve key, wrong nullifier, non-member, wrong root")
     void cheatingBallotsHaveNoWitness() {
         JubjubPoint key = electionKey.point();
-        // v = 2: the 1-bit vote's range check rejects it even with B built for 2.
-        rejects(inputs(0, 1, b -> {
+        // v = 2: the typed builder already refuses a vote outside its declared 1-bit range...
+        assertThrows(IllegalArgumentException.class, () -> inputs(0, 1, b -> b.vote(2)));
+        // ...and the circuit's 1-bit range check rejects it too, even with B built for 2, when a
+        // prover bypasses the builder.
+        var twoVote = inputs(0, 1, b -> {
             BigInteger k = BigInteger.valueOf(77);
             JubjubPoint[] c = rawEncrypt(2, k, key);
-            b.vote(2).randomness(k).handleU(u(c[0])).handleV(v(c[0])).ballotU(u(c[1])).ballotV(v(c[1]));
-        }));
+            b.randomness(k).handleU(u(c[0])).handleV(v(c[0])).ballotU(u(c[1])).ballotV(v(c[1]));
+        });
+        Map<String, List<BigInteger>> twoVoteWitness = new HashMap<>(twoVote.toWitnessMap());
+        twoVoteWitness.put(PrivateBallotProofCircuit.VOTE, List.of(BigInteger.TWO));
+        assertThrows(RuntimeException.class, () -> ballot.calculateWitness(twoVoteWitness, CurveId.BLS12_381));
         // A from k1, B from k2: would add an arbitrary offset to the decrypted sum.
         rejects(inputs(0, 1, b -> {
             JubjubPoint a = G.scalarMul(BigInteger.valueOf(11));

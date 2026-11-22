@@ -92,11 +92,17 @@ class SolvencyCircuitTest {
         var vs = new ArrayList<>(book.stream().map(x -> x.commitment().affineV()).toList());
         us.set(3, c.affineU());
         vs.set(3, c.affineV());
+        List<BigInteger> overflowBalances = List.of(BigInteger.valueOf(500_000_000L), BigInteger.valueOf(1_200_000_000L),
+                BigInteger.valueOf(300_000_000L), huge);
+        // The typed builder already refuses a balance outside its declared 64-bit range...
+        assertThrows(IllegalArgumentException.class,
+                () -> SolvencyAttestation.inputs(2_000_000_000L, book).balances(overflowBalances));
+        // ...and the circuit refuses it too when a prover bypasses the builder.
         overflow.liabilityU(us).liabilityV(vs)
-                .balances(List.of(BigInteger.valueOf(500_000_000L), BigInteger.valueOf(1_200_000_000L),
-                        BigInteger.valueOf(300_000_000L), huge))
                 .blindings(List.of(book.get(0).blinding(), book.get(1).blinding(), book.get(2).blinding(), r));
-        assertThrows(RuntimeException.class, () -> circuit.calculateWitness(overflow.toWitnessMap(), CurveId.BLS12_381));
+        Map<String, List<BigInteger>> overflowWitness = new LinkedHashMap<>(overflow.toWitnessMap());
+        overflowWitness.put(HiddenLiabilitySolvencyProofCircuit.BALANCE + "_3", List.of(huge));
+        assertThrows(RuntimeException.class, () -> circuit.calculateWitness(overflowWitness, CurveId.BLS12_381));
     }
 
     @Test

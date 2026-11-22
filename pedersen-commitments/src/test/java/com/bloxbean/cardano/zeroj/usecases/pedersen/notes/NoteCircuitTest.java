@@ -16,6 +16,7 @@ import java.math.BigInteger;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -119,9 +120,16 @@ class NoteCircuitTest {
         JubjubPoint pk = auditorKeys.elgamal().publicKey().point();
         List<BigInteger> c0 = fixtureLimb(l0, k0, pk);
         List<BigInteger> c1 = fixtureLimb(BigInteger.ZERO, k1, pk);
-        noTransferWitness(bigIn, small, big, i -> i.o2L0(l0).o2L1(BigInteger.ZERO)
+        // The typed builder already refuses a limb outside its declared 32-bit range...
+        assertThrows(IllegalArgumentException.class,
+                () -> NoteProofs.transferInputs(bigIn, small, big, auditor).o2L0(l0));
+        // ...and the circuit refuses it too when a prover bypasses the builder.
+        var limbAtTwo32 = NoteProofs.transferInputs(bigIn, small, big, auditor).o2L1(BigInteger.ZERO)
                 .o2a0u(c0.get(0)).o2a0v(c0.get(1)).o2b0u(c0.get(2)).o2b0v(c0.get(3))
-                .o2a1u(c1.get(0)).o2a1v(c1.get(1)).o2b1u(c1.get(2)).o2b1v(c1.get(3)), "a limb at or above 2^32");
+                .o2a1u(c1.get(0)).o2a1v(c1.get(1)).o2b1u(c1.get(2)).o2b1v(c1.get(3));
+        Map<String, List<BigInteger>> limbWitness = new HashMap<>(limbAtTwo32.toWitnessMap());
+        limbWitness.put(NoteTransferProofCircuit.O2_L0, List.of(l0));
+        assertThrows(RuntimeException.class, () -> proofs.transfer().prove(limbWitness), "a limb at or above 2^32");
         // Positive control: the same mutation tooling with the honest decomposition proves.
         proofs.transfer().prove(NoteProofs.transferInputs(bigIn, small, big, auditor).toWitnessMap());
         noTransferWitness(in, o1, o2, i -> i
