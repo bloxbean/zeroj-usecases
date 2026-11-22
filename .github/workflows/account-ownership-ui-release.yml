@@ -6,9 +6,13 @@ name: release (account-ownership desktop UI)
 #   preview : Actions ▸ Run workflow      → uploads the installers as workflow ARTIFACTS
 #   release : push a repo tag  v<version>  → uploads the installers to the RELEASE for that tag
 #
-# jpackage cannot cross-compile, so one runner per OS. The JDK is an OpenJDK build (Temurin,
+# jpackage cannot cross-compile, so one runner per OS. The JDK is an OpenJDK build (Amazon Corretto,
 # GPLv2+CE) — never Oracle JDK — so the bundled runtime is freely redistributable. JavaFX ships
 # inside the app's fat jar, so the base JDK needs no OpenJFX.
+#
+# The bundled runtime is jlinked from the setup-java JDK, so that JDK must carry the CVE-2026-114938
+# ("Java4Shell") fix: Corretto 25.0.5.1+ has it, Temurin has no fixed 25 build yet. The guard steps
+# fail the job if the JDK, or the jlinked runtime, is older than 25.0.5.1.
 #
 # Assets:
 # Files are renamed to include os/arch/version; the app itself stays "AccountOwnershipProof".
@@ -43,11 +47,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up OpenJDK 25 (Temurin — GPLv2+CE, redistributable runtime)
+      - name: Set up OpenJDK 25 (Corretto — GPLv2+CE, redistributable runtime)
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: 'corretto'
           java-version: '25'
+
+      # The installer bundles a runtime jlinked from this JDK. Refuse to build on a JDK without the
+      # CVE-2026-114938 fix (a stale tool cache or a distribution change must not ship a vulnerable JRE).
+      - name: Guard — JDK must be >= 25.0.5.1 (CVE-2026-114938)
+        shell: bash
+        env:
+          MIN_JAVA: '25.0.5.1'
+        run: |
+          java -version
+          v=$(java -XshowSettings:properties -version 2>&1 | tr -d '\r' | sed -n 's/^ *java\.runtime\.version = //p')
+          num=${v%%[+-]*}
+          echo "java.runtime.version=$v (numeric $num), required >= $MIN_JAVA"
+          IFS=. read -r -a have <<< "$num"; IFS=. read -r -a need <<< "$MIN_JAVA"
+          for i in 0 1 2 3; do
+            h=${have[i]:-0}; n=${need[i]:-0}
+            if (( h > n )); then exit 0; fi
+            if (( h < n )); then echo "::error::JDK $v is older than $MIN_JAVA (CVE-2026-114938)"; exit 1; fi
+          done
 
       - name: Resolve version (tag > version.properties)
         id: ver
@@ -65,6 +87,22 @@ jobs:
       - name: Build native installer (${{ matrix.platform }})
         shell: bash
         run: cd account-ownership && ./gradlew :ui:jpackageInstaller -PreleaseVersion=${{ steps.ver.outputs.version }} --no-daemon
+
+      - name: Guard — bundled runtime must be >= 25.0.5.1 (CVE-2026-114938)
+        shell: bash
+        env:
+          MIN_JAVA: '25.0.5.1'
+        run: |
+          rel=account-ownership/ui/build/runtime/release
+          cat "$rel"
+          v=$(tr -d '\r' < "$rel" | sed -n 's/^JAVA_VERSION="\(.*\)"$/\1/p')
+          echo "bundled runtime JAVA_VERSION=$v, required >= $MIN_JAVA"
+          IFS=. read -r -a have <<< "$v"; IFS=. read -r -a need <<< "$MIN_JAVA"
+          for i in 0 1 2 3; do
+            h=${have[i]:-0}; n=${need[i]:-0}
+            if (( h > n )); then exit 0; fi
+            if (( h < n )); then echo "::error::bundled runtime $v is older than $MIN_JAVA (CVE-2026-114938)"; exit 1; fi
+          done
 
       # jpackage names the installer after the app (AccountOwnershipProof) with no os/arch, which is
       # ambiguous on the Releases page. Rename to account-ownership-proof-ui-<os>_<arch>_<version>.<ext>,
