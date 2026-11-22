@@ -1,16 +1,19 @@
 <script lang="ts">
   import { api } from './lib/api';
 
-  let currentPage = $state('home');
+  let currentPage = $state('products');
   let status = $state<any>(null);
   let verifyResult = $state<any>(null);
   let mintResult = $state<any>(null);
+  let readerResult = $state<any>(null);
+  let privateView = $state<any>(null);
   let loading = $state(false);
   let message = $state('');
   let addCount = $state(5);
   let addType = $state('battery');
   let disableOffchain = $state(false);
   let registry = $state<any>(null);
+  let readerId = $state('BAT-SN001');
 
   // Pagination
   let page = $state(0);
@@ -18,7 +21,7 @@
   let pageFilter = $state('');
   let pageData = $state<any>(null);
 
-  async function loadStatus() { status = await api.status(); loadPage(0); }
+  async function loadStatus() { status = await api.status(); loadPage(page); }
   async function loadRegistry() { registry = await api.registry(); }
   async function loadPage(p: number) {
     page = Math.max(0, p);
@@ -31,66 +34,83 @@
     message = `Adding ${addCount} ${addType} products...`;
     try {
       const r = await api.addProducts(addCount, addType);
-      message = `Added ${r.added} ${addType} products. Total: ${r.totalProducts} products, ${r.totalBatches} batches.`;
-      loadStatus(); loadPage(0);
+      message = r.error ? `Error: ${r.error}` : `Added ${r.added} ${addType} products. Total: ${r.totalProducts}.`;
+      loadStatus();
     } catch (e: any) { message = `Error: ${e.message}`; }
     loading = false;
   }
 
-  async function verifyItem(id: string, type: string) {
-    loading = true; message = `Generating ZK proofs for ${id}...`; verifyResult = null;
+  async function verifyItem(id: string) {
+    loading = true; verifyResult = null; mintResult = null;
+    message = `${id}: the auditor commits each claim (fresh blinding), the manufacturer proves them...`;
     try {
-      verifyResult = await api.verify(id, type);
-      let total = verifyResult.claims?.length || 0;
-      let passed = verifyResult.claims?.filter((c: any) => c.compliant).length || 0;
-      message = `${id}: ${passed}/${total} claims compliant (${verifyResult.totalProvingTimeMs}ms)`;
+      verifyResult = await api.verify(id);
+      if (verifyResult.error) { message = `Error: ${verifyResult.error}`; }
+      else {
+        const total = verifyResult.claims?.length || 0;
+        const proved = verifyResult.claims?.filter((c: any) => c.compliant).length || 0;
+        message = `${id}: ${proved}/${total} claims proved (${verifyResult.totalProvingTimeMs} ms)`;
+      }
     } catch (e: any) { message = `Error: ${e.message}`; }
     loading = false;
   }
 
-  async function mintNft(id: string, type: string) {
+  async function mintPassport(id: string) {
     loading = true; mintResult = null;
-    message = `Step 1/2: Generating ZK compliance proof off-chain for ${id}...`;
+    message = `Step 1/2: ${id}: auditor commitments and the manufacturer's proofs, off-chain...`;
     try {
-      // Step 1: Off-chain ZK proof generation (pure Java Groth16 BLS12-381)
-      const vr = await api.verify(id, type);
+      const vr = await api.verify(id);
       verifyResult = vr;
-      if (!vr.allCompliant && !disableOffchain) {
-        message = `❌ ${id}: NOT COMPLIANT — off-chain ZK proof shows failure. Mint blocked before reaching chain. (Enable "Skip off-chain check" to test on-chain rejection)`;
+      const carbon = vr.claims?.find((c: any) => c.gatedOnChain);
+      if (carbon && !carbon.compliant && !disableOffchain) {
+        message = `${id}: the carbon claim cannot be proved, so no passport can be minted. (Enable "Skip off-chain check" to submit a proof against a threshold the manufacturer chose; the policy refuses it.)`;
         loading = false; return;
       }
-      if (!vr.allCompliant && disableOffchain) {
-        message = `Step 2/2: ${id} is NOT COMPLIANT but off-chain check disabled. Submitting to Cardano — on-chain validator will reject...`;
-      } else {
-        message = `Step 2/2: ${id} is compliant. Submitting to Cardano — on-chain Groth16 verification...`;
-      }
-      // Step 2: On-chain minting — Plutus V3 minting policy verifies:
-      //   ✓ Manufacturer signature  ✓ Groth16 BLS12-381 pairing check  ✓ isCompliant=1  ✓ Exactly 1 token
-      const mr = await fetch('/api/dpp/mint', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, forceOnChain: disableOffchain }),
-      }).then(r => r.json());
+      message = `Step 2/2: ${id}: the manufacturer builds the passport transaction, the auditor checks it against its report and co-signs, the policy verifies the carbon proof on-chain...`;
+      const mr = await api.mint(id, disableOffchain);
       mintResult = mr;
       if (mr.error) {
-        let detail = mr.onChainRejection ? ' — REJECTED BY ON-CHAIN PLUTUS VALIDATOR' : '';
-        message = mr.existingTx
-          ? `⚠️ ${id}: Already minted. Existing tx: ${mr.existingTx.substring(0, 16)}...`
-          : `❌ ${id}: Mint failed${detail}. ${mr.error.substring(0, 120)}`;
+        const detail = mr.onChainRejection ? ' REJECTED BY THE PASSPORT POLICY.' : '';
+        message = mr.existingPassport
+          ? `${id}: a passport already exists: ${mr.existingPassport}`
+          : `${id}: mint failed.${detail} ${String(mr.error).substring(0, 160)}`;
       } else {
-        message = `✅ ${id}: DPP NFT minted! Groth16 proof verified ON-CHAIN by Plutus V3 validator. tx: ${mr.txHash?.substring(0, 20)}...`;
+        message = `${id}: passport minted at ${mr.passport?.substring(0, 20)}... (claims: ${mr.claims?.join(', ')})`;
       }
-      loadStatus(); loadPage(page);
+      loadStatus();
     } catch (e: any) { message = `Error: ${e.message}`; }
     loading = false;
+  }
+
+  async function revokePassport(id: string) {
+    loading = true; message = `${id}: the auditor revokes the passport (spend + burn, auditor signature only)...`;
+    try {
+      const r = await api.revoke(id);
+      message = r.error ? `${id}: revoke failed: ${r.error}` : `${id}: revoked, tx ${r.txHash?.substring(0, 20)}...`;
+      loadStatus();
+    } catch (e: any) { message = `Error: ${e.message}`; }
+    loading = false;
+  }
+
+  async function checkPassport(id: string) {
+    loading = true; readerResult = null; readerId = id;
+    message = `${id}: reading the passport from chain...`;
+    try {
+      readerResult = await api.passport(id);
+      message = readerResult.accepted ? `${id}: passport accepted` : `${id}: not accepted: ${readerResult.reason}`;
+    } catch (e: any) { message = `Error: ${e.message}`; }
+    loading = false;
+  }
+
+  async function showPrivate(id: string) {
+    privateView = await api.manufacturer(id);
   }
 
   async function anchorRoot() {
-    loading = true; message = 'Anchoring minted-registry root on-chain...';
+    loading = true; message = 'Anchoring the passport registry root on-chain...';
     try {
       const r = await api.anchor();
-      if (r.error) { message = `Anchor failed: ${r.error}`; }
-      else { message = `Root anchored! tx: ${r.txHash?.substring(0, 20)}... (${r.mintedCount} minted)`; }
+      message = r.error ? `Anchor failed: ${r.error}` : `Root anchored: tx ${r.txHash?.substring(0, 20)}... (${r.passportCount} passports)`;
       loadRegistry();
     } catch (e: any) { message = `Error: ${e.message}`; }
     loading = false;
@@ -99,179 +119,74 @@
 
 <main>
   <h1>Digital Product Passport Demo</h1>
-  <p class="subtitle">EU ESPR compliance with ZK proofs on Cardano — mint DPP NFTs only when compliant</p>
+  <p class="subtitle">Product passports proved against auditor-issued Pedersen commitments on Cardano</p>
+  <p class="custody">Operator view: this demo server holds the manufacturer's and the auditor's keys. Privacy holds against chain and mempool observers, not against this server.</p>
 
   <nav>
-    <button class:active={currentPage === 'home'} onclick={() => { currentPage = 'home'; pageFilter = ''; loadStatus(); }}>Products</button>
-    <button class:active={currentPage === 'battery'} onclick={() => { currentPage = 'battery'; pageFilter = 'battery'; loadStatus(); }}>EV Battery</button>
-    <button class:active={currentPage === 'textile'} onclick={() => { currentPage = 'textile'; pageFilter = 'textile'; loadStatus(); }}>Textile Batch</button>
-    <button class:active={currentPage === 'mint'} onclick={() => { currentPage = 'mint'; pageFilter = ''; loadStatus(); }}>Mint NFT</button>
+    <button class:active={currentPage === 'products'} onclick={() => { currentPage = 'products'; loadStatus(); }}>Products</button>
+    <button class:active={currentPage === 'mint'} onclick={() => { currentPage = 'mint'; loadStatus(); }}>Issue passport</button>
+    <button class:active={currentPage === 'reader'} onclick={() => { currentPage = 'reader'; }}>Reader</button>
     <button class:active={currentPage === 'registry'} onclick={() => { currentPage = 'registry'; loadRegistry(); }}>Registry</button>
   </nav>
 
-  {#if currentPage === 'home'}
+  {#if currentPage === 'products' || currentPage === 'mint'}
     <section>
-      <h2>Product Registry (Poseidon MPF + RocksDB)</h2>
-      <div class="add-bar">
-        <label>Add products:</label>
-        <input type="number" bind:value={addCount} min="1" max="100" />
-        <select bind:value={addType}>
-          <option value="battery">Battery</option>
-          <option value="textile">Textile Batch</option>
-        </select>
-        <button onclick={addProducts} disabled={loading}>Add {addCount} {addType}</button>
-      </div>
+      {#if currentPage === 'products'}
+        <h2>Products</h2>
+        <div class="add-bar">
+          <span>Add products:</span>
+          <input type="number" bind:value={addCount} min="1" max="100" />
+          <select bind:value={addType}>
+            <option value="battery">Battery</option>
+            <option value="textile">Textile Batch</option>
+          </select>
+          <button onclick={addProducts} disabled={loading}>Add {addCount} {addType}</button>
+        </div>
+      {:else}
+        <h2>Issue a passport</h2>
+        <div class="note">
+          <ol>
+            <li><strong>Auditor:</strong> measures, and commits each claim (carbon, recycled content, origin, inspections) as a <code>pedersen-jubjub-vector-v1</code> commitment with a fresh 252-bit blinding. It hands the opening to the manufacturer.</li>
+            <li><strong>Manufacturer:</strong> proves each claim from the opening, off-chain (Groth16, BLS12-381).</li>
+            <li><strong>One transaction:</strong> the manufacturer builds it; the auditor checks every commitment and the product id against its report, and co-signs. The <code>DppPassport</code> policy checks both signatures, the exact mint <code>{'{'}productId: 1{'}'}</code>, the passport output at its own address with the exact datum, and the carbon proof against the commitment in that datum.</li>
+          </ol>
+          <p>The passport datum carries the commitments, not the values. Recycled content, origin and inspections are verified off-chain against those commitments (see Reader).</p>
+        </div>
+        <label class="checkbox-label">
+          <input type="checkbox" bind:checked={disableOffchain} />
+          <span><strong>Skip off-chain check</strong>: for a product whose carbon claim cannot be proved, submit a proof against a threshold the manufacturer chose itself. The policy fixes the threshold, so it <span class="fail">rejects</span> the transaction.</span>
+        </label>
+      {/if}
       {#if status}
-        <p>MPF Root: <code>{status.mpfRoot?.substring(0, 20)}...</code> | Total: {status.totalDbCount ?? (status.productCount + status.batchCount)} | Minted: {status.mintedCount}</p>
-        <p>Thresholds: carbon &lt;= {status.thresholds?.carbon_kg}kg, recycled &gt;= {status.thresholds?.recycled_pct}%</p>
-
+        <p>Policy (and passport address): <code>{status.policyId?.substring(0, 20)}...</code> | Gated on-chain: {status.gatedClaim} &lt;= {status.thresholds?.carbon_kg} kg | Passports: {status.passportCount} / {status.totalDbCount}</p>
         <div class="filter-bar">
-          <label>Filter:</label>
+          <span>Filter:</span>
           <select bind:value={pageFilter} onchange={() => loadPage(0)}>
             <option value="">All</option>
-            <option value="battery">Battery</option>
-            <option value="textile">Textile</option>
+            <option value="battery">EV battery (per product)</option>
+            <option value="textile">Textile (per batch)</option>
           </select>
         </div>
-
-        {#if pageData}
-          <h3>Products (page {pageData.page + 1} of {pageData.totalPages}, {pageData.totalElements} total)</h3>
-          <div class="table-scroll">
-            <table>
-              <thead><tr><th>Serial</th><th>Name</th><th>Type</th><th>Carbon</th><th>Recycled</th><th>Country</th><th>Units</th><th>Minted</th></tr></thead>
-              <tbody>
-                {#each pageData.products as p}
-                  <tr>
-                    <td><code>{p.serialNumber}</code></td><td>{p.name}</td><td>{p.productType}</td>
-                    <td class={p.carbonKg <= status.thresholds.carbon_kg ? 'ok' : 'fail'}>{p.carbonKg}kg</td>
-                    <td class={p.recycledPct >= status.thresholds.recycled_pct ? 'ok' : 'fail'}>{p.recycledPct}%</td>
-                    <td>{p.country}</td>
-                    <td>{p.unitCount > 0 ? p.unitCount : '—'}</td>
-                    <td>{p.minted ? '✓ ' + (p.mintTxHash?.substring(0, 8) || '') + '...' : '—'}</td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-          <div class="pagination">
-            <button onclick={() => loadPage(page - 1)} disabled={page <= 0}>Prev</button>
-            <span>Page {pageData.page + 1} of {Math.max(1, pageData.totalPages)}</span>
-            <button onclick={() => loadPage(page + 1)} disabled={page >= pageData.totalPages - 1}>Next</button>
-          </div>
-        {/if}
       {/if}
-      {#if message}<div class="message">{message}</div>{/if}
-    </section>
-
-  {:else if currentPage === 'battery'}
-    <section>
-      <h2>EV Battery — Per-Product Verification</h2>
-      <p>Each battery gets individual ZK compliance proofs. Click Verify to generate proofs for a product.</p>
       {#if pageData}
         <div class="table-scroll">
           <table>
-            <thead><tr><th>Serial</th><th>Name</th><th>Carbon</th><th>Recycled</th><th>Country</th><th>Inspections</th><th>Action</th></tr></thead>
-            <tbody>
-              {#each pageData.products as p}
-                <tr>
-                  <td><code>{p.serialNumber}</code></td><td>{p.name}</td>
-                  <td class={p.carbonKg <= (status?.thresholds?.carbon_kg ?? 50) ? 'ok' : 'fail'}>{p.carbonKg}kg</td>
-                  <td class={p.recycledPct >= (status?.thresholds?.recycled_pct ?? 30) ? 'ok' : 'fail'}>{p.recycledPct}%</td>
-                  <td>{p.country}</td>
-                  <td>{p.inspectionCount > 0 ? p.inspectionCount + '/3' : '—'}</td>
-                  <td><button class="btn-action" onclick={() => verifyItem(p.serialNumber, 'product')} disabled={loading}>Verify</button></td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination">
-          <button onclick={() => loadPage(page - 1)} disabled={page <= 0}>Prev</button>
-          <span>Page {pageData.page + 1} of {Math.max(1, pageData.totalPages)} ({pageData.totalElements} total)</span>
-          <button onclick={() => loadPage(page + 1)} disabled={page >= pageData.totalPages - 1}>Next</button>
-        </div>
-      {/if}
-      {#if message}<div class="message">{message}</div>{/if}
-      {#if verifyResult}
-        <div class="result" class:compliant={verifyResult.allCompliant} class:noncompliant={!verifyResult.allCompliant}>
-          <h3>{verifyResult.id}: {verifyResult.allCompliant ? 'ALL COMPLIANT' : 'NOT COMPLIANT'}</h3>
-          {#each verifyResult.claims || [] as c}
-            <p class={c.compliant ? 'ok' : 'fail'}>{c.compliant ? '✓' : '✗'} {c.claim} ({c.provingTimeMs}ms)</p>
-          {/each}
-        </div>
-      {/if}
-    </section>
-
-  {:else if currentPage === 'textile'}
-    <section>
-      <h2>Textile — Per-Batch Verification</h2>
-      <p>One set of proofs covers the entire batch (50-500 units). Cost-effective for high volume.</p>
-      {#if pageData}
-        <div class="table-scroll">
-          <table>
-            <thead><tr><th>Batch</th><th>Name</th><th>Units</th><th>Carbon/u</th><th>Recycled</th><th>Country</th><th>Action</th></tr></thead>
-            <tbody>
-              {#each pageData.products as p}
-                <tr>
-                  <td><code>{p.serialNumber}</code></td><td>{p.name}</td>
-                  <td>{p.unitCount > 0 ? p.unitCount : '—'}</td>
-                  <td class={p.carbonKg <= (status?.thresholds?.carbon_kg ?? 50) ? 'ok' : 'fail'}>{p.carbonKg}kg</td>
-                  <td class={p.recycledPct >= (status?.thresholds?.recycled_pct ?? 30) ? 'ok' : 'fail'}>{p.recycledPct}%</td>
-                  <td>{p.country}</td>
-                  <td><button class="btn-action" onclick={() => verifyItem(p.serialNumber, 'batch')} disabled={loading}>Verify</button></td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination">
-          <button onclick={() => loadPage(page - 1)} disabled={page <= 0}>Prev</button>
-          <span>Page {pageData.page + 1} of {Math.max(1, pageData.totalPages)} ({pageData.totalElements} total)</span>
-          <button onclick={() => loadPage(page + 1)} disabled={page >= pageData.totalPages - 1}>Next</button>
-        </div>
-      {/if}
-      {#if message}<div class="message">{message}</div>{/if}
-      {#if verifyResult}
-        <div class="result" class:compliant={verifyResult.allCompliant} class:noncompliant={!verifyResult.allCompliant}>
-          <h3>{verifyResult.id}: {verifyResult.allCompliant ? 'ALL COMPLIANT' : 'NOT COMPLIANT'}</h3>
-          {#each verifyResult.claims || [] as c}
-            <p class={c.compliant ? 'ok' : 'fail'}>{c.compliant ? '✓' : '✗'} {c.claim} ({c.provingTimeMs}ms)</p>
-          {/each}
-        </div>
-      {/if}
-    </section>
-
-  {:else if currentPage === 'mint'}
-    <section>
-      <h2>Mint DPP NFT (On-Chain Groth16 Verification)</h2>
-      <div class="note">
-        <strong>How it works:</strong>
-        <ol>
-          <li><strong>Off-chain:</strong> ZK compliance proof generated (pure Java Groth16 BLS12-381, ~5-30s)</li>
-          <li><strong>On-chain:</strong> Cardano Plutus V3 minting policy verifies the Groth16 proof via BLS12-381 pairing check + checks manufacturer signature + isCompliant=1 + exactly 1 token</li>
-        </ol>
-        <p>Non-compliant products are blocked at Step 1 (proof shows failure). Compliant products proceed to Step 2 where the <strong>Cardano validator enforces</strong> the proof on-chain — no one can mint without a valid ZK proof, even if they bypass this UI.</p>
-      </div>
-      <label class="checkbox-label">
-        <input type="checkbox" bind:checked={disableOffchain} />
-        <strong>Skip off-chain check</strong> — send ALL proofs (including non-compliant) to the on-chain validator. Non-compliant products will be <span class="fail">REJECTED by the Plutus validator</span>.
-      </label>
-      {#if pageData}
-        <div class="table-scroll">
-          <table>
-            <thead><tr><th>Serial</th><th>Name</th><th>Type</th><th>Carbon</th><th>Recycled</th><th>Minted</th><th>Action</th></tr></thead>
+            <thead><tr><th>Serial</th><th>Name</th><th>Type</th><th>Units</th><th>Passport</th><th>Actions</th></tr></thead>
             <tbody>
               {#each pageData.products as p}
                 <tr class:minted-row={p.minted}>
                   <td><code>{p.serialNumber}</code></td><td>{p.name}</td><td>{p.productType}</td>
-                  <td class={p.carbonKg <= (status?.thresholds?.carbon_kg ?? 50) ? 'ok' : 'fail'}>{p.carbonKg}kg</td>
-                  <td class={p.recycledPct >= (status?.thresholds?.recycled_pct ?? 30) ? 'ok' : 'fail'}>{p.recycledPct}%</td>
-                  <td>{p.minted ? '✓ ' + (p.mintTxHash?.substring(0, 10) || '') + '...' : '—'}</td>
-                  <td>
-                    {#if p.minted}
-                      <span class="ok">Done</span>
+                  <td>{p.unitCount > 0 ? p.unitCount : '—'}</td>
+                  <td>{p.passport ? p.passport.substring(0, 12) + '...' : (p.revoked ? 'revoked' : '—')}</td>
+                  <td class="actions">
+                    {#if currentPage === 'products'}
+                      <button class="btn-action" onclick={() => verifyItem(p.serialNumber)} disabled={loading}>Verify</button>
+                      <button class="btn-plain" onclick={() => showPrivate(p.serialNumber)} disabled={loading}>Private</button>
+                      {#if p.passport}<button class="btn-plain" onclick={() => { currentPage = 'reader'; checkPassport(p.serialNumber); }} disabled={loading}>Check</button>{/if}
+                    {:else if p.minted}
+                      <button class="btn-plain" onclick={() => revokePassport(p.serialNumber)} disabled={loading}>Revoke (auditor)</button>
                     {:else}
-                      <button class="btn-mint" onclick={() => mintNft(p.serialNumber, p.productType)} disabled={loading}>Verify + Mint</button>
+                      <button class="btn-mint" onclick={() => mintPassport(p.serialNumber)} disabled={loading}>Verify + Mint</button>
                     {/if}
                   </td>
                 </tr>
@@ -285,6 +200,15 @@
           <button onclick={() => loadPage(page + 1)} disabled={page >= pageData.totalPages - 1}>Next</button>
         </div>
       {/if}
+      {#if message}<div class="message">{message}</div>{/if}
+      {#if verifyResult && !verifyResult.error}
+        <div class="result" class:compliant={verifyResult.allCompliant} class:noncompliant={!verifyResult.allCompliant}>
+          <h3>{verifyResult.id}: {verifyResult.allCompliant ? 'every claim proved' : 'not every claim can be proved'}</h3>
+          {#each verifyResult.claims || [] as c}
+            <p class={c.compliant ? 'ok' : 'fail'}>{c.compliant ? '✓' : '✗'} {c.claim}: {c.statement}{c.gatedOnChain ? ' (verified on-chain at mint)' : ' (verified off-chain)'} ({c.provingTimeMs} ms)</p>
+          {/each}
+        </div>
+      {/if}
       {#if mintResult?.onChainValidation}
         <div class="onchain-error">
           <h3>{mintResult.onChainValidation.title}</h3>
@@ -292,26 +216,61 @@
           <pre>{mintResult.onChainValidation.detail}</pre>
         </div>
       {/if}
+      {#if privateView && currentPage === 'products'}
+        <div class="private">
+          <h3>Manufacturer (private): {privateView.id}</h3>
+          <p class="hint">The manufacturer's own values. They are not in any public response, in the passport datum or in the registry.</p>
+          {#if privateView.values}
+            <table>
+              <tbody>
+                <tr><td>carbon_kg</td><td>{privateView.values.carbon_kg}</td></tr>
+                <tr><td>recycled_pct</td><td>{privateView.values.recycled_pct}</td></tr>
+                <tr><td>country</td><td>{privateView.values.country}</td></tr>
+                <tr><td>inspections (inspector:time)</td><td>{privateView.values.inspections ?? '—'}</td></tr>
+              </tbody>
+            </table>
+          {/if}
+          <button class="btn-plain" onclick={() => privateView = null}>Close</button>
+        </div>
+      {/if}
+    </section>
+
+  {:else if currentPage === 'reader'}
+    <section>
+      <h2>Reader: check a passport from the chain</h2>
+      <div class="note">
+        <p>The reader finds the passport token at the passport address, refuses a product whose mint history shows more than one passport, and verifies each off-chain claim proof against the commitment in the passport datum. It takes each claim's schema digest σ from its own registry and compares it with the datum's; it never takes σ from the datum.</p>
+      </div>
+      <div class="add-bar">
+        <input class="wide" bind:value={readerId} placeholder="product id" />
+        <button onclick={() => checkPassport(readerId)} disabled={loading}>Check</button>
+      </div>
       {#if message}<div class="message">{message}</div>{/if}
+      {#if readerResult}
+        <div class="result" class:compliant={readerResult.accepted} class:noncompliant={!readerResult.accepted}>
+          <h3>{readerResult.id}: {readerResult.accepted ? 'accepted' : 'not accepted'} {readerResult.status ? '(' + readerResult.status + ')' : ''}</h3>
+          {#if readerResult.passport}<p>Passport: <code>{readerResult.passport}</code></p>{/if}
+          {#if readerResult.reason}<p>{readerResult.reason}</p>{/if}
+          {#each readerResult.claims || [] as c}
+            <p class={c.verdict?.startsWith('VERIFIED') ? 'ok' : 'fail'}>{c.claim}: {c.statement}: {c.verdict}</p>
+          {/each}
+        </div>
+      {/if}
     </section>
 
   {:else if currentPage === 'registry'}
     <section>
-      <h2>Registry (MPF State)</h2>
+      <h2>Passport registry (Poseidon MPF)</h2>
+      <p class="hint">The registry stores <code>productId → passport outref</code> and nothing else. The measurements stay in the manufacturer's database.</p>
       {#if registry}
         <div class="registry-cards">
           <div class="card">
-            <h3>Product Registry</h3>
-            <p>Root: <code>{registry.productMpfRoot?.substring(0, 20)}...</code></p>
-            <p>Products: {registry.productCount} | Batches: {registry.batchCount}</p>
-          </div>
-          <div class="card">
-            <h3>Minted Registry</h3>
-            <p>Root: <code>{registry.mintedMpfRoot?.substring(0, 20)}...</code></p>
-            <p>Minted NFTs: {registry.mintedCount}</p>
+            <h3>Registry</h3>
+            <p>Root: <code>{registry.registryRoot?.substring(0, 20)}...</code></p>
+            <p>Passports: {registry.passportCount} | Products: {registry.productCount}</p>
           </div>
         </div>
-        <button onclick={anchorRoot} disabled={loading}>Anchor Minted Root On-Chain</button>
+        <button onclick={anchorRoot} disabled={loading}>Anchor registry root on-chain</button>
       {:else}
         <p>Loading...</p>
       {/if}
@@ -324,12 +283,14 @@
   :global(body) { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1050px; margin: 0 auto; padding: 20px; background: #0d1117; color: #c9d1d9; }
   h1 { color: #58a6ff; margin-bottom: 4px; }
   .subtitle { color: #8b949e; margin-top: 0; }
+  .custody { color: #d29922; font-size: 0.85em; margin: 4px 0 0; }
   nav { display: flex; gap: 8px; margin: 20px 0; flex-wrap: wrap; }
   nav button { padding: 8px 18px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9; border-radius: 6px; cursor: pointer; }
   nav button.active { background: #1f6feb; border-color: #1f6feb; color: white; }
   .add-bar { display: flex; gap: 8px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
   .add-bar input, .add-bar select { padding: 6px 10px; border: 1px solid #30363d; background: #161b22; color: #c9d1d9; border-radius: 6px; }
   .add-bar input { width: 70px; }
+  .add-bar input.wide { width: 220px; }
   .add-bar button { padding: 6px 16px; border: none; border-radius: 6px; background: #238636; color: white; cursor: pointer; }
   .table-scroll { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; margin: 8px 0; }
@@ -338,13 +299,13 @@
   code { font-size: 0.83em; color: #79c0ff; }
   .ok { color: #3fb950; font-weight: bold; }
   .fail { color: #f85149; font-weight: bold; }
-  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin: 12px 0; }
   .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px; }
   .card h3 { margin: 0 0 6px; color: #58a6ff; font-size: 0.95em; }
   .card p { margin: 2px 0; font-size: 0.88em; }
-  .minted-card { border-color: #238636; }
-  .btn-mint { margin-top: 6px; padding: 6px 16px; border: none; border-radius: 6px; background: #1f6feb; color: white; cursor: pointer; font-weight: bold; font-size: 0.85em; }
-  .btn-mint:disabled { opacity: 0.5; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn-mint { padding: 4px 12px; border: none; border-radius: 6px; background: #1f6feb; color: white; cursor: pointer; font-weight: bold; font-size: 0.83em; }
+  .btn-plain { padding: 4px 12px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 0.83em; }
+  .btn-action { padding: 4px 12px; border: none; border-radius: 5px; background: #238636; color: white; cursor: pointer; font-size: 0.83em; font-weight: bold; }
   .onchain-error { background: #2d1214; border: 1px solid #da3633; border-radius: 8px; padding: 16px; margin: 16px 0; }
   .onchain-error h3 { color: #f85149; margin: 0 0 8px; }
   .onchain-error p { margin: 0 0 12px; }
@@ -353,7 +314,9 @@
   .result { border-radius: 8px; padding: 14px; margin: 12px 0; }
   .compliant { background: #0d2818; border: 1px solid #238636; }
   .noncompliant { background: #2d1214; border: 1px solid #da3633; }
-  .registry-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+  .private { background: #1c1208; border: 1px solid #d29922; border-radius: 8px; padding: 14px; margin: 12px 0; }
+  .private h3 { color: #d29922; margin: 0 0 6px; }
+  .registry-cards { display: grid; grid-template-columns: 1fr; gap: 12px; margin: 12px 0; }
   .hint { font-size: 0.83em; color: #8b949e; }
   .filter-bar { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
   .filter-bar select { padding: 4px 8px; border: 1px solid #30363d; background: #161b22; color: #c9d1d9; border-radius: 6px; }
@@ -361,8 +324,6 @@
   .pagination button { padding: 6px 14px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9; border-radius: 6px; cursor: pointer; }
   .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
   .pagination span { color: #8b949e; font-size: 0.9em; }
-  .btn-action { padding: 4px 12px; border: none; border-radius: 5px; background: #238636; color: white; cursor: pointer; font-size: 0.83em; font-weight: bold; }
-  .btn-action:disabled { opacity: 0.4; }
   .minted-row { background: #0d2818; }
   .note { background: #161b22; border: 1px solid #30363d; border-left: 3px solid #1f6feb; border-radius: 6px; padding: 12px 16px; margin: 12px 0; font-size: 0.88em; }
   .note ol { margin: 6px 0; padding-left: 20px; }

@@ -28,7 +28,9 @@ import java.util.Map;
 public class ReserveCircuitService {
 
     private static final Logger log = LoggerFactory.getLogger(ReserveCircuitService.class);
-    private static final String CACHE_DIR = "./data";
+
+    @Value("${demo.data-dir:./data}")
+    private String dataDir = "./data";
 
     @Value("${zk.tree-depth}")
     private int treeDepth;
@@ -53,7 +55,7 @@ public class ReserveCircuitService {
         constraints = r1cs.constraints();
 
         // Setup with cache
-        Path setupCache = Path.of(CACHE_DIR, "setup-solvency.bin");
+        Path setupCache = Path.of(dataDir, "setup-solvency.bin");
         try {
             if (Files.exists(setupCache)) {
                 long start = System.currentTimeMillis();
@@ -97,7 +99,10 @@ public class ReserveCircuitService {
     }
 
     /**
-     * Prove solvency: reserves >= liabilities, all balances >= 0, tree is correct.
+     * Prove the solvency statement {@code [totalReserves, liabilitiesRoot, totalLiabilities, isSolvent]}:
+     * the balances are 64-bit, their tree has the root, they sum to the liabilities, and
+     * {@code isSolvent = (reserves >= liabilities)}. {@code accountIds} are the salted ids
+     * ({@link ReserveLeaves#saltedId}); the circuit is unchanged by the salting.
      */
     public ProofResult prove(BigInteger totalReserves, BigInteger liabilitiesRoot,
                               BigInteger totalLiabilities, BigInteger[] accountIds,

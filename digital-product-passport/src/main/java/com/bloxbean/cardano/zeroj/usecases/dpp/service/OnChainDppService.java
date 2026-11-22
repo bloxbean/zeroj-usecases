@@ -1,206 +1,227 @@
 package com.bloxbean.cardano.zeroj.usecases.dpp.service;
 
 import com.bloxbean.cardano.client.account.Account;
-import com.bloxbean.cardano.client.address.AddressProvider;
 import com.bloxbean.cardano.client.api.model.Amount;
+import com.bloxbean.cardano.client.api.model.Result;
+import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.cardano.client.backend.api.BackendService;
 import com.bloxbean.cardano.client.common.model.Networks;
+import com.bloxbean.cardano.client.function.TxSigner;
 import com.bloxbean.cardano.client.function.helper.SignerProviders;
-import com.bloxbean.cardano.client.plutus.spec.*;
+import com.bloxbean.cardano.client.metadata.cbor.CBORMetadata;
+import com.bloxbean.cardano.client.plutus.spec.PlutusData;
 import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
-import com.bloxbean.cardano.client.quicktx.ScriptTx;
 import com.bloxbean.cardano.client.quicktx.Tx;
-import com.bloxbean.cardano.client.transaction.spec.Asset;
 import com.bloxbean.cardano.client.util.HexUtil;
-import org.zeroj.crypto.groth16.Groth16ProofBLS381;
-import com.bloxbean.cardano.zeroj.usecases.dpp.onchain.DppMintingPolicy;
-import org.julclang.clientlib.JulcScriptLoader;
+import com.bloxbean.cardano.zeroj.usecases.dpp.config.CardanoConfig;
+import com.bloxbean.cardano.zeroj.usecases.dpp.passport.Claim;
+import com.bloxbean.cardano.zeroj.usecases.dpp.passport.PassportDatum;
+import com.bloxbean.cardano.zeroj.usecases.dpp.passport.PassportReader;
+import com.bloxbean.cardano.zeroj.usecases.dpp.passport.PassportScript;
+import com.bloxbean.cardano.zeroj.usecases.dpp.passport.PassportTransactions;
+import com.bloxbean.cardano.zeroj.usecases.dpp.passport.RoleKeys;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.zeroj.crypto.groth16.Groth16ProofBLS381;
 
 import java.math.BigInteger;
-import java.util.Arrays;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
- * On-chain DPP service — mints product DPP NFTs using Groth16-gated minting policy.
- * Only compliant products can be minted. Manufacturer signature required.
+ * The passport policy on chain (ADR-0009 D1): one {@code DppPassport} instance for this
+ * manufacturer and auditor, gating the carbon claim at the configured threshold. Issues and
+ * revokes passports, and reads them back from the chain as a reader would.
  */
 @Service
 public class OnChainDppService {
 
     private static final Logger log = LoggerFactory.getLogger(OnChainDppService.class);
+    private static final BigInteger MIN_BALANCE = BigInteger.valueOf(20_000_000);
 
     private final BackendService backendService;
-    private final Account adminAccount;
+    private final Account fundingAccount;
+    private final RoleKeys roleKeys;
     private final DppCircuitService circuitService;
+    private final ComplianceService complianceService;
+    private final CardanoConfig cardanoConfig;
 
-    private PlutusScript mintingScript;
-    private String policyHex;
-    private byte[] manufacturerPkh;
-    private boolean initialized;
+    @Value("${cardano.network}")
+    private String network;
 
-    public OnChainDppService(BackendService backendService, Account adminAccount,
-                              DppCircuitService circuitService) {
+    @Value("${cardano.yaci.admin-url}")
+    private String adminUrl;
+
+    @Value("${dpp.topup-enabled:true}")
+    private boolean topupEnabled;
+
+    private PassportScript script;
+
+    public OnChainDppService(BackendService backendService, Account adminAccount, RoleKeys roleKeys,
+                             DppCircuitService circuitService, ComplianceService complianceService,
+                             CardanoConfig cardanoConfig) {
         this.backendService = backendService;
-        this.adminAccount = adminAccount;
+        this.fundingAccount = adminAccount;
+        this.roleKeys = roleKeys;
         this.circuitService = circuitService;
+        this.complianceService = complianceService;
+        this.cardanoConfig = cardanoConfig;
     }
 
-    public synchronized void initialize() throws Exception {
-        if (initialized) return;
-
-        log.info("Compiling DPP minting policy (with on-chain Groth16 verification)...");
-
-        var vk = ProofCompressor.compressVk(circuitService.getThresholdLte().setup());
-        manufacturerPkh = adminAccount.hdKeyPair().getPublicKey().getKeyHash();
-
-        mintingScript = JulcScriptLoader.load(DppMintingPolicy.class,
-                new BytesPlutusData(manufacturerPkh),
-                new BytesPlutusData(vk.alpha()),
-                new BytesPlutusData(vk.beta()),
-                new BytesPlutusData(vk.gamma()),
-                new BytesPlutusData(vk.delta()),
-                vkIcData(vk.ic()));
-
-        policyHex = HexUtil.encodeHexString(mintingScript.getScriptHash());
-        initialized = true;
-        log.info("DPP minting policy: {}", policyHex);
-        log.info("Manufacturer PKH: {}", HexUtil.encodeHexString(manufacturerPkh));
+    @PostConstruct
+    public void init() {
+        var vk = circuitService.circuits().circuit(Claim.CARBON).compressedVk();
+        script = new PassportScript(RoleKeys.pkh(roleKeys.manufacturer()), RoleKeys.pkh(roleKeys.auditor()),
+                Claim.CARBON, complianceService.carbonThreshold(), vk, Networks.testnet());
+        // Fail closed if this deployment's policy differs from the one already recorded.
+        roleKeys.bindPolicy(script.policyId());
+        log.info("Passport policy (and address) {}: {}", script.policyId(), script.address());
     }
+
+    public PassportScript script() { return script; }
+
+    /** A minted passport: its transaction and output index. */
+    public record Issued(String txHash, int outputIndex) {}
 
     /**
-     * Mint a DPP NFT for a product. The minting policy verifies:
-     * 1. Manufacturer signature
-     * 2. ZK compliance proof (Groth16)
-     * 3. isCompliant == 1
-     * 4. Exactly 1 token minted
-     *
-     * @param serialNumber product serial (becomes token name)
-     * @param proof        Groth16 compliance proof
-     * @param productId    public input: product identifier
-     * @param threshold    public input: compliance threshold
-     * @param auditorHash  public input: auditor commitment
-     * @param compliant    public input: isCompliant (1 or 0)
-     * @return transaction hash
+     * Submits the passport transaction: the manufacturer builds and signs, {@code auditorSigner}
+     * co-signs. Throws with the script evaluator's message if the policy refuses it.
      */
-    public String mintDppNft(String serialNumber, Groth16ProofBLS381 proof,
-                              BigInteger productId, BigInteger threshold,
-                              BigInteger auditorHash, boolean compliant) throws Exception {
-        ensureInitialized();
-
-        String tokenNameHex = HexUtil.encodeHexString(serialNumber.getBytes());
-        log.info("Minting DPP NFT: {} (compliant={}) — on-chain Groth16 verification", serialNumber, compliant);
-
-        var compressed = ProofCompressor.compressProof(proof);
-
-        // Redeemer = Groth16Proof(piA, piB, piC) — only proof, 3 fields
-        var redeemer = ConstrPlutusData.builder().alternative(0)
-                .data(ListPlutusData.of(
-                        new BytesPlutusData(compressed.piA()),
-                        new BytesPlutusData(compressed.piB()),
-                        new BytesPlutusData(compressed.piC())))
-                .build();
-
-        // Datum = public inputs [productId, threshold, auditorHash, isCompliant]
-        // The minting policy reads these from the first output's inline datum
-        var datum = ListPlutusData.of(
-                BigIntPlutusData.of(productId),
-                BigIntPlutusData.of(threshold),
-                BigIntPlutusData.of(auditorHash),
-                BigIntPlutusData.of(compliant ? BigInteger.ONE : BigInteger.ZERO));
-
-        var asset = new Asset("0x" + tokenNameHex, BigInteger.ONE);
-
-        // Mint token. First output carries the token + public inputs as inline datum.
-        // Use payToContract to ensure datum is attached (regular payToAddress doesn't support datums).
-        // The token holder can later move it to any address.
-        String tokenHolderAddr = com.bloxbean.cardano.client.address.AddressProvider
-                .getEntAddress(mintingScript, com.bloxbean.cardano.client.common.model.Networks.testnet()).toBech32();
-
-        var mintTx = new ScriptTx()
-                .mintAsset(mintingScript, List.of(asset), redeemer)
-                .payToContract(tokenHolderAddr,
-                        List.of(Amount.ada(2),
-                                new Amount(policyHex + tokenNameHex, BigInteger.ONE)),
-                        datum);
-
-        var result = new QuickTxBuilder(backendService)
-                .compose(mintTx)
-                .withTxEvaluator(LocalJulcEvaluator.create(backendService))
-                .withSigner(SignerProviders.signerFrom(adminAccount))
-                .withRequiredSigners(manufacturerPkh)
-                .feePayer(adminAccount.baseAddress())
-                .collateralPayer(adminAccount.baseAddress())
-                .complete();
-
-        if (!result.isSuccessful()) {
-            throw new RuntimeException("Mint failed: " + result.getResponse());
-        }
-
+    public Issued issue(PassportDatum datum, Groth16ProofBLS381 proof, TxSigner auditorSigner) throws Exception {
+        ensureFunded(roleKeys.manufacturer());
+        Result<String> result = PassportTransactions.issue(backendService, script, roleKeys.manufacturer(),
+                auditorSigner, datum, proof);
+        if (!result.isSuccessful()) throw new IllegalStateException("Mint failed: " + result.getResponse());
         String txHash = result.getValue();
-        log.info("DPP NFT minted: {} → tx={}", serialNumber, txHash);
         waitForTx(txHash);
-        return txHash;
+        Utxo passport = findPassport(datum.productId())
+                .orElseThrow(() -> new IllegalStateException("passport output not found after " + txHash));
+        log.info("Passport minted for {}: {}#{}", new String(datum.productId()), txHash, passport.getOutputIndex());
+        return new Issued(txHash, passport.getOutputIndex());
+    }
+
+    /** The auditor revokes a passport: spends it and burns its token. */
+    public String revoke(byte[] productId) throws Exception {
+        ensureFunded(roleKeys.auditor());
+        Utxo passport = findPassport(productId).orElseThrow(() -> new IllegalStateException("no passport on chain"));
+        Result<String> result = PassportTransactions.revoke(backendService, script, roleKeys.auditor(), passport, productId);
+        if (!result.isSuccessful()) throw new IllegalStateException("Revoke failed: " + result.getResponse());
+        waitForTx(result.getValue());
+        return result.getValue();
     }
 
     /**
-     * Anchor the minted-registry MPF root on-chain as a simple transaction.
-     * The root hash is stored in the transaction metadata (label 7270).
+     * The passport UTxO for {@code productId}: the token found at the passport address, never
+     * elsewhere. Throws if more than one is there, or if any page cannot be read.
      */
-    public String anchorRoot(byte[] mpfRoot, int mintedCount) throws Exception {
-        ensureInitialized();
-        log.info("Anchoring MPF root on-chain (minted={})...", mintedCount);
+    public Optional<Utxo> findPassport(byte[] productId) throws Exception {
+        String unit = script.unit(productId);
+        List<Utxo> found = new ArrayList<>();
+        for (int page = 1; ; page++) {
+            var result = backendService.getUtxoService().getUtxos(script.address(), 100, page);
+            if (!result.isSuccessful()) {
+                // An address without UTxOs is a 404 on Blockfrost-compatible APIs; anything else is an error.
+                if (result.code() == 404) break;
+                throw new IllegalStateException("cannot read the passport address: " + result.getResponse());
+            }
+            if (result.getValue() == null || result.getValue().isEmpty()) break;
+            for (Utxo u : result.getValue()) {
+                if (u.getAmount().stream().anyMatch(a -> a.getUnit().equals(unit))) found.add(u);
+            }
+            if (result.getValue().size() < 100) break;
+        }
+        if (found.size() > 1) throw new IllegalStateException("more than one passport for this product at the passport address");
+        return found.stream().findFirst();
+    }
 
-        // Simple tx with self-payment — metadata carries the root
+    /** The passport datum of an on-chain passport. */
+    public static PassportDatum datumOf(Utxo passport) throws Exception {
+        if (passport.getInlineDatum() == null) throw new IllegalStateException("passport without an inline datum");
+        return PassportDatum.fromPlutusData(PlutusData.deserialize(HexUtil.decodeHexString(passport.getInlineDatum())));
+    }
+
+    /** The policy's complete mint history for {@code productId}, from the chain indexer; throws if unavailable. */
+    public List<PassportReader.MintEvent> mintHistory(byte[] productId) {
+        return PassportReader.fetchHistory(cardanoConfig.indexerBaseUrl(), script.unit(productId));
+    }
+
+    /** Anchors the registry root on chain in the metadata of a funding-wallet transaction (label 7270). */
+    public String anchorRoot(byte[] root, long count) throws Exception {
+        CBORMetadata metadata = new CBORMetadata();
+        metadata.put(BigInteger.valueOf(7270), HexUtil.encodeHexString(root));
         var tx = new Tx()
-                .payToAddress(adminAccount.baseAddress(), Amount.ada(1))
-                .from(adminAccount.baseAddress());
+                .payToAddress(fundingAccount.baseAddress(), Amount.ada(1))
+                .attachMetadata(metadata)
+                .from(fundingAccount.baseAddress());
+        var result = new QuickTxBuilder(backendService).compose(tx)
+                .withSigner(SignerProviders.signerFrom(fundingAccount)).complete();
+        if (!result.isSuccessful()) throw new IllegalStateException("Anchor failed: " + result.getResponse());
+        waitForTx(result.getValue());
+        log.info("Registry root anchored: tx={} ({} passports)", result.getValue(), count);
+        return result.getValue();
+    }
 
-        var result = new QuickTxBuilder(backendService)
-                .compose(tx)
-                .withSigner(SignerProviders.signerFrom(adminAccount))
-                .complete();
+    // ------------------------------------------------------------------ funding
 
-        if (!result.isSuccessful()) {
-            throw new RuntimeException("Anchor failed: " + result.getResponse());
+    /**
+     * Funds a random role wallet when it runs low: through DevKit's top-up endpoint on DevKit,
+     * otherwise from the funding wallet.
+     */
+    private void ensureFunded(Account account) throws Exception {
+        if (lovelace(account.baseAddress()).compareTo(MIN_BALANCE) >= 0) return;
+        if (topupEnabled && "yaci".equals(network)) {
+            log.info("Topping up {} through DevKit", account.baseAddress());
+            var request = HttpRequest.newBuilder()
+                    .uri(URI.create(adminUrl + "/local-cluster/api/addresses/topup"))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(
+                            "{\"address\":\"" + account.baseAddress() + "\",\"adaAmount\":1000}"))
+                    .build();
+            HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+        } else {
+            log.info("Funding {} from the funding wallet", account.baseAddress());
+            var tx = new Tx().payToAddress(account.baseAddress(), Amount.ada(100)).from(fundingAccount.baseAddress());
+            var result = new QuickTxBuilder(backendService).compose(tx)
+                    .withSigner(SignerProviders.signerFrom(fundingAccount)).complete();
+            if (!result.isSuccessful()) throw new IllegalStateException("Funding failed: " + result.getResponse());
+            waitForTx(result.getValue());
         }
-
-        String txHash = result.getValue();
-        log.info("Root anchored: tx={} (root={}, minted={})", txHash,
-                HexUtil.encodeHexString(mpfRoot).substring(0, 16), mintedCount);
-        waitForTx(txHash);
-        return txHash;
+        for (int i = 0; i < 30 && lovelace(account.baseAddress()).compareTo(MIN_BALANCE) < 0; i++) Thread.sleep(2000);
     }
 
-    public String getPolicyId() { return policyHex; }
-    public byte[] getManufacturerPkh() { return manufacturerPkh; }
-
-    private void ensureInitialized() throws Exception {
-        if (!initialized) initialize();
-    }
-
-    private static byte[] toMinimalBytes(BigInteger v) {
-        byte[] b = v.toByteArray();
-        return (b.length > 1 && b[0] == 0) ? Arrays.copyOfRange(b, 1, b.length) : b;
-    }
-
-    private static ListPlutusData vkIcData(List<byte[]> ic) {
-        PlutusData[] values = new PlutusData[ic.size()];
-        for (int i = 0; i < ic.size(); i++) {
-            values[i] = new BytesPlutusData(ic.get(i));
+    private BigInteger lovelace(String address) throws Exception {
+        BigInteger total = BigInteger.ZERO;
+        for (int page = 1; ; page++) {
+            var result = backendService.getUtxoService().getUtxos(address, 100, page);
+            if (!result.isSuccessful() || result.getValue() == null || result.getValue().isEmpty()) break;
+            for (Utxo u : result.getValue()) {
+                for (Amount a : u.getAmount()) {
+                    if ("lovelace".equals(a.getUnit())) total = total.add(a.getQuantity());
+                }
+            }
+            if (result.getValue().size() < 100) break;
         }
-        return ListPlutusData.of(values);
+        return total;
     }
 
     private void waitForTx(String txHash) throws Exception {
-        for (int i = 0; i < 30; i++) {
+        for (int i = 0; i < 40; i++) {
             Thread.sleep(2000);
             try {
                 var r = backendService.getTransactionService().getTransaction(txHash);
                 if (r.isSuccessful() && r.getValue() != null) { log.info("Confirmed: {}", txHash); return; }
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+                // not indexed yet
+            }
         }
+        throw new IllegalStateException("transaction not confirmed: " + txHash);
     }
 }

@@ -3,24 +3,36 @@
 
   let currentPage = $state('home');
   let status = $state<any>(null);
+  let mintStatus = $state<any>(null);
   let loading = $state(false);
   let result = $state<any>(null);
+  let proofResult = $state<any>(null);
 
-  // Form inputs
-  let secretKey = $state('42');
-  let tokenName = $state('100');
-  let contextId = $state('nft-demo-v1');
+  // Form inputs. No default secret: the server draws a 252-bit secret at registration.
+  let secretKey = $state('');
+  let tokenName = $state('');
 
   async function loadStatus() {
     status = await api.status();
+    mintStatus = await api.mintStatus();
+    if (!tokenName && mintStatus?.mintedTokens?.length) tokenName = mintStatus.mintedTokens[0];
   }
 
   // Load status on mount
   $effect(() => { loadStatus(); });
 
+  async function mintNfts() {
+    loading = true;
+    result = await api.mint('ZeroJTicket', 3);
+    await loadStatus();
+    loading = false;
+  }
+
   async function registerHolder() {
     loading = true;
-    result = await api.registerHolder(secretKey, tokenName);
+    result = await api.registerHolder(tokenName);
+    if (result?.secretKey) secretKey = result.secretKey;
+    await loadStatus();
     loading = false;
   }
 
@@ -33,14 +45,15 @@
 
   async function generateProof() {
     loading = true;
-    result = await api.generateProof(secretKey, tokenName, contextId);
+    proofResult = await api.generateProof(secretKey, tokenName);
+    result = proofResult;
     loading = false;
   }
 
   async function requestAccess() {
-    if (!result?.nullifier) { alert('Generate a proof first!'); return; }
+    if (!proofResult?.nullifier) { alert('Generate a proof first!'); return; }
     loading = true;
-    result = await api.requestAccess(result.nullifier);
+    result = await api.requestAccess(proofResult.nullifier);
     await loadStatus();
     loading = false;
   }
@@ -48,8 +61,8 @@
 
 <main>
   <header>
-    <h1>🔐 ZeroJ — Private NFT Ownership</h1>
-    <p>Prove you own an NFT without revealing your wallet address</p>
+    <h1>ZeroJ — Private NFT Ownership</h1>
+    <p>Prove you hold an NFT of the collection without revealing which NFT or which wallet</p>
     <nav>
       <button class:active={currentPage === 'home'} onclick={() => currentPage = 'home'}>Home</button>
       <button class:active={currentPage === 'register'} onclick={() => currentPage = 'register'}>Register</button>
@@ -58,25 +71,35 @@
     </nav>
   </header>
 
+  <p class="operator-note">
+    Demo operator view: this server holds the custody wallet with the NFTs, draws the holder
+    secrets and proves for the holder. Privacy holds against chain and mempool observers, not
+    against this server.
+  </p>
+
   {#if currentPage === 'home'}
     <section>
       <h2>System Status</h2>
       {#if status}
         <div class="status-grid">
           <div class="card">
-            <h3>Circuit</h3>
-            <p>Tree Depth: {status.circuit?.treeDepth}</p>
-            <p>Status: {status.circuit?.status}</p>
+            <h3>Event</h3>
+            <p>Context: <code>{status.event?.contextId}</code></p>
+            <p>Circuit version: {status.event?.circuitVersion} (depth {status.circuit?.treeDepth})</p>
+            {#if status.event?.zkPolicyId}
+              <p class="mono">ZK policy: {status.event.zkPolicyId.substring(0, 16)}...</p>
+            {/if}
           </div>
           <div class="card">
             <h3>Snapshot</h3>
             <p>Holders: {status.snapshot?.holderCount}</p>
-            <p>Epoch: {status.snapshot?.epoch}</p>
+            <p>Registration: {status.snapshot?.registrationOpen ? 'open' : 'closed (snapshot built)'}</p>
             <p class="mono">Root: {status.snapshot?.root?.substring(0, 16)}...</p>
           </div>
           <div class="card">
             <h3>Access</h3>
             <p>Used Nullifiers: {status.nullifiers?.usedCount}</p>
+            <p>Mode: {status.nullifiers?.mode}</p>
           </div>
         </div>
       {:else}
@@ -87,25 +110,44 @@
   {:else if currentPage === 'register'}
     <section>
       <h2>Step 1: Register NFT Holders</h2>
-      <p>Register NFT holders into the ownership Merkle tree, then build a snapshot.</p>
+      <p>
+        Mint the collection into the custody wallet, then register each NFT. The custody wallet
+        signs every registration (CIP-8) and the snapshot checks it against the token's on-chain
+        holder. One leaf per NFT. Building the snapshot closes registration for this event.
+      </p>
 
       <div class="form">
-        <label>Secret Key (identifies wallet — never revealed)
-          <input type="text" bind:value={secretKey} placeholder="42" />
-        </label>
-        <label>Token Name (NFT asset name as number)
-          <input type="text" bind:value={tokenName} placeholder="100" />
-        </label>
         <div class="buttons">
-          <button onclick={registerHolder} disabled={loading}>
-            {loading ? 'Registering...' : 'Register Holder'}
+          <button onclick={mintNfts} disabled={loading} class="secondary">
+            {loading ? 'Working...' : 'Mint 3 NFTs into custody'}
           </button>
-          <button onclick={buildSnapshot} disabled={loading} class="secondary">
-            {loading ? 'Building...' : 'Build Snapshot'}
+        </div>
+        {#if mintStatus?.mintedTokens?.length}
+          <label>NFT to register
+            <select bind:value={tokenName}>
+              {#each mintStatus.mintedTokens as t}
+                <option value={t}>{t}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
+        <div class="buttons">
+          <button onclick={registerHolder} disabled={loading || !tokenName || status?.snapshot?.registrationOpen === false}>
+            {loading ? 'Registering...' : 'Register holder (new 252-bit secret)'}
+          </button>
+          <button onclick={buildSnapshot} disabled={loading || status?.snapshot?.registrationOpen === false} class="secondary">
+            {loading ? 'Building...' : 'Build snapshot and deploy event'}
           </button>
         </div>
       </div>
 
+      {#if result?.secretKey}
+        <div class="result">
+          <h3>Holder secret for {result.tokenName}</h3>
+          <p class="note">Keep it: it is needed to prove, and the server does not store it.</p>
+          <pre>{result.secretKey}</pre>
+        </div>
+      {/if}
       {#if result}
         <div class="result">
           <h3>Result</h3>
@@ -117,33 +159,45 @@
   {:else if currentPage === 'prove'}
     <section>
       <h2>Step 2: Generate ZK Proof</h2>
-      <p>Prove you own an NFT without revealing your wallet address or which NFT.</p>
+      <p>
+        The proof shows that some snapshot leaf is yours. Its nullifier is
+        Poseidon(Poseidon(secret, token), context): it does not reveal which NFT was used.
+      </p>
 
       <div class="form">
-        <label>Secret Key (same as registration)
-          <input type="text" bind:value={secretKey} />
+        <label>Holder secret (from registration, 252-bit)
+          <input type="text" bind:value={secretKey} placeholder="0x..." />
         </label>
-        <label>Token Name (same as registration)
-          <input type="text" bind:value={tokenName} />
+        <label>NFT (same as registration)
+          {#if mintStatus?.mintedTokens?.length}
+            <select bind:value={tokenName}>
+              {#each mintStatus.mintedTokens as t}
+                <option value={t}>{t}</option>
+              {/each}
+            </select>
+          {:else}
+            <input type="text" bind:value={tokenName} />
+          {/if}
         </label>
-        <label>Context ID (event/airdrop/vote identifier)
-          <input type="text" bind:value={contextId} />
-        </label>
-        <button onclick={generateProof} disabled={loading}>
-          {loading ? 'Generating proof...' : '🔑 Generate ZK Proof'}
+        <p>Event context: <code>{status?.event?.contextId}</code></p>
+        <button onclick={generateProof} disabled={loading || !secretKey}>
+          {loading ? 'Generating proof...' : 'Generate ZK Proof'}
         </button>
       </div>
 
       {#if result?.proof}
         <div class="result success">
-          <h3>✅ Proof Generated!</h3>
+          <h3>Proof Generated</h3>
           <p>Proving time: <strong>{result.provingTimeMs}ms</strong></p>
           <p>Nullifier: <code>{result.nullifier?.substring(0, 16)}...</code></p>
-          <p class="note">This 192-byte proof reveals NOTHING about your wallet or which NFT you own.</p>
+          <p class="note">
+            Observers see the proof, the nullifier and the event; not the wallet or the NFT. A
+            mempool observer could submit this proof first (front-running is not prevented).
+          </p>
         </div>
       {:else if result?.error}
         <div class="result error">
-          <h3>❌ Error</h3>
+          <h3>Error</h3>
           <p>{result.error}</p>
         </div>
       {/if}
@@ -152,13 +206,16 @@
   {:else if currentPage === 'access'}
     <section>
       <h2>Step 3: Access Gated Content</h2>
-      <p>Present your ZK proof to gain anonymous access. The nullifier prevents double-use.</p>
+      <p>
+        The access transaction verifies the proof on-chain and inserts its nullifier into the
+        event's sorted list. A nullifier can be inserted once.
+      </p>
 
-      {#if result?.nullifier}
+      {#if proofResult?.nullifier}
         <div class="form">
-          <p>Nullifier from proof: <code>{result.nullifier?.substring(0, 16)}...</code></p>
+          <p>Nullifier from proof: <code>{proofResult.nullifier?.substring(0, 16)}...</code></p>
           <button onclick={requestAccess} disabled={loading}>
-            {loading ? 'Requesting...' : '🚪 Request Access'}
+            {loading ? 'Requesting...' : 'Request Access'}
           </button>
         </div>
       {:else}
@@ -175,14 +232,19 @@
 
       {#if result?.access === true}
         <div class="result success">
-          <h3>🎉 Access Granted!</h3>
+          <h3>Access Granted</h3>
           <p>{result.message}</p>
           <p>Total accesses: {result.totalAccesses}</p>
         </div>
       {:else if result?.access === false}
         <div class="result error">
-          <h3>🚫 Access Denied</h3>
+          <h3>Access Denied</h3>
           <p>{result.reason}</p>
+        </div>
+      {:else if result?.error && !result?.onChainValidation}
+        <div class="result error">
+          <h3>Error</h3>
+          <p>{result.error}</p>
         </div>
       {/if}
     </section>
@@ -258,7 +320,7 @@
     color: #8b949e;
   }
 
-  input {
+  input, select {
     display: block;
     width: 100%;
     padding: 8px 12px;
@@ -333,4 +395,11 @@
   code { background: #0d1117; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
   .mono { font-family: monospace; font-size: 13px; }
   .note { font-size: 13px; color: #8b949e; font-style: italic; }
+  .operator-note {
+    font-size: 13px;
+    color: #8b949e;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 8px 12px;
+  }
 </style>

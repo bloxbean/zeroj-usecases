@@ -121,6 +121,9 @@ public class ReusableKycDemoService {
                 "validatorAddress", claimService().scriptAddress(),
                 "recipient", recipientAddress,
                 "refundLovelace", OnChainKycClaimService.DEMO_REFUND_LOVELACE,
+                "maxFeeLovelace", OnChainKycClaimService.DEMO_MAX_FEE_LOVELACE,
+                "funderRemainderLovelace", OnChainKycClaimService.VOUCHER_LOVELACE
+                        - OnChainKycClaimService.DEMO_REFUND_LOVELACE - OnChainKycClaimService.DEMO_MAX_FEE_LOVELACE,
                 "disclosed", Map.of("country", country, "kycLevel", kycLevel),
                 "verifiedOnChain", true);
     }

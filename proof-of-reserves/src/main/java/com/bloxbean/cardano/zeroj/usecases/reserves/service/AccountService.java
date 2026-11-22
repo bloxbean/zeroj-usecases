@@ -9,7 +9,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
-import java.math.BigInteger;
 import java.util.*;
 
 @Service
@@ -86,13 +85,5 @@ public class AccountService {
 
     public long getAccountCount() {
         return repository.count();
-    }
-
-    /**
-     * Get account IDs as BigIntegers (for circuit input).
-     * accountId string → Poseidon hash as identifier.
-     */
-    public BigInteger getAccountIdHash(String accountId) {
-        return new BigInteger(1, accountId.getBytes());
     }
 }

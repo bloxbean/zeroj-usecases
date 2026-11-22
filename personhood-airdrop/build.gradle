@@ -30,6 +30,14 @@ repositories {
         url = uri("https://central.sonatype.com/repository/maven-snapshots")
         content { snapshotsOnly() }
     }
+    // ZeroJ commit snapshots published by ZeroJ's bloxbean-snapshot workflow.
+    maven {
+        url = uri("https://repo.bloxbean.org/maven/snapshots")
+        content {
+            snapshotsOnly()
+            includeGroup("org.zeroj")
+        }
+    }
     maven {
         url = uri("https://repo.spring.io/milestone")
     }
@@ -97,6 +105,8 @@ test {
     useJUnitPlatform()
     jvmArgs '--enable-native-access=ALL-UNNAMED'
     systemProperty "zeroj.allowInsecureTrustedSetup", "true"
+    // DevKit end-to-end tests run only with ZEROJ_YACI_E2E=true.
+    systemProperty "zeroj.yaci.e2e", System.getenv("ZEROJ_YACI_E2E") ?: ""
     testLogging {
         events "passed", "failed", "skipped"
         showStandardStreams = true

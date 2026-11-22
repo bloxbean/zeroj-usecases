@@ -1,21 +1,19 @@
 package com.bloxbean.cardano.zeroj.usecases.nft;
 
-import org.zeroj.api.CurveId;
-import org.zeroj.bls12381.ec.G1Point;
-import org.zeroj.bls12381.ec.G2Point;
-import org.zeroj.bls12381.field.Fp;
-import org.zeroj.bls12381.field.Fp2;
-import org.zeroj.bls12381.pairing.BLS12381Pairing;
-import org.zeroj.circuit.FieldConfig;
-import org.zeroj.crypto.groth16.Groth16ProverBLS381;
-import org.zeroj.crypto.setup.Groth16SetupBLS381;
-import org.zeroj.crypto.setup.PowersOfTauBLS381;
 import com.bloxbean.cardano.zeroj.usecases.nft.circuit.NFTOwnershipProofCircuit;
+import com.bloxbean.cardano.zeroj.usecases.nft.service.NftScheme;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.zeroj.api.CurveId;
+import org.zeroj.api.R1CSConstraint;
+import org.zeroj.circuit.CircuitBuilder;
+import org.zeroj.circuit.FieldConfig;
+import org.zeroj.circuit.lib.poseidon.PoseidonHash;
+import org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3;
+import org.zeroj.circuit.r1cs.R1CSConstraintSystem;
 
 import java.math.BigInteger;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,139 +21,140 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for the NFT ownership ZK circuit.
- * Verifies: circuit compilation, witness generation, proof generation, pairing verification.
+ * The NFT ownership circuit, version 2 (ADR-0009 D2): the nullifier is
+ * {@code Poseidon(Poseidon(s, t), contextId)}. Expected values come from ZeroJ's
+ * {@link PoseidonHash}; the negatives show that a nullifier for another secret, token or context,
+ * or the version 1 nullifier, is not accepted for a valid membership.
  */
 class CircuitTest {
 
     private static final BigInteger PRIME = FieldConfig.BLS12_381.prime();
+    /** Wire layout: [1, snapshotRoot, contextId, isOwner, nullifier, ...]. */
+    private static final int NULLIFIER_WIRE = 4;
+
+    private static NftFixture fx;
+    private static CircuitBuilder circuit;
+    private static R1CSConstraintSystem r1cs;
+
+    @BeforeAll
+    static void setup() {
+        fx = NftFixture.get();
+        circuit = NFTOwnershipProofCircuit.build(NftFixture.DEPTH);
+        r1cs = circuit.compileR1CS(CurveId.BLS12_381);
+    }
 
     @Test
     void circuit_compiles() {
-        var circuit = NFTOwnershipProofCircuit.build(3);
-        var r1cs = circuit.compileR1CS(CurveId.BLS12_381);
-
         assertTrue(r1cs.numConstraints() > 0, "Should have constraints");
         assertEquals(4, r1cs.numPublicInputs(), "4 public: snapshotRoot, contextId, isOwner, nullifier");
-        System.out.println("NFT ownership circuit (depth=3): " + r1cs.numConstraints() + " constraints");
+        assertEquals(2, NFTOwnershipProofCircuit.CIRCUIT_VERSION);
+        assertEquals(NftScheme.CIRCUIT_VERSION, NFTOwnershipProofCircuit.CIRCUIT_VERSION);
+        System.out.println("NFT ownership circuit v2 (depth=" + NftFixture.DEPTH + "): "
+                + r1cs.numConstraints() + " constraints");
     }
 
     @Test
-    void circuit_proveAndVerify_depth3() {
-        int depth = 3;
-        var circuit = NFTOwnershipProofCircuit.build(depth);
-        var r1cs = circuit.compileR1CS(CurveId.BLS12_381);
+    @DisplayName("The host nullifier is Poseidon(Poseidon(s, t), contextId), not the version 1 Poseidon(t, contextId)")
+    void hostNullifierFormula() {
+        BigInteger s = NftFixture.SECRETS.get(0);
+        BigInteger t = NftFixture.token(0);
+        BigInteger inner = PoseidonHash.hash(PoseidonParamsBLS12_381T3.INSTANCE, s, t);
+        BigInteger expected = PoseidonHash.hash(PoseidonParamsBLS12_381T3.INSTANCE, inner, NftFixture.CONTEXT);
+        assertEquals(expected, NftScheme.nullifier(s, t, NftFixture.CONTEXT));
+        assertNotEquals(PoseidonHash.hash(PoseidonParamsBLS12_381T3.INSTANCE, t, NftFixture.CONTEXT), expected);
+        // The leaf is unchanged from version 1.
+        BigInteger owner = PoseidonHash.hash(PoseidonParamsBLS12_381T3.INSTANCE, s, BigInteger.ZERO);
+        assertEquals(PoseidonHash.hash(PoseidonParamsBLS12_381T3.INSTANCE, owner, t), NftScheme.leaf(s, t));
+    }
 
-        var constraints = r1cs.constraints();
+    @Test
+    @DisplayName("An honest proof verifies, and its public inputs are [root, context, 1, nullifier]")
+    void honestProofVerifies() {
+        var result = fx.prove(1);
+        BigInteger expected = NftScheme.nullifier(NftFixture.SECRETS.get(1), NftFixture.token(1), NftFixture.CONTEXT);
+        assertEquals(expected, result.nullifier());
+        assertEquals(fx.root(), result.witness()[1]);
+        assertEquals(NftFixture.CONTEXT, result.witness()[2]);
+        assertEquals(BigInteger.ONE, result.witness()[3]);
+        assertEquals(expected, result.witness()[NULLIFIER_WIRE]);
+        assertTrue(satisfied(result.witness()), "the honest witness satisfies the R1CS");
+        assertTrue(fx.prover.verifyOffChain(result.proof(), fx.root(), NftFixture.CONTEXT, expected));
 
-        // Simulate: holder with secretKey=42, tokenName=100
-        BigInteger secretKey = BigInteger.valueOf(42);
-        BigInteger tokenName = BigInteger.valueOf(100);
-        BigInteger contextId = BigInteger.valueOf(999);
+        // The same proof does not verify for another context, nullifier or root.
+        assertFalse(fx.prover.verifyOffChain(result.proof(), fx.root(), NftFixture.CONTEXT.add(BigInteger.ONE), expected));
+        assertFalse(fx.prover.verifyOffChain(result.proof(), fx.root(), NftFixture.CONTEXT, expected.add(BigInteger.ONE)));
+        assertFalse(fx.prover.verifyOffChain(result.proof(), fx.root().add(BigInteger.ONE), NftFixture.CONTEXT, expected));
+    }
 
-        // Compute owner hash and leaf
-        BigInteger ownerHash = poseidon(secretKey, BigInteger.ZERO);
-        BigInteger leaf = poseidon(ownerHash, tokenName);
+    enum NullifierMutation { WRONG_SECRET, WRONG_TOKEN, WRONG_CONTEXT, VERSION_1 }
 
-        // Build a minimal Merkle tree (depth=3 = 8 leaves)
-        // Place our leaf at index 0, fill rest with dummy leaves
-        BigInteger[] leaves = new BigInteger[8];
-        leaves[0] = leaf;
-        for (int i = 1; i < 8; i++) {
-            leaves[i] = poseidon(BigInteger.valueOf(i + 1000), BigInteger.valueOf(i + 2000));
-        }
-
-        // Build tree bottom-up
-        BigInteger[][] tree = new BigInteger[depth + 1][];
-        tree[0] = leaves;
-        for (int level = 1; level <= depth; level++) {
-            int size = tree[level - 1].length / 2;
-            tree[level] = new BigInteger[size];
-            for (int i = 0; i < size; i++) {
-                tree[level][i] = poseidon(tree[level - 1][2 * i], tree[level - 1][2 * i + 1]);
-            }
-        }
-        BigInteger root = tree[depth][0];
-
-        // Extract siblings and path for leaf at index 0
-        BigInteger[] siblings = new BigInteger[depth];
-        BigInteger[] pathBits = new BigInteger[depth];
+    @Test
+    @DisplayName("For a valid membership, a nullifier for a wrong secret, token or context, or the v1 nullifier, is refused")
+    void wrongNullifierRefused() {
         int index = 0;
-        for (int i = 0; i < depth; i++) {
-            int siblingIdx = (index % 2 == 0) ? index + 1 : index - 1;
-            siblings[i] = tree[i][siblingIdx];
-            pathBits[i] = BigInteger.valueOf(index % 2);
-            index /= 2;
+        BigInteger s = NftFixture.SECRETS.get(index);
+        BigInteger t = NftFixture.token(index);
+        assertDoesNotThrow(() -> circuit.calculateWitness(
+                inputs(index, NftScheme.nullifier(s, t, NftFixture.CONTEXT)), CurveId.BLS12_381));
+
+        for (NullifierMutation m : NullifierMutation.values()) {
+            BigInteger wrong = switch (m) {
+                case WRONG_SECRET -> NftScheme.nullifier(NftFixture.SECRETS.get(1), t, NftFixture.CONTEXT);
+                case WRONG_TOKEN -> NftScheme.nullifier(s, NftFixture.token(1), NftFixture.CONTEXT);
+                case WRONG_CONTEXT -> NftScheme.nullifier(s, t, NftScheme.contextId("another-event"));
+                case VERSION_1 -> NftScheme.poseidon(t, NftFixture.CONTEXT);
+            };
+            assertThrows(RuntimeException.class,
+                    () -> circuit.calculateWitness(inputs(index, wrong), CurveId.BLS12_381),
+                    "witness accepted nullifier mutation " + m);
         }
-
-        // Compute expected nullifier
-        BigInteger nullifier = poseidon(tokenName, contextId);
-
-        // Build witness
-        Map<String, List<BigInteger>> inputs = new HashMap<>();
-        inputs.put("secretKey", List.of(secretKey));
-        inputs.put("tokenName", List.of(tokenName));
-        inputs.put("snapshotRoot", List.of(root));
-        inputs.put("contextId", List.of(contextId));
-        inputs.put("isOwner", List.of(BigInteger.ONE));
-        inputs.put("nullifier", List.of(nullifier));
-        for (int i = 0; i < depth; i++) {
-            inputs.put("sibling_" + i, List.of(siblings[i]));
-            inputs.put("pathBit_" + i, List.of(pathBits[i]));
-        }
-
-        BigInteger[] witness = circuit.calculateWitness(inputs, CurveId.BLS12_381);
-        assertNotNull(witness);
-
-        // Setup + prove
-        var srs = PowersOfTauBLS381.generate(13);
-        var setup = Groth16SetupBLS381.setup(constraints, r1cs.numWires(),
-                r1cs.numPublicInputs(), srs.tauScalar());
-
-        var proof = Groth16ProverBLS381.prove(setup.provingKey(), witness,
-                constraints, r1cs.numWires());
-
-        assertTrue(proof.a().isOnCurve());
-        assertTrue(proof.b().isOnCurve());
-        assertTrue(proof.c().isOnCurve());
-
-        // Verify off-chain via pairing
-        var pk = setup.provingKey();
-        var ic = setup.ic();
-        BigInteger[] pubInputs = {root, contextId, BigInteger.ONE, nullifier};
-
-        G1Point vkX = toG1(ic[0]);
-        for (int i = 0; i < pubInputs.length; i++) {
-            vkX = vkX.add(toG1(ic[i + 1]).scalarMul(pubInputs[i]));
-        }
-
-        boolean verified = BLS12381Pairing.pairingCheck(
-                new G1Point[]{toG1(proof.a()), toG1(pk.alphaG1()).negate(),
-                              vkX.negate(), toG1(proof.c()).negate()},
-                new G2Point[]{toG2(proof.b()), toG2(pk.betaG2()),
-                              toG2(setup.gammaG2()), toG2(pk.deltaG2())});
-
-        assertTrue(verified, "NFT ownership ZK proof must verify via BLS12-381 pairing");
-        System.out.println("NFT ownership proof: VERIFIED (depth=" + depth + ")");
     }
 
-    // --- Poseidon helper (BLS12-381 Fr, standards-compatible per ADR-0015) ---
-
-    private BigInteger poseidon(BigInteger a, BigInteger b) {
-        return org.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
-                org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
-                a, b);
+    @Test
+    @DisplayName("A forged nullifier wire in an otherwise honest witness does not satisfy the R1CS")
+    void forgedNullifierWireUnsatisfied() {
+        BigInteger[] witness = fx.prove(2).witness().clone();
+        witness[NULLIFIER_WIRE] = NftScheme.nullifier(NftFixture.SECRETS.get(2), NftFixture.token(2),
+                NftScheme.contextId("another-event"));
+        assertFalse(satisfied(witness));
     }
 
-    private static G1Point toG1(org.zeroj.bls12381.ec.JacobianG1BLS381.AffineG1 p) {
-        if (p.isInfinity()) return G1Point.INFINITY;
-        return new G1Point(Fp.of(p.xBigInt()), Fp.of(p.yBigInt()));
+    @Test
+    @DisplayName("A holder of a token in the snapshot cannot prove with another holder's token")
+    void otherTokenRefused() {
+        // Holder 0's secret with holder 1's token: no such leaf in the tree.
+        var p = NftFixture.path(fx.tree, 1);
+        assertThrows(RuntimeException.class, () -> fx.prover.prove(NftFixture.SECRETS.get(0), NftFixture.token(1),
+                fx.root(), NftFixture.CONTEXT, p[0], p[1]));
     }
 
-    private static G2Point toG2(org.zeroj.bls12381.ec.JacobianG2BLS381.AffineG2 p) {
-        if (p.isInfinity()) return G2Point.INFINITY;
-        return new G2Point(
-                Fp2.of(Fp.of(p.x().reBigInt()), Fp.of(p.x().imBigInt())),
-                Fp2.of(Fp.of(p.y().reBigInt()), Fp.of(p.y().imBigInt())));
+    private Map<String, List<BigInteger>> inputs(int index, BigInteger nullifier) {
+        var p = NftFixture.path(fx.tree, index);
+        Map<String, List<BigInteger>> in = new HashMap<>();
+        in.put("secretKey", List.of(NftFixture.SECRETS.get(index)));
+        in.put("tokenName", List.of(NftFixture.token(index)));
+        in.put("snapshotRoot", List.of(fx.root()));
+        in.put("contextId", List.of(NftFixture.CONTEXT));
+        in.put("isOwner", List.of(BigInteger.ONE));
+        in.put("nullifier", List.of(nullifier));
+        for (int i = 0; i < NftFixture.DEPTH; i++) {
+            in.put("sibling_" + i, List.of(p[0][i]));
+            in.put("pathBit_" + i, List.of(p[1][i]));
+        }
+        return in;
+    }
+
+    private static boolean satisfied(BigInteger[] w) {
+        for (R1CSConstraint c : r1cs.constraints()) {
+            BigInteger a = dot(c.a(), w), b = dot(c.b(), w), cc = dot(c.c(), w);
+            if (!a.multiply(b).mod(PRIME).equals(cc)) return false;
+        }
+        return true;
+    }
+
+    private static BigInteger dot(Map<Integer, BigInteger> lc, BigInteger[] w) {
+        BigInteger sum = BigInteger.ZERO;
+        for (var e : lc.entrySet()) sum = sum.add(e.getValue().multiply(w[e.getKey()]));
+        return sum.mod(PRIME);
     }
 }

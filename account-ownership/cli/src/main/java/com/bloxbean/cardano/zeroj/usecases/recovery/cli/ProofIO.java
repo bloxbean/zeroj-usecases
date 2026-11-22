@@ -24,7 +24,8 @@ import java.nio.file.Path;
  *       coordinates, in the same affine form the on-chain validator and the off-chain pairing check
  *       consume.</li>
  *   <li>{@code public-inputs.json} — the statement the proof is about: the payment key hash, the
- *       address, the circuit fingerprint, and the 28 public-input scalars. The derivation path
+ *       address, the recipient, the circuit fingerprint, and the 2 public-input scalars (circuit v4:
+ *       the packed pkh, then the packed recipient). The derivation path
  *       (account/role/index) is a <b>secret</b> witness since circuit v2 and is deliberately not
  *       recorded — this file travels with the proof to the verifier.</li>
  * </ul>
@@ -95,7 +96,7 @@ public final class ProofIO {
         return new ProofPoints(pa, pb, pc);
     }
 
-    /** The 28 public-input scalars from {@code public-inputs.json}. */
+    /** The 2 public-input scalars (packed pkh, packed recipient) from {@code public-inputs.json}. */
     public static BigInteger[] readPublicInputs(Path file) throws IOException {
         var root = MAPPER.readTree(file.toFile());
         var arr = (ArrayNode) root.get("publicInputs");
@@ -123,7 +124,7 @@ public final class ProofIO {
         return ProofIOHex.unhex(MAPPER.readTree(file.toFile()).get("pkh").asText());
     }
 
-    /** The recipient payment key hash bytes (v3), or {@code null} for an older v2 proof. */
+    /** The recipient payment key hash bytes (circuit v3 and later), or {@code null} for an older v2 proof. */
     public static byte[] readRecipientPkh(Path file) throws IOException {
         var n = MAPPER.readTree(file.toFile()).get("recipientPkh");
         return n == null ? null : ProofIOHex.unhex(n.asText());

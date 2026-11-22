@@ -102,7 +102,7 @@ public class OwnershipCircuitService {
 
     /**
      * The witness for "root key ({@code kL,kR,cc}) derives via m/1852'/1815'/account'/role/index to
-     * {@code pkh}", with the payout {@code recipient} bound as a second public input (v3).
+     * {@code pkh}", with the payout {@code recipient} bound as a second public input (v4, packed).
      *
      * @param recipientPkh the 28-byte payment key hash of the payout address (bound tag)
      */

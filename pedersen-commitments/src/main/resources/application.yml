@@ -1,0 +1,26 @@
+server:
+  port: 8093
+
+spring:
+  application:
+    name: pedersen-commitments-demo
+
+cardano:
+  # The demos create and fund their own wallets with DevKit's top-up API, so they run on DevKit.
+  network: yaci
+  yaci:
+    base-url: http://localhost:8080/api/v1/
+    admin-url: http://localhost:10000
+  blockfrost:
+    # Overrides the provider (for example from Docker); empty means use cardano.yaci.base-url.
+    base-url: ""
+    project-id: ""
+
+demo:
+  topup:
+    enabled: true
+
+solvency:
+  # An attestation must be made before its period starts and released after it ends.
+  period-lead-seconds: 45
+  period-length-seconds: 180

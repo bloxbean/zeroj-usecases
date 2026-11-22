@@ -65,6 +65,7 @@ zeroj-usecases/
   digital-product-passport/       Spring Boot E2E, CircuitSpec reference
   selective-disclosure/           Spring Boot E2E
   reusable-kyc/                   Spring Boot E2E, BBS selective disclosure
+  pedersen-commitments/           Spring Boot E2E, three Pedersen commitment demos
 
   examples/
     minimal-circuits/
@@ -82,11 +83,12 @@ zeroj-usecases/
 | [proof-of-reserves](proof-of-reserves/README.md) | Reserves cover liabilities without exposing balances | 8089 | Symbolic annotations |
 | [identity-kyc](identity-kyc/README.md) | Age and country eligibility without revealing personal data | 8087 | Symbolic annotations |
 | [nft-ownership](nft-ownership/README.md) | NFT ownership without revealing wallet or token | 8085 | Symbolic annotations |
-| [private-voting](private-voting/README.md) | Eligible voter, one private vote, no double-vote | 8086 | Symbolic annotations |
+| [private-voting](private-voting/README.md) | Eligible voter, one encrypted vote, no double-vote; only the total is ever decrypted | 8086 | Symbolic annotations |
 | [personhood-airdrop](personhood-airdrop/SYBIL_AIRDROP_TUTORIAL.md) | One claim per person per epoch | 8083 | Symbolic annotations |
 | [digital-product-passport](digital-product-passport/README.md) | Product compliance without exposing supply-chain data | 8088 | `CircuitSpec` |
 | [selective-disclosure](selective-disclosure/SELECTIVE_DISCLOSURE_TUTORIAL.md) | Multiple predicates from one signed credential | 8091 | Symbolic annotations |
 | [reusable-kyc](reusable-kyc/README.md) | KYC once, reveal only the attributes each service needs — **BBS proof verified natively on-chain** | 8092 | BBS (no circuit) |
+| [pedersen-commitments](pedersen-commitments/README.md) | Confidential points that still add up; one committed credential, prove only a predicate; solvency with hidden liabilities | 8093 | Symbolic annotations |
 
 Some apps have native Spring ports that overlap, such as 8085. The Docker demo
 maps them to distinct host ports so multiple profiles can exist without port
@@ -100,10 +102,10 @@ For the Docker demo path:
 - Docker with Compose v2
 - Yaci DevKit running on the host
 
-Docker demos use the released ZeroJ version configured by `ZEROJ_VERSION`
-(`0.1.0-pre12` by default). A sibling ZeroJ checkout is optional and only needed
-when you explicitly opt into publishing a local ZeroJ build during Docker image
-builds.
+Docker demos build against the ZeroJ version in `version.properties` (`zerojVersion`), the
+same one the Gradle builds use; set `ZEROJ_VERSION` to override it. A sibling ZeroJ checkout is
+optional and only needed when you explicitly opt into publishing a local ZeroJ build during
+Docker image builds.
 
 For direct Java runs:
 
@@ -248,13 +250,24 @@ docker volume rm zeroj-usecases_compliance-credential-plonk-cache
 From the repository root:
 
 ```bash
-# If Gradle is installed locally, use the root aggregate tasks:
-gradle buildAllUsecasesNoTests
-gradle testAllUsecases
+# Root aggregate tasks (each runs the module's own wrapper):
+./gradlew buildAllUsecasesNoTests
+./gradlew testAllUsecases
 
 # Or use the repo script, which runs each module's wrapper:
 ./build-all.sh build -x test
 ```
+
+Each module is a standalone Gradle build, so the root wrapper can also run one module's tasks
+with `-p`, for example the Pedersen demo UI:
+
+```bash
+./gradlew -p pedersen-commitments bootRun -PwithFrontend   # http://localhost:8093
+```
+
+`zerojVersion` in `version.properties` may name a ZeroJ commit snapshot
+(`<version>-<commit>-SNAPSHOT`); builds resolve those from
+`https://repo.bloxbean.org/maven/snapshots` (restricted to the `org.zeroj` group).
 
 To test against a local ZeroJ build:
 
@@ -263,7 +276,7 @@ cd ../zeroj
 ./gradlew publishToMavenLocal
 
 cd ../zeroj-usecases
-gradle buildAllUsecasesNoTests -PzerojVersion=<local-zeroj-version>
+./gradlew buildAllUsecasesNoTests -PzerojVersion=<local-zeroj-version>
 ```
 
 `<local-zeroj-version>` is the version the ZeroJ build published (a `-SNAPSHOT` version is
@@ -273,6 +286,24 @@ removed from `~/.m2/repository/org/zeroj`.
 
 For Docker builds, use `PUBLISH_LOCAL_ZEROJ=true` and point
 `ZEROJ_SOURCE_CONTEXT` at the local checkout as shown in the Docker section.
+
+## Continuous Integration
+
+[Usecase CI](.github/workflows/ci.yml) runs on pull requests, pushes to `main`, and manual
+dispatch. It discovers every independent Gradle build from its tracked `settings.gradle`
+(currently 14), including the account-ownership CLI and desktop UI, and runs `build` with
+Java 25. Svelte frontends are rebuilt from their npm lockfiles, with frontend tests where
+the module provides them.
+
+Projects with `*YaciE2ETest` or `*DevKitE2ETest` tests get a fresh, isolated devnet using the
+npm package `@bloxbean/yaci-devkit@0.12.0-beta5`. CI waits for indexed blocks and Plutus V3
+protocol parameters, enables `ZEROJ_YACI_E2E=true` and `-Dkyc.e2e=true`, and fails if any of
+those tests are skipped or missing. Test reports and DevKit startup logs are uploaded even
+when a build fails. `All usecases passed` is the aggregate status for branch protection.
+
+Account ownership's large `-Daor.e2e=true` setup/proving test and circuit measurement remain
+opt-in; its normal CLI and headless JavaFX tests run in CI. Native installers and binaries
+remain covered by the existing release workflows.
 
 ## Demo Cache
 

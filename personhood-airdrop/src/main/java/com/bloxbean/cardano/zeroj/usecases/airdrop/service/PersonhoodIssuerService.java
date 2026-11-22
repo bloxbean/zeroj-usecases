@@ -1,109 +1,135 @@
 package com.bloxbean.cardano.zeroj.usecases.airdrop.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import org.zeroj.circuit.lib.jubjub.EdDSAJubjub;
-import org.zeroj.circuit.lib.jubjub.JubjubCurve;
 import org.zeroj.circuit.lib.jubjub.JubjubMessage;
 import org.zeroj.circuit.lib.jubjub.JubjubPoint;
-import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
-import java.util.Collections;
-import java.util.Iterator;
+import java.nio.file.Path;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Personhood credential issuer (think BrightID / Worldcoin / similar).
+ * Personhood credential issuer (think BrightID / Worldcoin / similar), ADR-0009 D3.
  *
- * <p>Each "personhood credential" binds a randomly-allocated unique opaque
- * identifier ({@code personhoodId}) to the issuer's signature. The
- * personhoodId is per-real-human (the issuer enforces uniqueness off-chain
- * via biometric / proof-of-personhood mechanism — out of scope for this
- * demo). Holders never reveal the personhoodId on-chain; the airdrop
- * circuit's nullifier is the only public derivative.
+ * <p>The holder chooses its own secret {@code personhoodId} and sends only
+ * {@code m = Poseidon(personhoodId, 0)}. After its one-human check (out of band; in the demo,
+ * the person's name stands for it) the issuer signs {@code m}. It never receives
+ * {@code personhoodId}, so it cannot compute any claim's nullifier
+ * {@code Poseidon(personhoodId, epoch)}, and cannot link claims to persons.
+ *
+ * <p><b>One credential per person.</b> The issuer keeps a durable record (atomic, owner-only)
+ * of each person it has issued to, written before it signs, and refuses a second issuance.
+ * Without this rule, holder-chosen identifiers would let one person obtain two credentials and
+ * claim twice. Consequently a lost credential cannot be re-issued.
+ *
+ * <p>The signing key is random and persisted ({@link AirdropKeys}, ADR-0009 D11). Signing uses
+ * ZeroJ's compatibility/offline profile; this demo issuer is an in-process component and must
+ * not be exposed as a network-reachable issuance endpoint.
  */
 @Service
-public class PersonhoodIssuerService {
+public class PersonhoodIssuerService implements PersonhoodIssuer {
 
     private static final Logger log = LoggerFactory.getLogger(PersonhoodIssuerService.class);
 
-    /** Demo issuer secret key seed. Production: load from KMS / HSM. */
-    private static final BigInteger ISSUER_SECRET_SEED = new BigInteger(
-            "deadbeefcafef00d0123456789abcdefdeadbeefcafef00d0123456789abcdef", 16);
+    private final EdDSAJubjub.Keypair issuerKeypair;
+    private final Path recordFile;
+    private final Map<String, String> issued = new LinkedHashMap<>();
 
-    private EdDSAJubjub.Keypair issuerKeypair;
-    private final Map<String, PersonhoodCredential> credentials = Collections.synchronizedMap(new LinkedHashMap<>());
-
-    @PostConstruct
-    public void setup() {
-        BigInteger sk = ISSUER_SECRET_SEED.mod(JubjubCurve.SUBGROUP_ORDER);
-        if (sk.signum() == 0) sk = BigInteger.ONE;
-        issuerKeypair = EdDSAJubjub.keypairFromSecret(sk);
-        log.info("Personhood issuer keypair generated.");
-        log.info("  pk.u = 0x{}", issuerKeypair.pk().affineU().toString(16));
-        log.info("  pk.v = 0x{}", issuerKeypair.pk().affineV().toString(16));
-
-        seedTestUsers();
+    public PersonhoodIssuerService(AirdropKeys keys, AirdropDataDir data) {
+        this.issuerKeypair = keys.issuer();
+        this.recordFile = data.issuedPersons();
+        load();
+        log.info("Personhood issuer public key: u=0x{}, v=0x{}; {} person(s) issued so far",
+                issuerKeypair.pk().affineU().toString(16), issuerKeypair.pk().affineV().toString(16), issued.size());
     }
 
-    private void seedTestUsers() {
-        // Each gets a unique random-looking personhoodId.
-        long base = 0x100;
-        for (String name : List.of("Alice", "Bob", "Charlie", "Diana", "Eve")) {
-            BigInteger pid = BigInteger.valueOf(base++).shiftLeft(160)
-                    .or(BigInteger.valueOf(name.hashCode() & 0xffffffffL));
-            issueCredential(name, pid);
+    @Override
+    public synchronized EdDSAJubjub.Signature issue(String person, BigInteger m) {
+        String who = normalize(person);
+        JubjubMessage message = canonicalMessage(m);
+        if (issued.containsKey(who)) {
+            throw new AlreadyIssuedException(who);
         }
-        log.info("Issued {} demo personhood credentials.", credentials.size());
+        // Record first: a crash after signing must not allow a second credential.
+        issued.put(who, Instant.now().toString());
+        try {
+            persist();
+        } catch (RuntimeException e) {
+            issued.remove(who);
+            throw e;
+        }
+        log.info("Issued a personhood credential to {}", who);
+        return EdDSAJubjub.signCompatibilityOffline(issuerKeypair, message);
     }
 
-    /**
-     * Issues a personhood credential. {@code personhoodId} must be unique per
-     * real human (issuer's job to enforce — the demo just generates a unique
-     * 256-bit value per name).
-     */
-    public PersonhoodCredential issueCredential(String name, BigInteger personhoodId) {
-        // Sign Poseidon(personhoodId, 0) — the message bound by the signature.
-        // The "0" pads personhoodId into the t=3 Poseidon's two-input slot.
-        BigInteger msg = org.zeroj.circuit.lib.poseidon.PoseidonHash.hash(
-                org.zeroj.circuit.lib.poseidon.PoseidonParamsBLS12_381T3.INSTANCE,
-                personhoodId, BigInteger.ZERO);
-        EdDSAJubjub.Signature sig = EdDSAJubjub.signCompatibilityOffline(
-                issuerKeypair, canonicalMessage(msg));
-        var cred = new PersonhoodCredential(name, personhoodId, sig);
-        credentials.put(name, cred);
-        return cred;
-    }
-
-    public JubjubPoint getIssuerPublicKey() {
+    @Override
+    public JubjubPoint publicKey() {
         return issuerKeypair.pk();
     }
 
-    public PersonhoodCredential get(String name) {
-        return credentials.get(name);
+    public synchronized boolean hasIssued(String person) {
+        return issued.containsKey(normalize(person));
     }
 
-    public List<PersonhoodCredential> list() {
-        return List.copyOf(credentials.values());
+    public synchronized List<String> issuedPersons() {
+        return List.copyOf(issued.keySet());
+    }
+
+    private void load() {
+        JsonNode node = DemoFiles.read(recordFile);
+        if (node == null) {
+            return;
+        }
+        boolean sameIssuer = issuerKeypair.pk().affineU().toString(16).equals(DemoFiles.text(node, "issuerPkU", recordFile))
+                && issuerKeypair.pk().affineV().toString(16).equals(DemoFiles.text(node, "issuerPkV", recordFile));
+        if (!sameIssuer) {
+            throw new IllegalStateException(recordFile + " was written under another issuer key; refusing to start."
+                    + " Reset keys and state together with ./demo.sh airdrop --clean-cache.");
+        }
+        JsonNode persons = node.get("persons");
+        if (persons == null || !persons.isArray()) {
+            throw new IllegalStateException(recordFile + " is corrupt: missing persons");
+        }
+        for (JsonNode p : persons) {
+            issued.put(DemoFiles.text(p, "person", recordFile), DemoFiles.text(p, "issuedAt", recordFile));
+        }
+    }
+
+    private void persist() {
+        var out = DemoFiles.object();
+        out.put("issuerPkU", issuerKeypair.pk().affineU().toString(16));
+        out.put("issuerPkV", issuerKeypair.pk().affineV().toString(16));
+        var persons = out.putArray("persons");
+        issued.forEach((who, at) -> persons.addObject().put("person", who).put("issuedAt", at));
+        DemoFiles.writeAtomic(recordFile, out);
+    }
+
+    private static String normalize(String person) {
+        if (person == null || person.isBlank()) {
+            throw new IllegalArgumentException("person is required");
+        }
+        return person.trim();
     }
 
     private static JubjubMessage canonicalMessage(BigInteger fieldElement) {
+        if (fieldElement == null) {
+            throw new IllegalArgumentException("m is required");
+        }
         byte[] raw = fieldElement.toByteArray();
         int sourceOffset = raw.length == JubjubMessage.CANONICAL_BYTES + 1 && raw[0] == 0 ? 1 : 0;
         int length = raw.length - sourceOffset;
         if (fieldElement.signum() < 0 || length > JubjubMessage.CANONICAL_BYTES) {
-            throw new IllegalArgumentException("claims message is not a canonical Jubjub field element");
+            throw new IllegalArgumentException("m is not a canonical Jubjub field element");
         }
         byte[] canonical = new byte[JubjubMessage.CANONICAL_BYTES];
         System.arraycopy(raw, sourceOffset, canonical, canonical.length - length, length);
         return JubjubMessage.fromCanonicalFieldBytes(canonical);
     }
-
-    /** A holder's personhood credential — claims plus the issuer's signature. */
-    public record PersonhoodCredential(String name, BigInteger personhoodId,
-                                      EdDSAJubjub.Signature signature) {}
 }

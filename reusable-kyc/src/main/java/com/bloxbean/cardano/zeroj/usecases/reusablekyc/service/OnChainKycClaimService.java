@@ -1,7 +1,9 @@
 package com.bloxbean.cardano.zeroj.usecases.reusablekyc.service;
 
 import com.bloxbean.cardano.client.account.Account;
+import com.bloxbean.cardano.client.address.Address;
 import com.bloxbean.cardano.client.address.AddressProvider;
+import com.bloxbean.cardano.client.api.MinAdaCalculator;
 import com.bloxbean.cardano.client.api.model.Amount;
 import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.cardano.client.backend.api.BackendService;
@@ -15,6 +17,8 @@ import com.bloxbean.cardano.client.quicktx.ScriptTx;
 import com.bloxbean.cardano.client.quicktx.Tx;
 import com.bloxbean.cardano.client.crypto.Blake2bUtil;
 import com.bloxbean.cardano.client.transaction.spec.TransactionInput;
+import com.bloxbean.cardano.client.transaction.spec.TransactionOutput;
+import com.bloxbean.cardano.client.transaction.spec.Value;
 import com.bloxbean.cardano.client.util.HexUtil;
 import org.julclang.clientlib.JulcScriptLoader;
 import com.bloxbean.cardano.zeroj.usecases.reusablekyc.onchain.BbsKycClaimValidator;
@@ -33,12 +37,23 @@ import static com.bloxbean.cardano.client.common.CardanoConstants.LOVELACE;
  * issuer's BBS verification material, locks a <b>voucher</b> UTxO carrying the claim policy, then
  * spends it with a holder's BBS presentation as the redeemer. The ledger itself verifies the BBS
  * proof and enforces the payout — spending the voucher once is the nullifier.
+ *
+ * <p>The claim pays through outputs tagged with the voucher's outref (ADR-0009 D6): the refund to
+ * the recipient, and the remainder ({@code voucher − refund − maxFee}) back to the funder's
+ * enterprise address. Creation refuses terms the validator would reject, and a positive remainder
+ * below the min-UTxO of its tagged output.</p>
  */
 public class OnChainKycClaimService {
 
     /** Demo voucher size and refund (2 ADA to the recipient; the rest returns to the funder). */
     public static final long DEMO_REFUND_LOVELACE = 2_000_000L;
-    private static final long VOUCHER_ADA = 10L;
+    /**
+     * The fee slack the voucher allows (2 ADA). Whoever submits the claim may keep {@code maxFee}
+     * minus the actual fee, so a funder sets it close to the expected fee; this covers the BBS
+     * verification's script fee with some headroom.
+     */
+    public static final long DEMO_MAX_FEE_LOVELACE = 2_000_000L;
+    public static final long VOUCHER_LOVELACE = 10_000_000L;
     private static final long COLLATERAL_ADA = 5L;
 
     /** The issuer's BBS verification material — deterministic for a given issuer/schema/header. */
@@ -128,21 +143,37 @@ public class OnChainKycClaimService {
                                String requiredCountry, String requiredKycLevel,
                                String recipientAddress, byte[] recipientPkh, long refundLovelace)
             throws Exception {
-        initialize();
+        return lockAndClaim(claimFactory, requiredCountry, requiredKycLevel, recipientAddress, recipientPkh,
+                refundLovelace, DEMO_MAX_FEE_LOVELACE);
+    }
 
-        // Voucher datum = the claim policy: which disclosed values are required, who gets paid, how much.
+    /** As {@link #lockAndClaim(Function, String, String, String, byte[], long)}, with an explicit {@code maxFee}. */
+    public String lockAndClaim(Function<byte[], Claim> claimFactory,
+                               String requiredCountry, String requiredKycLevel,
+                               String recipientAddress, byte[] recipientPkh, long refundLovelace,
+                               long maxFeeLovelace) throws Exception {
+        initialize();
+        byte[] funderPkh = funderPkh();
+        String funderAddress = funderTagAddress();
+        long remainder = checkVoucherTerms(VOUCHER_LOVELACE, refundLovelace, maxFeeLovelace,
+                tagOutputMinLovelace(funderAddress));
+
+        // Voucher datum = the claim policy: which disclosed values are required, who gets paid, how
+        // much, who gets the remainder, and the fee slack.
         var datum = ConstrPlutusData.builder().alternative(0)
                 .data(ListPlutusData.of(
                         new BytesPlutusData(requiredCountry.getBytes(StandardCharsets.UTF_8)),
                         new BytesPlutusData(requiredKycLevel.getBytes(StandardCharsets.UTF_8)),
                         new BytesPlutusData(recipientPkh),
-                        BigIntPlutusData.of(BigInteger.valueOf(refundLovelace))))
+                        BigIntPlutusData.of(BigInteger.valueOf(refundLovelace)),
+                        new BytesPlutusData(funderPkh),
+                        BigIntPlutusData.of(BigInteger.valueOf(maxFeeLovelace))))
                 .build();
 
         // Lock the voucher, and carve out a dedicated ADA-only output for collateral (same reasoning
         // as the account-ownership demo: avoids token-bearing/stale collateral selection).
         var lockTx = new Tx()
-                .payToContract(scriptAddr, Amount.ada(VOUCHER_ADA), datum)
+                .payToContract(scriptAddr, Amount.lovelace(BigInteger.valueOf(VOUCHER_LOVELACE)), datum)
                 .payToAddress(funder.baseAddress(), Amount.ada(COLLATERAL_ADA))
                 .from(funder.baseAddress());
         var lock = new QuickTxBuilder(backendService).compose(lockTx)
@@ -183,9 +214,19 @@ public class OnChainKycClaimService {
                         new BytesPlutusData(claim.presentationHeader())))
                 .build();
 
-        var claimTx = new ScriptTx().collectFrom(voucher, redeemer)
-                .payToAddress(recipientAddress, Amount.lovelace(BigInteger.valueOf(refundLovelace)))
-                .attachSpendingValidator(script);
+        // Every payment carries the voucher's outref as its inline datum, the tag the validator
+        // counts. The funder's remainder goes to its enterprise address, never the change address,
+        // so fee balancing can't take the fee out of a tagged output. Same key: one combined output.
+        var tag = outRefTag(voucher.getTxHash(), voucher.getOutputIndex());
+        var claimTx = new ScriptTx().collectFrom(voucher, redeemer);
+        if (Arrays.equals(recipientPkh, funderPkh)) {
+            claimTx.payToContract(funderAddress, Amount.lovelace(BigInteger.valueOf(refundLovelace + remainder)), tag);
+        } else {
+            claimTx.payToContract(recipientAddress, Amount.lovelace(BigInteger.valueOf(refundLovelace)), tag);
+            if (remainder > 0)
+                claimTx.payToContract(funderAddress, Amount.lovelace(BigInteger.valueOf(remainder)), tag);
+        }
+        claimTx.attachSpendingValidator(script);
         // Local Julc evaluation is the default; its ExUnits match the ledger exactly.
         // Callers can pass evaluateLocally=false to use the backend/node evaluator instead.
         var builder = new QuickTxBuilder(backendService).compose(claimTx);
@@ -202,6 +243,55 @@ public class OnChainKycClaimService {
             throw new RuntimeException("on-chain KYC claim failed: " + result.getResponse());
         waitForTx(result.getValue());
         return result.getValue();
+    }
+
+    /**
+     * Check a voucher's terms before locking it, returning the remainder owed to the funder. Refuses
+     * terms the validator would reject ({@code refund ≥ 0}, {@code maxFee ≥ 0},
+     * {@code refund + maxFee ≤ voucher}), and a remainder that is positive but below
+     * {@code remainderMinLovelace}, the min-UTxO of its tagged output (ADR-0009 D6).
+     */
+    public static long checkVoucherTerms(long voucherLovelace, long refundLovelace, long maxFeeLovelace,
+                                         long remainderMinLovelace) {
+        if (refundLovelace < 0 || maxFeeLovelace < 0)
+            throw new IllegalArgumentException("refund and maxFee must be non-negative");
+        if (refundLovelace > voucherLovelace - maxFeeLovelace)
+            throw new IllegalArgumentException("refund + maxFee exceeds the voucher's " + voucherLovelace + " lovelace");
+        long remainder = voucherLovelace - refundLovelace - maxFeeLovelace;
+        if (remainder > 0 && remainder < remainderMinLovelace)
+            throw new IllegalArgumentException("remainder " + remainder + " lovelace is below the min-UTxO "
+                    + remainderMinLovelace + " of its tagged output: lower maxFee or raise the refund");
+        return remainder;
+    }
+
+    /** The voucher tag: the outref {@code Constr 0 [B txId, I index]}, as the validator compares it. */
+    public static ConstrPlutusData outRefTag(String txHash, int index) {
+        return ConstrPlutusData.builder().alternative(0)
+                .data(ListPlutusData.of(new BytesPlutusData(HexUtil.decodeHexString(txHash)),
+                        BigIntPlutusData.of(BigInteger.valueOf(index))))
+                .build();
+    }
+
+    private byte[] funderPkh() {
+        return new Address(funder.baseAddress()).getPaymentCredentialHash()
+                .orElseThrow(() -> new IllegalStateException("funder has no payment key credential"));
+    }
+
+    /** The funder's enterprise address: its payment key, apart from the change address. */
+    private String funderTagAddress() {
+        return funder.enterpriseAddress();
+    }
+
+    /** Min-UTxO of an ADA-only output to {@code address} tagged with an outref (worst-case index). */
+    private long tagOutputMinLovelace(String address) throws Exception {
+        var pp = backendService.getEpochService().getProtocolParameters();
+        if (!pp.isSuccessful()) throw new IllegalStateException("protocol parameters: " + pp.getResponse());
+        var output = TransactionOutput.builder()
+                .address(address)
+                .value(new Value(MinAdaCalculator.DUMMY_COIN_VAL, List.of()))
+                .inlineDatum(outRefTag("00".repeat(32), 65_535))
+                .build();
+        return new MinAdaCalculator(pp.getValue()).calculateMinAda(output).longValueExact();
     }
 
     private void waitForTx(String txHash) throws Exception {

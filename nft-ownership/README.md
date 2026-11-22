@@ -1,17 +1,104 @@
 # NFT Ownership Demo — Private Token-Gated Access on Cardano
 
-Prove you own an NFT **without revealing your wallet address**. This demo uses zero-knowledge proofs (Groth16 on BLS12-381) to enable anonymous, one-time access — with nullifiers stored on-chain in a sorted linked list on Cardano.
+Prove that you hold an NFT of a collection, **without revealing which NFT or which wallet**, and
+use it once per event. The proof (Groth16 on BLS12-381) is verified on-chain by a Plutus V3
+minting policy, and its nullifier is recorded in a sorted linked list on Cardano.
 
-Built with [ZeroJ](https://github.com/bloxbean/zeroj) — a pure Java ZK toolkit for Cardano.
+Built with [ZeroJ](https://github.com/bloxbean/zeroj) — a pure Java ZK toolkit for Cardano. The
+design and its limits are in [DESIGN.md](DESIGN.md) and
+[ADR-0009](../docs/adr/0009-privacy-and-binding-hardening-of-the-original-demos.md) D2.
 
 ## What This Demo Does
 
-1. **Mint NFTs** on a local Cardano devnet (Yaci DevKit)
-2. **Build an ownership snapshot** — a Merkle tree of all NFT holders
-3. **Generate a ZK proof** — proves you own an NFT without revealing which wallet holds it
-4. **Verify and access** — proof is verified on-chain via Plutus V3, nullifier prevents reuse
+1. **Mint NFTs** into the holder custody wallet on a local devnet (Yaci DevKit).
+2. **Register holders.** For each NFT the app draws a fresh 252-bit holder secret `s`
+   (`SecureRandom`) and registers the leaf `Poseidon(Poseidon(s, 0), t)` for token `t`, signed
+   (CIP-8) by the wallet that holds the token on-chain. The snapshot takes one registration per
+   token.
+3. **Build the snapshot.** The Merkle root is fixed, registration closes, and the event's scripts
+   are deployed: a ZK policy with the root and the event's context as parameters, and a
+   nullifier list with a one-shot root.
+4. **Prove and access.** The holder proves membership and publishes the nullifier
+   `Poseidon(Poseidon(s, t), contextId)`. The access transaction verifies the proof on-chain and
+   inserts the nullifier into the list, which admits it once.
 
-The proof reveals **nothing** about your wallet address, which specific NFT you hold, or any other token in your wallet. The verifier only learns: "someone owns an NFT from this collection."
+### What observers learn
+
+A chain or mempool observer sees the proof, the nullifier, the event (snapshot root and context)
+and the list. The nullifier absorbs the holder's 252-bit secret, so it does not reveal which NFT
+was used, or which wallet holds it. The observer learns that some holder in the snapshot used the
+gate.
+
+Before ADR-0009 the nullifier was `Poseidon(t, contextId)`. It had public inputs only, so anyone
+could compute it for every token of the collection and see which NFT (and so which wallet) was
+used. That version also let a holder re-insert a nullifier, and its proof could be reused.
+
+### What limits the number of uses
+
+- **The list** (on-chain): an insert's new key must be the proved nullifier, each key is admitted
+  once, and nodes are never removed. So each leaf is used at most once per event.
+- **The snapshot** (off-chain, the indexer): each leaf comes from one authenticated holding.
+  Registration refuses a second registration for a token, requires the CIP-8 signature of the
+  token's on-chain holder, and closes when the snapshot is built. So the snapshot has at most one
+  leaf per authenticated holding, and an event admits at most as many uses as there are
+  registered holdings.
+- **What the indexer cannot check.** The leaf hides `t`, so the indexer cannot check that a leaf
+  registered under token A commits to A. A holder could register, for A, a leaf over another
+  token B; if B's holder also registers, both leaves prove "B". This changes which token a proof
+  names, not the count: uses stay at most one per authenticated registration. The guarantee is
+  one use per registered holding, not one use per specific NFT. The indexer decides the snapshot
+  and is trusted for this.
+
+## Limitations
+
+- **The indexer decides the snapshot.** It is trusted to admit one registration per token, from
+  authenticated holders. The scripts check proofs against the root it published.
+- **One use per registered holding, not per specific NFT.** The indexer cannot see which token a
+  leaf commits to (see above).
+- **Front-running.** A mempool observer can copy a holder's proof from a pending transaction and
+  submit it first; the access then goes to the copy. The fix (a fresh one-time beneficiary key
+  hash as a public input, with the gate's output paid to it) is deferred to keep circuit version 2
+  minimal.
+- **Using the gate shows that some snapshot holder acted.**
+- **A ZK token outside the list is not access.** The ZK policy alone does not limit how often a
+  proof mints its token; the list does. Readers count access only from list nodes.
+- **The holder lookup** confirms that the signing address holds exactly one unit of the token. The
+  collection's policy key is generated by the demo server for each run, and each name is minted
+  once.
+- **One event per run.** The event's context comes from `zk.default-context`; a new event needs a
+  restart (and a new context).
+- **Dev trusted setup.** The Groth16 setup is single-party and regenerated at each start; it is
+  not a production ceremony.
+
+## Demo Custody and Operator View
+
+The web demo is custodial, for convenience (ADR-0009 D10):
+- the server holds the **custody wallet** that holds the NFTs and signs their registrations;
+- it **draws holder secrets** and returns them once in the registration response (it does not
+  store them); and it proves for the holder;
+- its API is the **operator's view**. Privacy holds against chain and mempool observers, not
+  against the demo server. The API sends no CORS headers (the UI is same-origin, and the Vite dev
+  server proxies `/api`), so other websites the operator visits cannot drive it from the browser.
+  Compose binds the demo port to `127.0.0.1` only; authenticated
+  operator access is out of scope for this single-user demo and is the first change a real
+  deployment needs.
+
+### Keys and roles (ADR-0009 D11)
+
+| Role | Key | Notes |
+|------|-----|-------|
+| NFT holder custody wallet | Random 24-word key, generated on first start | Stored atomically, owner-only, in `demo.data-dir` (`./data`) as `nft-custody-wallet.key`, next to `nft-ownership-deployment.properties`, which records its address. |
+| List operator (fees, collateral, list seed, inserts) | DevKit's well-known test mnemonic (`application.yml`) | **Public devnet role**: anyone on a devnet can sign as it. It gates no privacy claim: the scripts accept only inserts keyed by a verified nullifier. Replace it in a real deployment. |
+| Collection policy key | Random, per run, in memory | Mints the demo NFTs. |
+
+The custody key is never silently replaced: if the deployment state exists but the key is
+missing, unreadable or does not match the recorded address, the demo stops with an error.
+`./demo.sh nft --clean-cache` removes the data volume, so the key and the deployment state go
+together (a fresh deployment). When running locally, delete `./data` instead.
+
+**Upgrading from an earlier version:** the circuit (version 2), the scripts and their hashes
+changed, and the snapshot is in memory. Start fresh: `./demo.sh nft --clean-cache`, or delete
+`./data`.
 
 ## Prerequisites
 
@@ -44,7 +131,7 @@ cd nft-ownership
 ./gradlew clean bootJar
 ```
 
-To also rebuild the Svelte frontend:
+To also rebuild the Svelte frontend (into `src/main/resources/static/`):
 ```bash
 ./gradlew clean bootJar -PwithFrontend
 ```
@@ -57,21 +144,21 @@ java --enable-native-access=ALL-UNNAMED \
   -jar build/libs/nft-ownership-*.jar
 ```
 
-Startup takes ~50 seconds:
-- Compiles the ZK circuit (10,847 constraints)
-- Runs trusted setup (dev-only, single-party)
-- Compiles on-chain Plutus validators
-- Deploys root sentinel to the linked list on Yaci
+Startup compiles the ZK circuit and runs the dev-only, single-party trusted setup. The event's
+scripts are compiled and deployed later, when the snapshot is built.
 
 Wait for: `Started NftOwnershipApplication in XX seconds`
 
-### 3. Top up the admin wallet
+### 3. Top up the list operator wallet
 
 ```bash
 curl -X POST http://localhost:10000/local-cluster/api/addresses/topup \
   -H "Content-Type: application/json" \
   -d '{"address":"addr_test1qryvgass5dsrf2kxl3vgfz76uhp83kv5lagzcp29tcana68ca5aqa6swlq6llfamln09tal7n5kvt4275ckwedpt4v7q48uhex","adaAmount":10000}'
 ```
+
+The custody wallet needs no ADA: the NFTs reach it with their minimum ADA, and it only signs
+registrations off-chain.
 
 ### 4. Open the UI
 
@@ -87,29 +174,34 @@ curl -X POST http://localhost:8085/api/mint \
   -d '{"collectionName":"ZeroJTicket","count":3}'
 ```
 
-This mints 3 NFTs (ZeroJTicket_1, ZeroJTicket_2, ZeroJTicket_3) on the local devnet.
+This mints `ZeroJTicket_1` … `ZeroJTicket_3` into the custody wallet.
 
-### Step 2: Register holders and build snapshot
+### Step 2: Register holders and build the snapshot
 
 ```bash
-# Register a holder (secretKey identifies the wallet, tokenName identifies which NFT)
+# Register an NFT. The server draws a 252-bit secret, returns it once, and the custody wallet
+# signs the registration. Keep the returned "secretKey".
 curl -X POST http://localhost:8085/api/snapshot/register \
   -H "Content-Type: application/json" \
-  -d '{"secretKey":"12345","tokenName":"101"}'
+  -d '{"tokenName":"ZeroJTicket_1"}'
 
-# Build Merkle tree
+# Build the Merkle tree: registration closes and the event's scripts are deployed.
 curl -X POST http://localhost:8085/api/snapshot/build
 ```
 
-### Step 3: Generate ZK proof
+A second registration of the same NFT is refused. A supplied `secretKey` must be a 252-bit value
+(decimal or `0x` hex); short values such as `42` are refused.
+
+### Step 3: Generate the ZK proof
 
 ```bash
 curl -X POST http://localhost:8085/api/prove \
   -H "Content-Type: application/json" \
-  -d '{"secretKey":"12345","tokenName":"101"}'
+  -d '{"secretKey":"<secretKey from step 2>","tokenName":"ZeroJTicket_1"}'
 ```
 
-This generates a Groth16 proof (~7-30 seconds, pure Java). The response includes the proof points and a `nullifier`.
+This generates a Groth16 proof (pure Java). The response includes the proof points and the
+`nullifier`.
 
 ### Step 4: Access (on-chain nullifier insertion)
 
@@ -120,11 +212,10 @@ curl -X POST http://localhost:8085/api/access \
 ```
 
 This submits a Cardano transaction that:
-- Verifies the Groth16 proof **on-chain** via BLS12-381 pairing check (Plutus V3)
-- Inserts the nullifier into a **sorted linked list** on-chain
-- Returns the transaction hash
+- verifies the Groth16 proof **on-chain** against the event's root and context (Plutus V3);
+- mints the ZK token named by the nullifier, and inserts a list node keyed by it.
 
-### Step 5: Try again (double-access rejected)
+### Step 5: Try again (double access rejected)
 
 ```bash
 curl -X POST http://localhost:8085/api/access \
@@ -132,36 +223,61 @@ curl -X POST http://localhost:8085/api/access \
   -d '{"nullifier":"<same nullifier>"}'
 ```
 
-Returns `403`: "Already accessed (nullifier exists on-chain)"
+Returns `403`: "Already accessed (nullifier exists on-chain)". Forcing the insert past the client
+check is rejected by the list script.
 
 ## API Reference
 
+All endpoints are the demo operator's view (see above).
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/mint` | Mint NFTs (`collectionName`, `count`) |
-| GET | `/api/mint/status` | Minting status (policyId, tokens, admin address) |
-| POST | `/api/snapshot/register` | Register holder (`secretKey`, `tokenName`) |
-| POST | `/api/snapshot/build` | Build Merkle tree from registered holders |
-| GET | `/api/snapshot/status` | Snapshot info (root, epoch, holder count) |
-| POST | `/api/prove` | Generate ZK proof (`secretKey`, `tokenName`) |
-| POST | `/api/verify` | Verify proof structure (`nullifier`, `snapshotRoot`) |
-| POST | `/api/access` | Submit proof for gated access (`nullifier`) |
-| GET | `/api/status` | System status (circuit, snapshot, nullifiers) |
+| POST | `/api/mint` | Mint NFTs into the custody wallet (`collectionName`, `count`) |
+| GET | `/api/mint/status` | Collection policy, minted tokens, custody and operator addresses |
+| POST | `/api/snapshot/register` | Register an NFT (`tokenName`, optional 252-bit `secretKey`); returns the secret once |
+| POST | `/api/snapshot/build` | Build the Merkle tree, close registration, deploy the event's scripts |
+| GET | `/api/snapshot/status` | Root, holder count, whether registration is open, event context |
+| POST | `/api/prove` | Generate a ZK proof (`secretKey`, `tokenName`) for this run's event |
+| POST | `/api/verify` | Report whether a nullifier is used (does not verify a proof) |
+| POST | `/api/access` | Submit the last proof for gated access (`nullifier`) |
+| GET | `/api/status` | Circuit, snapshot, event scripts, nullifier count, custody address |
 
 ## Configuration
 
 Edit `src/main/resources/application.yml`:
 
 ```yaml
-# Switch between on-chain and in-memory nullifier tracking
+demo:
+  data-dir: ./data  # custody key and deployment state (ADR-0009 D11)
+
 nullifier:
-  mode: on-chain    # "on-chain" — nullifiers stored in Cardano sorted linked list
-                    # "in-memory" — nullifiers stored in RAM (resets on restart)
+  mode: on-chain    # "on-chain" — nullifiers stored in a Cardano sorted linked list
+                    # "in-memory" — the server verifies the proof and keeps nullifiers in RAM
 
 zk:
   tree-depth: 10    # Merkle tree depth (10 = 1024 holders, 20 = 1M)
-  pot-power: 13     # Powers of Tau (must be >= log2(constraints))
+  pot-power: 13     # Powers of Tau power (dev setup)
+  default-context: "nft-demo-v1"  # this run's event (1-31 bytes)
 ```
+
+## Tests
+
+```bash
+./gradlew test
+```
+
+- `CircuitTest` — circuit version 2: the nullifier formula against ZeroJ's `PoseidonHash`; a
+  nullifier for a wrong secret, token or context, or the version 1 nullifier, is refused.
+- `NullifierScriptsVmTest` — the scripts in the Plutus VM: a second root, a list input spent
+  outside an insert, two list inputs, a burn, an insert whose key is not the minted nullifier, a
+  31-byte or doubled ZK token, either token outside the new node, the root token outside its
+  datum output, a proof for another snapshot or event — all refused; honest root and inserts
+  accepted.
+- `SnapshotRegistrationTest` — a duplicate token, a short secret, a registration signed with the
+  public DevKit key, and signatures over another leaf, token or event are refused.
+- `CustodyWalletTest` — the custody key is random, survives a restart, and fails closed when
+  missing, corrupt or mismatched.
+- `NftOwnershipYaciE2ETest` — the whole flow on Yaci DevKit (`ZEROJ_YACI_E2E=true`).
 
 ## Tech Stack
 
@@ -171,7 +287,7 @@ zk:
 | Java | GraalVM 25 |
 | ZK Proofs | ZeroJ (Groth16, BLS12-381, pure Java) |
 | On-chain scripts | Julc (Java to Plutus V3) |
-| Cardano client | cardano-client-lib 0.8.0 |
+| Cardano client | cardano-client-lib 0.8.0 (CIP-8/CIP-30 `signData`) |
 | Frontend | Svelte 5 + Vite |
 | Local devnet | Yaci DevKit |
 
@@ -183,23 +299,27 @@ nft-ownership/
 ├── src/main/java/.../nft/
 │   ├── NftOwnershipApplication.java      # Spring Boot entry point
 │   ├── circuit/
-│   │   └── NFTOwnershipProof.java        # Symbolic annotation ZK circuit
+│   │   └── NFTOwnershipProof.java        # ZK circuit, version 2
 │   ├── config/
-│   │   └── CardanoConfig.java            # Network config (Yaci/Preprod)
+│   │   └── CardanoConfig.java            # Network config, list operator (DevKit key)
 │   ├── controller/
-│   │   ├── ProofController.java          # Snapshot, prove, verify, access APIs
+│   │   ├── ProofController.java          # Register, snapshot, prove, access APIs
 │   │   └── MintController.java           # NFT minting API
 │   ├── service/
+│   │   ├── NftScheme.java                # Leaf, nullifier, encodings, holder secrets
+│   │   ├── CustodyWallet.java            # Random persisted custody key, CIP-8 signing
+│   │   ├── SnapshotService.java          # Indexer: authenticated registration, Merkle tree
+│   │   ├── HolderLookup.java             # On-chain holder check (interface)
+│   │   ├── BackendHolderLookup.java      # ... over the Blockfrost-compatible backend
 │   │   ├── ProverService.java            # Circuit compile + prove + verify
-│   │   ├── SnapshotService.java          # Merkle tree builder
-│   │   ├── MintService.java              # NFT minting on-chain
+│   │   ├── MintService.java              # NFT minting into the custody wallet
 │   │   ├── NullifierTracker.java         # Interface for nullifier tracking
 │   │   ├── NullifierService.java         # In-memory nullifier tracking
-│   │   ├── OnChainNullifierService.java  # On-chain sorted linked list
+│   │   ├── OnChainNullifierService.java  # Per-event scripts, one-shot list root, inserts
 │   │   └── ProofCompressor.java          # BLS point compression
 │   └── onchain/
-│       ├── ZkProofMintingPolicy.java     # Groth16 verifier (Plutus V3)
-│       ├── NullifierListValidator.java   # Sorted linked list (Plutus V3)
+│       ├── ZkProofMintingPolicy.java     # Groth16 verifier, event as parameters
+│       ├── NullifierListValidator.java   # Sorted linked list (one-shot root)
 │       └── NullifierListLib.java         # List validation logic
 ├── src/main/resources/
 │   ├── application.yml
@@ -210,6 +330,8 @@ nft-ownership/
 ## Important Notes
 
 - The trusted setup is **dev-only** (single-party). Production use requires an MPC ceremony.
-- The admin mnemonic in `application.yml` is for testing only.
-- Proof generation is CPU-intensive (~7-30s). The pure Java prover runs on any JVM without native dependencies.
-- Each on-chain nullifier node locks ~2 ADA (reclaimable if nullifiers are ever cleaned up).
+- The DevKit mnemonic in `application.yml` is a public test key (the list operator role).
+- Proof generation is CPU-intensive. The pure Java prover runs on any JVM without native
+  dependencies.
+- Each on-chain nullifier node locks ~2 ADA. Nodes are never removed, so this ADA stays locked.
+- None of this is externally reviewed.

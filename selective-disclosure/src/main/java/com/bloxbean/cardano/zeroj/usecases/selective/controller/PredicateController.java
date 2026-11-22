@@ -14,7 +14,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/predicate")
-@CrossOrigin
 public class PredicateController {
 
     private static final Logger log = LoggerFactory.getLogger(PredicateController.class);

@@ -43,13 +43,19 @@ public class AirdropProofService {
 
     private static final Logger log = LoggerFactory.getLogger(AirdropProofService.class);
 
-    @Value("${zk.pot-power}")
-    private int potPower;
+    private final int potPower;
+    private final Path cacheDir;
 
     private CircuitBuilder circuit;
     private R1CSConstraintSystem r1cs;
     private List<R1CSConstraint> constraints;
     private Groth16SetupBLS381.SetupResult setupResult;
+
+    public AirdropProofService(@Value("${zk.pot-power}") int potPower,
+                               @Value("${airdrop.data-dir:./data}") String cacheDir) {
+        this.potPower = potPower;
+        this.cacheDir = Path.of(cacheDir);
+    }
 
     @PostConstruct
     public void init() {
@@ -66,7 +72,6 @@ public class AirdropProofService {
     }
 
     private Groth16SetupBLS381.SetupResult loadOrRunSetup() {
-        Path cacheDir = Path.of("./data");
         String circuitDigest = circuitDigest(r1cs);
         Path setupCache = cacheDir.resolve("setup-airdrop-" + circuitDigest + ".bin");
         log.info("Circuit setup-cache key: {}...", circuitDigest.substring(0, 16));
@@ -127,9 +132,9 @@ public class AirdropProofService {
      *
      * @param issuerPk    Jubjub public key of the personhood issuer
      * @param sig         issuer signature on Poseidon(personhoodId, 0)
-     * @param personhoodId secret personhood identifier
-     * @param epoch       current epoch (binds proof + nullifier to time period)
-     * @param recipient   Cardano recipient identifier (low 254 bits of pkh)
+     * @param personhoodId the holder's secret personhood identifier (never sent to the issuer)
+     * @param epoch       the policy's {@code policyEpoch} domain tag ({@link AirdropEpoch})
+     * @param recipient   the recipient's 28-byte payment key hash, as an integer
      * @return proof + computed nullifier
      */
     public ClaimProof prove(JubjubPoint issuerPk, EdDSAJubjub.Signature sig,

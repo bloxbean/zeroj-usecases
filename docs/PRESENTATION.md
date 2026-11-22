@@ -41,7 +41,7 @@ Java Circuit DSL → R1CS → Groth16 Prove (pure Java) → 192-byte proof → P
 | # | Demo | Port | What it Proves | On-Chain Pattern |
 |---|------|------|---------------|-----------------|
 | 1 | **Private NFT Ownership** | 8085 | "I own an NFT from this collection" | Sorted linked list + nullifiers |
-| 2 | **Private Voting** | 8086 | "I'm eligible AND my vote is valid" | Sorted linked list + vote tally |
+| 2 | **Private Voting** | 8086 | "I'm eligible AND my encrypted vote is 0 or 1" | Sorted linked list + homomorphic tally |
 | 3 | **Identity/KYC** | 8087 | "I meet KYC requirements (age, country)" | Stateless spending validator |
 | 4 | **Digital Product Passport** | 8088 | "Product meets EU compliance thresholds" | Minting policy (mint-if-compliant) |
 | 5 | **Proof of Reserves** | 8089 | "Reserves >= liabilities, all balances >= 0" | Spending validator (attestation) |
@@ -75,33 +75,35 @@ examples live under `examples/minimal-circuits/`.
 
 ### Architecture
 ```
-Holder → Generate ZK proof (secretKey, tokenName, Merkle path)
-       → Submit to sorted linked list on-chain
-       → Nullifier prevents reuse (one-time access)
-       → Verifier sees: "someone owns an NFT" — nothing else
+Holder → registers its token (CIP-8 signature from the holding address), gets a 252-bit secret
+Indexer → one snapshot per event, frozen at build; the event's root and context are script parameters
+Holder → ZK proof: "my leaf is in the snapshot, and this is my nullifier for this event"
+       → one transaction mints the nullifier token and inserts it into the sorted list
+       → a second use of the same holding has the same nullifier → rejected
 ```
 
 ### Key Components
 | Component | Details |
 |-----------|---------|
-| Circuit | `NFTOwnershipProof` — symbolic annotation circuit, Poseidon Merkle proof (depth 10) |
-| On-chain | `NullifierListValidator` (sorted linked list) + `ZkProofMintingPolicy` (Groth16 BLS12-381) |
-| Pattern | Two minting policies coupled — list validates insertion, ZK policy validates proof |
-| Nullifier | `Poseidon(tokenName, contextId)` — same NFT + same event = same nullifier |
+| Circuit | `NFTOwnershipProof` v2 — Poseidon Merkle proof (depth 10) and nullifier `Poseidon(Poseidon(secret, tokenName), contextId)` |
+| On-chain | `ZkProofMintingPolicy` (Groth16; root and context as parameters) + `NullifierListValidator` (one-shot root, insert-only, key = the proved nullifier) |
+| Pattern | Two minting policies coupled — the list admits exactly the nullifier the ZK policy minted |
 
 ### Demo Flow
-1. Mint NFTs on Yaci DevKit
-2. Register holders → build Merkle snapshot
-3. Generate ZK proof (~7-30s)
-4. Submit on-chain → nullifier inserted in sorted linked list
-5. Double access → rejected (nullifier exists)
+1. Mint NFTs on Yaci DevKit (to the custody wallet)
+2. Register holders → build and freeze the event snapshot
+3. Generate the ZK proof
+4. Submit on-chain → nullifier inserted in the sorted list
+5. Use the same holding again → rejected (nullifier exists)
 
 ### What's Hidden vs What's Revealed
 | Hidden | Revealed |
 |--------|----------|
-| Wallet address | "Someone owns an NFT from this collection" |
-| Which specific NFT | Nullifier (one-time token) |
-| Other token holdings | 192-byte proof |
+| Wallet address and which NFT was used | "Some registered holder of this collection acted" |
+| Other token holdings | Nullifier, unlinkable to the token without the holder's secret |
+
+An earlier version used `Poseidon(tokenName, contextId)`, which anyone could recompute for every
+token, and its list did not bind the inserted key to the proved nullifier. See ADR-0009 D2.
 
 ---
 
@@ -114,27 +116,33 @@ Holder → Generate ZK proof (secretKey, tokenName, Merkle path)
 
 ### Architecture
 ```
-Voter → Prove: "I'm in voter Merkle tree + vote ∈ {0,1}"
-      → Nullifier = Poseidon(secretKey, electionId) — one vote per voter
-      → Commitment = Poseidon(vote, nullifier) — hides vote
-      → Insert on-chain via sorted linked list
-      → Tally: decode commitments after election
+Trustees → 3 key shares, each with a proof of possession → election key PK = PK1 + PK2 + PK3
+Voter    → Ballot = ElGamal encryption of the vote under PK: A = [k]·G, B = [vote]·G + [k]·PK
+         → Prove: "I'm in the voter Merkle tree + the nullifier is mine + (A, B) encrypts 0 or 1"
+         → Nullifier = Poseidon(secretKey, electionId) — one vote per voter
+         → Insert on-chain via sorted linked list (node = nullifier + ballot)
+Tally    → after the deadline: sum the ballots while encrypted, each trustee posts a
+           decryption share with a DLEQ proof, and only the total is decrypted, once
 ```
+
+An earlier version stored `Poseidon(vote, nullifier)`. That hid the voter but not the vote: the
+nullifier is public and a vote is 0 or 1, so anyone could hash both and compare
+([issue #7](https://github.com/bloxbean/zeroj-usecases/issues/7), fixed by ADR-0005).
 
 ### Key Components
 | Component | Details |
 |-----------|---------|
-| Circuit | `PrivateVoteProof` — symbolic annotation circuit, voter Merkle proof + vote boolean |
-| On-chain | `VoteListValidator` (linked list) + `VoteZkMintingPolicy` (Groth16) |
-| Tally | Off-chain: for each nullifier, compute Poseidon(0, null) and Poseidon(1, null), match against stored commitment |
-| Test accounts | 5 voter accounts auto-created at startup with Yaci DevKit funding |
+| Circuits | `PrivateBallotProof` (eligibility + nullifier + `ZkElGamal.encrypt` of a 1-bit vote, 9,477 constraints) and `TrusteeShareProof` (DLEQ for key and decryption shares) |
+| On-chain | `VoteListValidator` (linked list) + `VoteZkMintingPolicy` (Groth16; election id, voter root, election key and deadline are script parameters) |
+| Tally | `TallyService`: homomorphic sum, verified trustee shares, one decryption after the deadline, re-verifiable from the election manifest |
+| Test accounts | 5 voter accounts and 3 trustees auto-created at startup with Yaci DevKit funding |
 
 ### Demo Flow
-1. Election auto-created with 5 voters
-2. voter1 votes YES → on-chain tx
-3. voter2 votes NO → on-chain tx
+1. Election auto-created with 5 voters and 3 trustees
+2. voter1 votes YES → on-chain tx (encrypted ballot)
+3. voter2 votes NO → on-chain tx (encrypted ballot)
 4. voter1 tries again → **double vote rejected**
-5. Tally: YES: 1, NO: 1
+5. After the deadline: trustees decrypt the total → YES: 1, NO: 1
 
 ---
 
@@ -159,7 +167,7 @@ User   → Generate ZK proof: registered-key signature + age check + country Mer
 | Circuit | `CredentialProof` — symbolic annotation circuit, EdDSA-Jubjub verify + 8-bit age comparison + country Merkle |
 | On-chain | `CredentialGatedValidator` (spending validator, datum-based Groth16) |
 | Pattern | **Stateless** — no nullifiers, proofs can be reused (ongoing DeFi access) |
-| Credential | EdDSA-Jubjub-signed credential over Poseidon claims |
+| Credential | EdDSA-Jubjub-signed credential over Poseidon claims; the issuer key is random and persisted (ADR-0009 D11) |
 
 ### Test Users
 | User | Age | Country | Expected |
@@ -171,7 +179,7 @@ User   → Generate ZK proof: registered-key signature + age check + country Mer
 | Eve | 45 | JPN | **ELIGIBLE** |
 
 ### Key Difference
-Unlike NFT/voting demos, this is **stateless** — no linked list, no nullifiers. The same proof can be used repeatedly for ongoing DeFi access.
+Unlike NFT/voting demos, this is **stateless** — no linked list, no nullifiers. The same proof can be used repeatedly for ongoing DeFi access, and a proof copied from the chain opens any other UTxO at the same gate: a real deployment binds the proof to the output it spends.
 
 ---
 
@@ -184,42 +192,51 @@ Unlike NFT/voting demos, this is **stateless** — no linked list, no nullifiers
 
 ### Architecture
 ```
-Manufacturer → Register products in Poseidon MPF (RocksDB, persistent)
-            → Generate ZK proofs per claim (carbon, recycled, EU origin, inspections)
-            → Mint DPP NFT on Cardano (minting policy verifies Groth16 proof)
-            → Duplicate prevention via minted-registry MPF
+Auditor      → measures, commits each claim with a Pedersen vector commitment (fresh 252-bit blinding)
+             → gives the opening (value, blinding) to the manufacturer only
+Manufacturer → proves each claim's rule against its commitment (Groth16)
+             → builds one passport transaction; the auditor co-signs it once per product
+Cardano      → DppPassport mints exactly one token named productId into a locked output whose
+               datum holds every attested commitment; only the auditor can revoke (burn) it
 ```
 
 ### Key Innovations
 
-**1. Poseidon MPF (Merkle Patricia Forestry)**
-- Custom `PoseidonCommitmentScheme` for CCL's MPF — replaces Blake2b with Poseidon
-- RocksDB persistence — survives restarts, scales to millions of products
-- ZK-circuit-verifiable Merkle root
+**1. Auditor-issued Pedersen commitments (ADR-0009 D1)**
+- The published commitment hides each measurement: a blinding of 252 random bits makes the
+  65,536-value search that broke the old design learn nothing.
+- The manufacturer can't choose its own value or threshold: the auditor commits, the script pins
+  the threshold.
+- The passport keeps the commitments, so a claim can be re-proved against a stricter threshold, or
+  opened to a regulator, without asking the auditor again.
 
-**2. Multiple ZK Circuits**
-| Circuit | Claims | Constraints |
-|---------|--------|-------------|
-| ComplianceThreshold (GTE) | recycled >= 30% | ~1,700 |
-| ComplianceThreshold (LTE) | carbon <= 50kg | ~1,700 |
-| InspectionChain | 3 inspections in order | ~10,100 |
-| CountryMembership | made in EU | ~3,300 |
+**2. One circuit per claim**
 
-**3. Mint-if-Compliant Pattern**
-- On-chain minting policy verifies: manufacturer sig + Groth16 proof + isCompliant=1 + qty=1
-- Public inputs in output datum, proof in redeemer (proven pattern)
-- "Skip off-chain check" checkbox demonstrates on-chain rejection for non-compliant products
+| Circuit | Rule | Constraints |
+|---------|------|-------------|
+| `CarbonClaimProof` | carbon ≤ threshold | 2,192 |
+| `RecycledClaimProof` | recycled ≥ threshold | 2,192 |
+| `OriginClaimProof` | country in the EU set (27 states) | 3,344 |
+| `InspectionClaimProof` | 3 inspections by approved inspectors, in time order | 5,094 |
 
-**4. Full Persistence**
-- H2 database for product metadata (survives restarts)
-- Groth16SetupCache / PlonkSetupCache for SRS + setup (startup: 60s → 14s)
-- Server-side pagination for large product lists
+**3. Locked passport record**
+- Minting checks both signatures, the exact mint map, the datum and the carbon proof (27.9 % of
+  the per-transaction CPU budget).
+- The passport never moves and its datum never changes; the auditor alone can revoke it.
+
+**4. Poseidon MPF registry**
+- Custom `PoseidonCommitmentScheme` for CCL's MPF, persisted in RocksDB; it stores
+  `productId → passport outref` only, never measurements.
+
+The earlier version hashed each measurement with a secret every manufacturer had to hold (a
+published constant in the demo), so any 16-bit measurement fell to brute force from the mint
+datum. See ADR-0009 F1 and D1.
 
 ### Demo Scenarios
 | Product | Carbon | Recycled | EU | Inspections | Result |
 |---------|--------|----------|----|-------------|--------|
-| BAT-SN001 (battery) | 7kg ✓ | 45% ✓ | DEU ✓ | 3/3 ✓ | **ALL COMPLIANT** → NFT minted |
-| BAT-SN003 (battery) | 65kg ✗ | 20% ✗ | DEU ✓ | 3/3 ✓ | **NOT COMPLIANT** → mint rejected |
+| BAT-SN001 (battery) | 7kg ✓ | 45% ✓ | DEU ✓ | 3/3 ✓ | **ALL COMPLIANT** → passport minted |
+| BAT-SN003 (battery) | 65kg ✗ | 20% ✗ | DEU ✓ | 3/3 ✓ | **NOT COMPLIANT** → no proof exists, no passport |
 | TEX-B2024-001 (100 t-shirts) | 3kg ✓ | 42% ✓ | FRA ✓ | — | **ALL COMPLIANT** |
 | TEX-B2024-003 (500 units) | 15kg ✓ | 5% ✗ | CHN ✗ | — | **NOT COMPLIANT** |
 
@@ -235,20 +252,18 @@ Manufacturer → Register products in Poseidon MPF (RocksDB, persistent)
 ### Architecture
 ```
 Exchange → Register accounts with balances (H2)
-         → Build Merkle Sum Tree (Poseidon, in-memory)
-         → Generate solvency proof (Groth16)
-         → Publish attestation on-chain (Plutus V3 validates proof)
-User     → Verify inclusion: "Is my 500 ADA balance in the tree?"
-         → Merkle path verification (off-chain)
+         → Build the liabilities tree: leaf = Poseidon(Poseidon(idTag, salt), balance), fresh salt per snapshot
+         → Generate solvency proof (Groth16): the leaves sum to the total, and reserves ≥ total
+         → Mint the period's attestation token (Plutus V3 verifies the proof at mint; locked datum)
+User     → Gets its salt and Merkle path, recomputes the root in the browser
+         → Compares it with the attestation read from the chain indexer, not the exchange's API
 ```
 
-### Key Innovation: Merkle Sum Tree
-Unlike a regular Merkle tree, each node carries a **cumulative sum**:
-```
-Standard Merkle:  Node = Poseidon(left_hash, right_hash)      [proves inclusion only]
-Sum Tree:         Node = Poseidon(left_hash, right_hash)       [proves inclusion]
-                  + sum = left_sum + right_sum                 [proves total]
-```
+### Key Innovation: proof at mint, salted leaves
+- The attestation exists only as a token whose minting verified a solvent statement, so a datum
+  alone proves nothing.
+- Each leaf absorbs a 252-bit salt, so a customer's path no longer reveals a neighbour's balance
+  (ADR-0009 D4). The circuit sums every leaf; internal nodes are plain Poseidon hashes.
 
 ### Circuit
 | Component | Details |
@@ -262,8 +277,8 @@ Sum Tree:         Node = Poseidon(left_hash, right_hash)       [proves inclusion
 | Scenario | Reserves | Liabilities | Result |
 |----------|----------|------------|--------|
 | Solvent | 10,000 ADA | 8,500 ADA | ✅ **SOLVENT** — Groth16 verified on-chain |
-| Insolvent | 5,000 ADA | 8,500 ADA | ❌ **INSOLVENT** — Plutus validator rejects |
-| User verify | — | — | ✅ Alice's 500 ADA correctly included |
+| Insolvent | 5,000 ADA | 8,500 ADA | ❌ **INSOLVENT** — no attestation can be minted |
+| User verify | — | — | ✅ Alice's 500 ADA included, checked against the on-chain root |
 
 ---
 
@@ -275,8 +290,8 @@ Each demo showcases a different Cardano UTXO pattern:
 |---------|---------|-------------|
 | **Sorted Linked List** | NFT, Voting | Each entry is a UTXO. Sorted insertion proves non-existence. Natural concurrency. |
 | **Stateless Spending** | Identity/KYC | Lock ADA → unlock with ZK proof. No state growth. Proof reusable. |
-| **Mint-if-Compliant** | DPP | Minting policy gates NFT creation. Groth16 verified on-chain. |
-| **Attestation UTXO** | Proof of Reserves | Periodic UTXO update with solvency proof. Anyone can read. |
+| **Locked record** | DPP | An auditor-co-signed passport minted with its proof into a script output that only the auditor can burn. |
+| **Attestation token** | Proof of Reserves | One token per period, minted only with a solvent proof, locked until the period ends. |
 
 ---
 
@@ -300,7 +315,9 @@ Each demo showcases a different Cardano UTXO pattern:
 | **Zero knowledge** | Groth16 proof reveals nothing about secret inputs |
 | **Soundness** | BLS12-381 pairing check — computationally infeasible to forge |
 | **On-chain enforcement** | Plutus V3 validators verify proofs — can't bypass by using a different UI |
-| **Anti-replay** | Nullifiers (NFT, Voting), stateless reuse (KYC), per-product minting (DPP) |
+| **Anti-replay** | Nullifiers (NFT, Voting), stateless reuse (KYC, by design), auditor co-signature once per product (DPP) |
+| **No guessable published values** | Every published hash or commitment of a small value (vote, measurement, balance, identifier) also absorbs ≥ 252 secret random bits (ADR-0009 I1) |
+| **Demo custody** | The demo servers hold users' keys; their APIs are the operator's view. Privacy is claimed against chain and mempool observers. |
 | **Persistence** | H2 + RocksDB + proof-system setup cache — survives restarts |
 | **Deterministic setup** | Same tau → same SRS → same policy IDs across restarts |
 

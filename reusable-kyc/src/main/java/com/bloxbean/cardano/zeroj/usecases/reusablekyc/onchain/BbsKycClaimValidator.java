@@ -1,17 +1,24 @@
 package com.bloxbean.cardano.zeroj.usecases.reusablekyc.onchain;
 
+import org.julclang.core.PlutusData;
+import org.julclang.core.types.JulcList;
 import org.julclang.ledger.Credential;
+import org.julclang.ledger.OutputDatum;
 import org.julclang.ledger.ScriptContext;
 import org.julclang.ledger.ScriptInfo;
+import org.julclang.ledger.TxInInfo;
 import org.julclang.ledger.TxOut;
 import org.julclang.ledger.TxOutRef;
+import org.julclang.ledger.Value;
 import org.julclang.stdlib.Builtins;
 import org.julclang.stdlib.annotation.Entrypoint;
 import org.julclang.stdlib.annotation.Param;
 import org.julclang.stdlib.annotation.SpendingValidator;
+import org.julclang.stdlib.lib.ContextsLib;
 import org.zeroj.onchain.julc.bbs.lib.BbsProofVerify;
 
 import java.math.BigInteger;
+import java.util.Optional;
 
 /**
  * The reusable-KYC on-chain claim gate (ADR-0003). A voucher UTxO locked at this validator is spent
@@ -24,16 +31,28 @@ import java.math.BigInteger;
  * precomputed {@code domain} scalar, and the two DSTs. These are deterministic for a given
  * issuer/schema/header.</p>
  *
- * <p><b>Datum</b> {@code (requiredCountry, requiredKycLevel, recipientPkh, refundAmount)} — the claim
- * policy written by whoever funds the voucher. <b>Redeemer</b> — the BBS proof + the two disclosed
- * messages + the presentation header.</p>
+ * <p><b>Datum</b> {@code (requiredCountry, requiredKycLevel, recipientPkh, refundAmount, funderPkh,
+ * maxFee)} — the claim policy written by whoever funds the voucher. <b>Redeemer</b> — the BBS proof +
+ * the two disclosed messages + the presentation header.</p>
  *
  * <p>Checks: (1) the presentation is bound to <b>this</b> voucher — the expected header is recomputed
  * here, not taken on trust; (2) the disclosed values match the voucher's policy; (3) the BBS
  * presentation verifies under the issuer's key (so the values really are issuer-signed and the
- * undisclosed attributes stay hidden); (4) an output pays {@code recipientPkh} at least
- * {@code refundAmount}. Spending the voucher UTxO is itself the nullifier — the eUTxO model allows it
- * exactly once, which is also what makes the derived header unique per claim.</p>
+ * undisclosed attributes stay hidden); (4) the voucher pays exactly what it owes (ADR-0009 D6).
+ * Spending the voucher UTxO is itself the nullifier — the eUTxO model allows it exactly once, which is
+ * also what makes the derived header unique per claim.</p>
+ *
+ * <p><b>Payout rule (D6).</b> Only outputs whose inline datum is exactly the spent voucher's
+ * {@code TxOutRef} count as its payments, so no output can pay two vouchers of tag-enforcing
+ * validators (this one and {@code OwnershipProofValidator}), whatever their stake credentials. The
+ * voucher's value must be ADA-only. Tagged outputs to the recipient's key credential sum to at least
+ * {@code refundAmount}, and tagged outputs to the funder's key credential to at least the remainder
+ * {@code voucherLovelace − refundAmount − maxFee} (none needed when it is 0). If funder and recipient
+ * are the same key, their combined tagged sum covers both. {@code refundAmount ≥ 0},
+ * {@code maxFee ≥ 0} and {@code refundAmount + maxFee ≤ voucherLovelace}. Whoever submits the claim
+ * can keep {@code maxFee} minus the actual fee (the fee slack), so the funder sets it close to the
+ * expected fee. Composing a voucher spend with a script that ignores tags is unsafe: that script may
+ * count the same outputs.</p>
  */
 @SpendingValidator
 public class BbsKycClaimValidator {
@@ -53,7 +72,8 @@ public class BbsKycClaimValidator {
 
     /** What this voucher requires and pays. */
     record ClaimDatum(byte[] requiredCountry, byte[] requiredKycLevel,
-                      byte[] recipientPkh, BigInteger refundAmount) {}
+                      byte[] recipientPkh, BigInteger refundAmount,
+                      byte[] funderPkh, BigInteger maxFee) {}
 
     /** One claim: the BBS proof, the disclosed messages (country, kycLevel), and the presentation header. */
     record ClaimRedeemer(byte[] abar, byte[] bbar, byte[] d,
@@ -83,12 +103,77 @@ public class BbsKycClaimValidator {
                 r.eHat(), r.r1Hat(), r.r3Hat(), r.mHat0(), r.mHat1(), r.mHat2(), r.c(),
                 r.msg2(), r.msg3(), r.ph());
 
-        // 3. The payout must go to the voucher's recipient — a relayer can't redirect or short-change it.
-        byte[] recipient = datum.recipientPkh();
-        BigInteger minAmount = datum.refundAmount();
-        boolean paid = ctx.txInfo().outputs().any(o -> paysAtLeast(o, recipient, minAmount));
+        // 3. The voucher pays exactly what it owes, through outputs tagged with its own outref: the
+        //    refund to the recipient and the remainder (less at most maxFee) back to the funder. A
+        //    relayer can neither redirect nor keep the funds, nor reuse one output for two vouchers.
+        boolean paid = voucherPaid(ctx, datum.recipientPkh(), datum.funderPkh(),
+                datum.refundAmount(), datum.maxFee());
 
-        return boundToThisClaim && policyOk && proofOk && paid;
+        return boundToThisClaim && policyOk && paid && proofOk;
+    }
+
+    /**
+     * The D6 payout rule for the voucher this script spends (see the class javadoc). Fails closed
+     * if the own input can't be found.
+     */
+    private static boolean voucherPaid(ScriptContext ctx, byte[] recipient, byte[] funder,
+                                       BigInteger refund, BigInteger maxFee) {
+        Optional<TxInInfo> ownInput = ContextsLib.findOwnInput(ctx);
+        if (ownInput.isEmpty()) return false;
+        TxInInfo voucher = ownInput.get();
+        Value value = voucher.resolved().value();
+        BigInteger lovelace = value.lovelaceOf();
+        if (outerEntryCount(value) != 1
+                || Builtins.lengthOfByteString(recipient) != 28
+                || Builtins.lengthOfByteString(funder) != 28
+                || refund.compareTo(BigInteger.ZERO) < 0
+                || maxFee.compareTo(BigInteger.ZERO) < 0
+                || refund.add(maxFee).compareTo(lovelace) > 0) {
+            return false;
+        }
+        BigInteger remainder = lovelace.subtract(refund).subtract(maxFee);
+        TxOutRef tag = voucher.outRef();
+        JulcList<TxOut> outputs = ctx.txInfo().outputs();
+        BigInteger toRecipient = taggedSum(outputs, recipient, tag);
+        if (Builtins.equalsByteString(recipient, funder)) {
+            return toRecipient.compareTo(refund.add(remainder)) >= 0;
+        }
+        return toRecipient.compareTo(refund) >= 0
+                && taggedSum(outputs, funder, tag).compareTo(remainder) >= 0;
+    }
+
+    /** Lovelace on outputs to {@code pkh}'s payment key credential whose inline datum is {@code tag}. */
+    private static BigInteger taggedSum(JulcList<TxOut> outputs, byte[] pkh, TxOutRef tag) {
+        BigInteger sum = BigInteger.ZERO;
+        for (TxOut output : outputs) {
+            if (credentialIs(output.address().credential(), pkh)
+                    && Builtins.equalsData(inlineDatum(output), tag)) {
+                sum = sum.add(output.value().lovelaceOf());
+            } else {
+                sum = sum;
+            }
+        }
+        return sum;
+    }
+
+    /** The inline datum; a missing or hashed datum yields an integer, which no outref tag equals. */
+    private static PlutusData inlineDatum(TxOut output) {
+        return switch (output.datum()) {
+            case OutputDatum.OutputDatumInline inline -> inline.datum();
+            case OutputDatum.OutputDatumHash ignored -> Builtins.iData(BigInteger.ZERO);
+            case OutputDatum.NoOutputDatum ignored -> Builtins.iData(BigInteger.ZERO);
+        };
+    }
+
+    /** The number of policies (lovelace included) in a value; 1 means ADA-only. */
+    private static int outerEntryCount(Value value) {
+        int count = 0;
+        PlutusData current = Builtins.unMapData(value);
+        while (!Builtins.nullList(current)) {
+            count = count + 1;
+            current = Builtins.tailList(current);
+        }
+        return count;
     }
 
     /**
@@ -106,12 +191,6 @@ public class BbsKycClaimValidator {
                             recipientPkh));
         }
         return Builtins.emptyByteString();   // not a spending script — cannot match a real header
-    }
-
-    /** True if the output goes to {@code recipient}'s payment key credential with lovelace >= {@code min}. */
-    private static boolean paysAtLeast(TxOut out, byte[] recipient, BigInteger min) {
-        return credentialIs(out.address().credential(), recipient)
-                && out.value().lovelaceOf().compareTo(min) >= 0;
     }
 
     /** True if {@code cred} is a payment key credential whose 28-byte hash equals {@code recipient}. */

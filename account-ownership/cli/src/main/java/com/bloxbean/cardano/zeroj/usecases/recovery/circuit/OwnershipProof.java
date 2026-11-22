@@ -20,7 +20,8 @@ import org.zeroj.circuit.lib.zk.ZkCip1852;
  * (big-endian, {@code Σ bᵢ·256^(27-i)}; 224 bits fit in the ~253-bit field), so the circuit has just
  * <b>2 public inputs</b> — {@code pkh} then {@code recipient} — instead of v3's 56 byte-per-input
  * elements. On-chain verification is O(#public inputs), so this drops the claim tx from ~13.4×10⁹ to
- * ~2.8×10⁹ CPU steps, back under the ~10×10⁹ per-tx limit (v3 byte-per-input did not fit mainnet).
+ * ~2.3×10⁹ CPU steps (measured in {@code OwnershipProofValidatorVmTest}), back under the ~10×10⁹
+ * per-tx limit (v3 byte-per-input did not fit mainnet).
  * The validator re-derives the same two scalars from the datum's {@code pkh} and the redeemer's
  * {@code recipient} bytes via {@code byteStringToInteger} (same big-endian order).</p>
  *
@@ -36,7 +37,8 @@ import org.zeroj.circuit.lib.zk.ZkCip1852;
  *   <li><b>{@code account} is a secret witness</b> (4 LE bytes; hardened in-circuit), joining
  *       {@code role}/{@code index}. The proof covers <em>any</em>
  *       {@code m/1852'/1815'/account'/role/index} address; the public {@code pkh} pins the exact one.
- *       The full path stays private.</li>
+ *       The full path stays private from chain observers; an xpub holder for the account can
+ *       still find which address a {@code pkh} is.</li>
  * </ul>
  *
  * <p>{@link ZkCip1852}; the underlying circuit is ~19M constraints. Provable

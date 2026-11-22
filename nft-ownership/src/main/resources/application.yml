@@ -11,12 +11,18 @@ cardano:
   yaci:
     base-url: http://localhost:8080/api/v1/
     admin-url: http://localhost:10000
-    # Test mnemonic for Yaci DevKit (DO NOT use in production)
+    # DevKit's well-known test mnemonic: the list operator (fees, seed, inserts), a public
+    # devnet role. The NFT custody wallet has its own random key in demo.data-dir.
     mnemonic: "test test test test test test test test test test test test test test test test test test test test test test test sauce"
 
   preprod:
     blockfrost-url: https://cardano-preprod.blockfrost.io/api/v0
     blockfrost-project-id: ${BLOCKFROST_PROJECT_ID:}
+
+demo:
+  # Holds the NFT custody wallet key and its deployment state (ADR-0009 D11).
+  # ./demo.sh nft --clean-cache removes both.
+  data-dir: ./data
 
 nullifier:
   mode: on-chain  # "on-chain" or "in-memory"
@@ -30,5 +36,6 @@ zk:
   # Must be >= ceil(log2(circuit_constraints))
   pot-power: 13
 
-  # Context ID for nullifier generation
+  # The event's context (1-31 bytes UTF-8). One event per run: it is a parameter of the
+  # event's ZK policy and of every registration signature.
   default-context: "nft-demo-v1"

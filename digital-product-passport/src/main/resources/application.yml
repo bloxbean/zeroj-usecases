@@ -5,7 +5,8 @@ spring:
   application:
     name: dpp-demo
   datasource:
-    url: jdbc:h2:file:./data/dpp-db;AUTO_SERVER=TRUE
+    # ADR-0009: a new database file; the pre-passport product database is not migrated.
+    url: jdbc:h2:file:./data/dpp-passport-db;AUTO_SERVER=TRUE
     driver-class-name: org.h2.Driver
   jpa:
     hibernate:
@@ -13,29 +14,28 @@ spring:
     show-sql: false
   h2:
     console:
-      enabled: true
-      path: /h2-console
+      enabled: false
 
 cardano:
   network: yaci
   yaci:
     base-url: http://localhost:8080/api/v1/
     admin-url: http://localhost:10000
+    # The funding wallet only: DevKit's well-known test mnemonic, a deliberately public devnet
+    # role. The manufacturer and auditor keys are random and live in dpp.data-dir (ADR-0009 D11).
     mnemonic: "test test test test test test test test test test test test test test test test test test test test test test test sauce"
   preprod:
     blockfrost-url: https://cardano-preprod.blockfrost.io/api/v0
     blockfrost-project-id: ${BLOCKFROST_PROJECT_ID:}
 
-zk:
-  # Country Merkle tree depth (4 = 16 countries max)
-  country-tree-depth: 4
-  # Inspector Merkle tree depth (3 = 8 inspectors max)
-  inspector-tree-depth: 3
-  pot-power: 12
-
 dpp:
-  # RocksDB path for MPF persistent trie
-  rocksdb-path: ./data/dpp-trie
-  # Compliance thresholds
+  # Demo data directory: the manufacturer and auditor keys and the deployment state (ADR-0009 D11)
+  data-dir: ./data
+  # RocksDB path of the MPF passport registry: productId -> passport outref, no values
+  registry-path: ./data/dpp-passport-registry
+  # The gated claim's threshold: a DppPassport parameter (carbon_kg <= 50)
   carbon-threshold-kg: 50
+  # Proved and verified off-chain (recycled_pct >= 30)
   recycled-threshold-pct: 30
+  # Fund the random manufacturer and auditor wallets through DevKit's top-up endpoint
+  topup-enabled: ${DEMO_TOPUP_ENABLED:true}

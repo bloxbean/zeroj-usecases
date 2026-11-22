@@ -10,6 +10,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.nio.file.Path;
+import java.security.SecureRandom;
+
 @Configuration
 public class CardanoConfig {
 
@@ -21,8 +24,8 @@ public class CardanoConfig {
     @Value("${cardano.yaci.base-url}")
     private String yaciBaseUrl;
 
-    @Value("${cardano.yaci.mnemonic}")
-    private String yaciMnemonic;
+    @Value("${demo.data-dir:./data}")
+    private String dataDir;
 
     @Value("${cardano.preprod.blockfrost-url:}")
     private String blockfrostUrl;
@@ -46,10 +49,15 @@ public class CardanoConfig {
         return new BFBackendService(baseUrl, projectId);
     }
 
+    /**
+     * The custodian's wallet (ADR-0009 D11): a random key persisted in the demo data directory,
+     * whose key hash is the attestation script's {@code custodianPkh}. Startup fails closed if the
+     * key is missing, corrupt or mismatched for an existing deployment.
+     */
     @Bean
-    public Account adminAccount() {
-        var account = new Account(Networks.testnet(), yaciMnemonic);
-        log.info("Demo admin address ({}): {}", network, account.baseAddress());
+    public Account custodianAccount() {
+        var account = CustodianKeyStore.loadOrCreate(Path.of(dataDir), Networks.testnet(), new SecureRandom());
+        log.info("Custodian address ({}): {}", network, account.baseAddress());
         return account;
     }
 

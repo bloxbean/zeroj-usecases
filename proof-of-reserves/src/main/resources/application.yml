@@ -5,7 +5,7 @@ spring:
   application:
     name: proof-of-reserves-demo
   datasource:
-    url: jdbc:h2:file:./data/reserves-db;AUTO_SERVER=TRUE
+    url: jdbc:h2:file:${demo.data-dir}/reserves-db;AUTO_SERVER=TRUE
     driver-class-name: org.h2.Driver
   jpa:
     hibernate:
@@ -21,7 +21,20 @@ cardano:
   yaci:
     base-url: http://localhost:8080/api/v1/
     admin-url: http://localhost:10000
-    mnemonic: "test test test test test test test test test test test test test test test test test test test test test test test sauce"
+
+demo:
+  # Demo data directory: H2 accounts, setup cache, the custodian key and the deployment state
+  # (ADR-0009 D11). ./demo.sh proof-of-reserves --clean-cache removes it.
+  data-dir: ./data
+  topup:
+    enabled: ${DEMO_TOPUP_ENABLED:true}
+
+reserves:
+  # Attestation period (ADR-0009 D4): fixed at the first deployment, kept in the deployment state.
+  period-ms: 300000
+  # The indexer the customer's browser reads (the same Yaci Store as cardano.yaci.base-url, at an
+  # address the browser can reach).
+  customer-indexer-url: http://localhost:8080/api/v1/
 
 zk:
   tree-depth: 4  # 2^4 = 16 accounts max per proof

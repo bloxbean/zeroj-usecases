@@ -73,7 +73,9 @@
     <h2><span class="step">3</span> Claim on-chain (Yaci DevKit)</h2>
     <p class="note" style="margin-top:0">A voucher is locked at the claim validator; spending it
        requires a BBS presentation the <b>ledger itself verifies</b>, disclosing
-       <span class="mono" id="onchainDisc">country, kycLevel</span>, paying the recipient.</p>
+       <span class="mono" id="onchainDisc">country, kycLevel</span>. The claim pays the refund to the
+       recipient and the remainder back to the funder, each in an output tagged with the voucher's
+       outref. The demo server holds every key, so this page is the operator's view.</p>
     <label>Recipient address (gets the refund)</label>
     <input type="text" id="recipient" placeholder="addr_test1...">
     <button id="walletBtn" class="sec">Generate a wallet</button>
@@ -170,6 +172,7 @@ $('claimBtn').onclick = async () => {
       + `<table>
            <tr><td>Claim tx</td><td class="mono">${esc(r.txHash)}</td></tr>
            <tr><td>Refund</td><td>${(r.refundLovelace/1e6)} ADA → <span class="mono">${esc(r.recipient)}</span></td></tr>
+           <tr><td>Remainder</td><td>${(r.funderRemainderLovelace/1e6)} ADA → funder (fee slack ≤ ${(r.maxFeeLovelace/1e6)} ADA)</td></tr>
            <tr><td>Validator</td><td class="mono">${esc(r.validatorAddress)}</td></tr>
          </table>`;
   } catch (e) { $('claimOut').innerHTML = `<span class="err">${esc(e.message)}</span>`; }

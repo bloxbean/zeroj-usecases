@@ -13,7 +13,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/credential")
-@CrossOrigin(origins = "*")
 public class CredentialController {
 
     private static final Logger log = LoggerFactory.getLogger(CredentialController.class);

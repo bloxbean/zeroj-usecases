@@ -30,6 +30,14 @@ repositories {
         url = uri("https://central.sonatype.com/repository/maven-snapshots")
         content { snapshotsOnly() }
     }
+    // ZeroJ commit snapshots published by ZeroJ's bloxbean-snapshot workflow.
+    maven {
+        url = uri("https://repo.bloxbean.org/maven/snapshots")
+        content {
+            snapshotsOnly()
+            includeGroup("org.zeroj")
+        }
+    }
     maven {
         url = uri("https://repo.spring.io/milestone")
     }
@@ -56,6 +64,8 @@ dependencies {
     // ZeroJ — circuit DSL, prover, verifier, on-chain
     implementation "org.zeroj:zeroj-circuit-dsl:${zerojVersion}"
     implementation "org.zeroj:zeroj-circuit-lib:${zerojVersion}"
+    implementation "org.zeroj:zeroj-circuit-annotation-api:${zerojVersion}"
+    annotationProcessor "org.zeroj:zeroj-circuit-annotation-processor:${zerojVersion}"
     implementation "org.zeroj:zeroj-crypto:${zerojVersion}"
     implementation "org.zeroj:zeroj-verifier-groth16:${zerojVersion}"
     implementation "org.zeroj:zeroj-onchain-julc:${zerojVersion}"
@@ -87,7 +97,9 @@ dependencies {
     testRuntimeOnly "org.julclang:julc-vm-java:${julcVersion}"
 }
 
+// Fork the compiler for the Julc and ZeroJ annotation processors on Java 25
 compileJava {
+    options.compilerArgs.add('-proc:full')
     options.fork = true
     options.forkOptions.jvmArgs = ['--enable-native-access=ALL-UNNAMED']
 }
@@ -103,7 +115,10 @@ bootRun {
 test {
     useJUnitPlatform()
     jvmArgs '--enable-native-access=ALL-UNNAMED'
+    maxHeapSize = '4g'
     systemProperty "zeroj.allowInsecureTrustedSetup", "true"
+    systemProperty "zeroj.yaci.e2e", System.getenv("ZEROJ_YACI_E2E") ?: ""
+    environment "ZEROJ_YACI_E2E", System.getenv("ZEROJ_YACI_E2E") ?: ""
     testLogging {
         events "passed", "failed", "skipped"
         showStandardStreams = true

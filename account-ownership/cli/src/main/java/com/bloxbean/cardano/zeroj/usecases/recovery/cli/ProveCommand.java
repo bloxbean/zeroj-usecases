@@ -72,7 +72,7 @@ public final class ProveCommand implements Callable<Integer> {
 
     @Option(names = "--recipient", required = true,
             description = "Recipient address (bech32) the refund must go to — bound into the proof "
-                    + "(v3). Its payment key hash becomes the second public input.")
+                    + "as its payment key hash, the second public input.")
     String recipient;
 
     @Option(names = "--mainnet", description = "Show the mainnet address for the target (default: testnet).")
@@ -89,7 +89,7 @@ public final class ProveCommand implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        // v3: account/role/index are all secret witnesses; the recipient is bound as a public input.
+        // account/role/index are all secret witnesses; the recipient is bound as a public input.
         if (account < 0 || role < 0 || index < 0) {
             System.err.println("--account, --role and --index must be non-negative soft indices (< 2^31).");
             return 2;

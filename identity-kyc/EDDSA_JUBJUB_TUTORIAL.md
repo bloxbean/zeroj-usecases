@@ -235,8 +235,11 @@ the values are.
   coordinates as parameters.
 - The script also pins `minAge` and `countryRoot`. Treating them only as
   public proof inputs would let a caller choose a weaker policy.
-- The seeded issuer key and single-party trusted setup are demo material.
-  Production requires protected key provisioning, reviewed ceremony
-  material, and external review of the complete protocol.
+- The issuer key is random and kept in the demo data directory
+  (`IssuerKeyStore`, ADR-0009 D11); it and the single-party trusted setup
+  are demo material. Production requires protected key provisioning,
+  reviewed ceremony material, and external review of the complete protocol.
+- The gate is stateless and replayable, and credentials are unsalted and
+  not bound to a holder (see the README's limitations).
 - The compatibility signer is suitable for isolated/demo issuance, not a
   network timing oracle.

@@ -66,9 +66,10 @@ range proof — the hybrid; see the ADR.)
   this repo's `BbsKycClaimVmTest` covers the full claim validator built on them.
 - ✅ **On-chain claim, live on Yaci DevKit** — `BbsKycClaimValidator` locks a voucher carrying the
   claim policy and releases it only when the holder's BBS presentation **verifies on the ledger**,
-  discloses exactly the required attributes, is bound to *this* voucher, and pays the voucher's
-  recipient. Spending the voucher once is the nullifier. (`BbsKycClaimVmTest` — accept + underpay /
-  wrong-payee / policy-mismatch / tampered-header / another-voucher's-presentation rejects;
+  discloses exactly the required attributes, is bound to *this* voucher, and pays exactly what the
+  voucher owes through outputs tagged with its outref ([below](#voucher-payouts)). Spending the
+  voucher once is the nullifier. (`BbsKycClaimVmTest` — accept paths, policy-mismatch /
+  tampered-header / another-voucher's-presentation rejects, and the payout mutations listed below;
   `ReusableKycYaciE2ETest` — a real lock + claim on a node.)
 - ✅ **Web UI + `demo.sh` + Docker** — `./demo.sh reusable-kyc --run` (port 8092): issue → pick which
   attributes to reveal → verify off-chain → claim on-chain.
@@ -108,7 +109,7 @@ Start a local [Yaci DevKit](https://github.com/bloxbean/yaci-devkit) (API on `:8
 ```
 
 It issues a credential, presents only `country`+`kycLevel`, locks a voucher at the claim validator,
-and spends it with the presentation — **the ledger verifies the BBS proof natively** (~2.47×10⁹ CPU,
+and spends it with the presentation — **the ledger verifies the BBS proof natively** (~2.49×10⁹ CPU,
 well within the per-tx budget) and the refund is paid to the recipient. The test prints the validator
 address and the claim tx hash.
 
@@ -116,6 +117,60 @@ address and the claim tx hash.
 > It adds a 25% safety margin (and at least 50,000 memory units) to absorb the small cost-model drift
 > previously observed between Julc and the ledger. Pass `evaluateLocally=false` to
 > `OnChainKycClaimService` to delegate evaluation to the backend/node instead.
+
+## Voucher payouts
+
+A voucher's datum is
+`(requiredCountry, requiredKycLevel, recipientPkh, refundAmount, funderPkh, maxFee)`. The demo locks
+10 ADA with a 2 ADA refund and `maxFee` = 2 ADA, so 6 ADA goes back to the funder. A claim
+([ADR-0009](../docs/adr/0009-privacy-and-binding-hardening-of-the-original-demos.md) D6) must meet these rules:
+
+- **Tagged payments.** Only outputs whose inline datum is exactly the spent voucher's `TxOutRef`
+  (`Constr 0 [txId, index]`) count as its payments. Each tag is unique, so one output can't pay two
+  vouchers, whatever their stake credentials. That also holds across the account-ownership voucher,
+  which enforces the same tags.
+- **ADA only.** The voucher holds only ADA.
+- **Refund.** Tagged outputs to the recipient's payment key sum to at least `refundAmount`.
+- **Remainder.** Tagged outputs to the funder's payment key sum to at least
+  `voucher − refundAmount − maxFee`. No funder output is needed when this is 0. If the funder and the
+  recipient are the same key, their combined tagged sum must cover both.
+- **Ranges.** `refundAmount ≥ 0`, `maxFee ≥ 0`, and `refundAmount + maxFee ≤ voucher`.
+
+`OnChainKycClaimService` checks the same terms before it locks a voucher. It also refuses a remainder
+that is positive but below the min-UTxO of its tagged output. The claim pays the remainder to the
+funder's enterprise address, so the transaction's change never merges with a tagged output.
+
+`BbsKycClaimVmTest` checks that each of these is refused:
+- a third party keeping the remainder;
+- two vouchers sharing outputs (same validator with different stake parts, or an account-ownership
+  voucher);
+- untagged or wrongly tagged payouts;
+- funder = recipient with only one obligation paid;
+- a non-ADA voucher;
+- out-of-range terms.
+
+It also checks that correct tagged payouts, a zero remainder and two separately paid vouchers are
+accepted.
+
+**Fee slack.** Whoever submits the claim can keep `maxFee` minus the actual fee. A funder should set
+`maxFee` close to the expected fee.
+
+**Composition.** The tag guarantee only holds between validators that enforce tags. Spending a
+voucher in the same transaction as a script that counts any paying output is unsafe, because that
+script may count the voucher's outputs too.
+
+## Limitations
+
+- **No holder binding.** The presentation proves that an issuer signed a credential with these
+  attributes, not that the presenter is its subject. Anyone holding a copy of the credential can
+  present it, and one KYC'd credential can satisfy many vouchers. BBS per-verifier pseudonyms are out
+  of scope.
+- **Demo trust model.** The demo server holds the issuer key, the holder's credential and the
+  funder's wallet. Its API is the operator's view. Privacy holds against chain and mempool
+  observers, not against the demo server. The voucher funder's wallet comes from DevKit's well-known
+  test mnemonic in `application.yml`. Anyone can sign as it on a devnet, and a real deployment must
+  replace it. Compose publishes the port on `127.0.0.1` only. Authenticated operator access is the
+  first change a production deployment needs.
 
 ---
 

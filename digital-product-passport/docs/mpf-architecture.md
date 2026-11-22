@@ -1,6 +1,12 @@
 # Merkle Patricia Forestry (MPF) Architecture for DPP
 
-How this demo uses Cardano's Merkle Patricia Forestry with ZK proofs for scalable Digital Product Passports.
+How this demo uses Cardano's Merkle Patricia Forestry with a Poseidon commitment scheme for its passport registry.
+
+> **ADR-0009 (D1, D10).** The registry stores `productId → passport outref` and nothing else.
+> Earlier versions stored each product's measurements in the trie, so anyone holding the trie or
+> a proof path could read them. Measurements now stay in the manufacturer's database, and the
+> claims are proved against auditor-issued Pedersen commitments in each passport's datum (see the
+> [README](../README.md)).
 
 ## Table of Contents
 
@@ -17,8 +23,8 @@ How this demo uses Cardano's Merkle Patricia Forestry with ZK proofs for scalabl
   - [PoseidonCommitmentScheme](#poseidoncommitmentscheme)
   - [How Branch Hashing Maps to Poseidon](#how-branch-hashing-maps-to-poseidon)
 - [Architecture: MPF + ZK Proofs for DPP](#architecture-mpf--zk-proofs-for-dpp)
-  - [Single Unified Trie](#single-unified-trie)
-  - [Proof Flow](#proof-flow)
+  - [The Passport Registry](#the-passport-registry)
+  - [What the Registry Proves](#what-the-registry-proves)
   - [Scaling to Millions of Products](#scaling-to-millions-of-products)
 - [On-Chain Anchoring](#on-chain-anchoring)
 - [Persistence and Restarts](#persistence-and-restarts)
@@ -222,87 +228,71 @@ Each Poseidon call takes two 32-byte inputs (field elements) and produces one 32
 
 ## Architecture: MPF + ZK Proofs for DPP
 
-### Single Unified Trie
+### The Passport Registry
 
-This demo uses a **single MPF trie with Poseidon** for all product DPP data:
+This demo uses **one MPF trie with Poseidon** as the public index of passports:
 
 ```
 MPF Trie (Poseidon, RocksDB)
-├── "product:BAT-SN001" → { carbon: 7.3, recycled: 45, country: 276, inspections: 3/3, ... }
-├── "product:BAT-SN002" → { carbon: 8.1, recycled: 38, country: 276, inspections: 3/3, ... }
-├── "batch:TEX-B2024-001" → { carbon_per_unit: 3.8, recycled: 42, country: 276, units: 100, ... }
-├── "batch:TEX-B2024-002" → { carbon_per_unit: 4.1, recycled: 35, country: 250, units: 200, ... }
-├── ... millions more ...
+├── "BAT-SN001"     → "<txHash>#0"     (the passport UTxO at the DppPassport address)
+├── "BAT-SN002"     → "<txHash>#0"
+├── "TEX-B2024-001" → "<txHash>#0"
+├── ... one entry per passport ...
 ```
 
-- **Persistent**: RocksDB backend survives restarts
-- **Scalable**: Patricia trie = O(key_length) lookups, O(log n) proof size
-- **Mutable**: Products can be added, updated, removed — root hash changes with each mutation
-- **ZK-compatible**: Poseidon root can be verified inside ZK circuits
+- **No values.** A key is a product id and a value is an outref. Carbon, recycled content,
+  origin and inspections are never in the trie; their commitments are in the passport datum,
+  and the values are the manufacturer's.
+- **Derived.** Every entry is a passport on chain; the trie is rebuilt from the product database
+  on start, and a revoked passport's entry is deleted.
+- **Persistent**: RocksDB backend survives restarts.
+- **ZK-compatible**: the Poseidon root can be verified inside a circuit.
 
-### Proof Flow
+### What the Registry Proves
 
-```
-1. Product data stored in MPF (Poseidon, RocksDB)
-   └── Root hash represents entire product database state
+The registry is a convenience index, not an authority. A reader never trusts it for a claim:
 
-2. When a compliance claim needs proving:
-   a. Extract MPF proof for the product: trie.getProofWire("product:BAT-SN001")
-   b. MPF proof = path from root to the product's leaf (branch siblings, extensions, leaf)
-   c. Generate ZK proof:
-      - Private inputs: product data (carbon, recycled%, country, etc.) + MPF proof path
-      - Public inputs: MPF root (on-chain), threshold (e.g., carbon < 50kg)
-      - Output: isCompliant (0 or 1)
-   d. ZK circuit verifies:
-      - MPF proof path reconstructs to the public root (data exists in the database)
-      - Product's claim meets the threshold (carbon < 50, recycled >= 30, etc.)
+1. It looks up the passport token `policyId ‖ productId` at the passport address on chain.
+2. It refuses the product if the policy's mint history shows more than one passport.
+3. It reads the commitments from the passport's inline datum, which the policy checked at mint
+   and which can never change (the only spend is the auditor's revocation, which burns the
+   token).
+4. It verifies each off-chain claim proof against `[σ, u, v, param]`, with `σ` from its own
+   schema registry.
 
-3. On-chain: MPF root anchored in datum/metadata
-   └── Verifier checks: ZK proof valid + root matches on-chain anchor
-```
+An MPF inclusion proof for `productId → outref` against an anchored root shows that the
+manufacturer listed that passport; it says nothing about the product's measurements.
 
 ### Scaling to Millions of Products
 
 MPF with RocksDB is designed for large-scale data:
 
-| Products | Trie depth | Proof size | Proof generation | ZK circuit cost (per claim) |
-|----------|-----------|-----------|-----------------|---------------------------|
-| 1,000 | ~8 levels | ~512 bytes | <1ms | ~2,000 constraints |
-| 100,000 | ~12 levels | ~768 bytes | <1ms | ~3,000 constraints |
-| 1,000,000 | ~16 levels | ~1 KB | <2ms | ~4,000 constraints |
-| 10,000,000 | ~20 levels | ~1.3 KB | <3ms | ~5,000 constraints |
+| Products | Trie depth | Proof size | Proof generation |
+|----------|-----------|-----------|-----------------|
+| 1,000 | ~8 levels | ~512 bytes | <1ms |
+| 100,000 | ~12 levels | ~768 bytes | <1ms |
+| 1,000,000 | ~16 levels | ~1 KB | <2ms |
+| 10,000,000 | ~20 levels | ~1.3 KB | <3ms |
 
-Note: MPF depth depends on key distribution, not just count. Pre-hashed keys (64 nibbles) ensure uniform distribution. The ZK circuit cost grows linearly with proof depth (each branch level = ~15 Poseidon hashes for siblings + 1 for the branch itself).
+Note: MPF depth depends on key distribution, not just count. Pre-hashed keys (64 nibbles) ensure uniform distribution.
 
 ## On-Chain Anchoring
 
-The MPF root hash is anchored on-chain as a public reference:
-
-```
-On-chain UTXO:
-  Address: DPP registry script
-  Datum: {
-    mpf_root: <32-byte Poseidon MPF root>,
-    last_updated: <slot>,
-    product_count: 1000000
-  }
-```
-
-This root commits to the **entire product database**. Any change (add/remove/update a product) produces a new root. The on-chain root is updated periodically (e.g., every epoch or after N changes).
-
-ZK proofs reference this root as a public input. The verifier checks that the proof was generated against the currently anchored root.
+`POST /api/dpp/anchor` publishes the registry root in the metadata (label 7270) of a funding-wallet
+transaction. The root commits to the set of `(productId, outref)` pairs at that moment. It is a
+public reference for the index only; each passport stands on its own on chain.
 
 ## Persistence and Restarts
 
 ```java
 // First startup: create trie with Poseidon
-var nodeStore = new RocksDbNodeStore("/data/dpp-trie");
+var nodeStore = new RocksDbNodeStore("./data/dpp-passport-registry");
 var hashFn = PoseidonHashFunction.INSTANCE;
 var commitment = new PoseidonCommitmentScheme();
 var trie = new MpfTrie(nodeStore, hashFn, null, commitment);
 
-// Add products
-trie.put("product:BAT-SN001".getBytes(), dppData);
+// Record a passport: product id -> outref
+trie.put("BAT-SN001".getBytes(), "<txHash>#0".getBytes());
 byte[] root = trie.getRootHash();  // Poseidon root
 
 // --- App restarts ---
@@ -311,45 +301,41 @@ byte[] root = trie.getRootHash();  // Poseidon root
 var trie = new MpfTrie(nodeStore, hashFn, savedRoot, commitment);
 
 // All data is still there (RocksDB persisted)
-byte[] data = trie.get("product:BAT-SN001".getBytes());  // ✓ works
+byte[] outref = trie.get("BAT-SN001".getBytes());  // ✓ works
 
-// Add more products to the SAME trie
-trie.put("product:BAT-SN002".getBytes(), newDppData);
+// Add more passports to the SAME trie
+trie.put("BAT-SN002".getBytes(), "<txHash>#0".getBytes());
 byte[] newRoot = trie.getRootHash();  // Updated root
 ```
 
 Key behaviors:
 - **RocksDB** persists all trie nodes to disk
 - **Root hash** must be saved (e.g., on-chain or in config) to reopen the trie
-- **Same trie** can grow indefinitely — add millions of products over time
-- **Batches and individual products** coexist in the same trie (different key prefixes)
+- **Same trie** can grow indefinitely — add millions of passports over time
+- **Batches and individual products** coexist in the same trie (one key per product or batch id)
+- The demo does not save the root: it rebuilds the registry from the product database on start
 
 ## Cost Model
 
 ### On-Chain Costs
 
-| Operation | Cost | Frequency |
-|-----------|------|-----------|
-| Anchor MPF root update | ~0.3 ADA | Per batch of changes (e.g., daily) |
-| Mint product NFT | ~0.5 ADA | Per product or per batch |
-| Submit ZK compliance proof | ~0.3 ADA | Per claim per product (or per batch) |
-| Consumer verification | Free | Off-chain proof check |
+| Operation | Script budget (Julc VM) | Frequency |
+|-----------|------------------------|-----------|
+| Mint a passport (Groth16 verification of the carbon claim) | 27.9% CPU, 8.4% memory of the per-transaction limits | Per product or per batch |
+| Revoke (auditor) | 1.5% CPU, 3.4% memory | Rare |
+| Anchor the registry root | none (plain transaction) | Per batch of changes |
+| Reader verification of off-chain claims | free | Off-chain |
 
 ### Per-Product vs Per-Batch
 
-| Pattern | Products | ZK proofs | On-chain cost | Cost per unit |
-|---------|----------|-----------|---------------|---------------|
-| Per-product NFT + 3 proofs | 1 | 3 | ~1.5 ADA | ~1.5 ADA |
-| Batch NFT (100 units) + 3 proofs | 100 | 3 | ~1.5 ADA | ~0.015 ADA |
-| Batch NFT (1000 units) + 3 proofs | 1000 | 3 | ~1.5 ADA | ~0.0015 ADA |
+One passport covers one product id: a single battery, or a whole textile batch whose claims the
+auditor measured once. The on-chain cost is per passport, so per unit it falls with the batch size.
 
 ### MPF Storage Costs
 
-| Products | RocksDB size (est.) | Memory footprint |
+| Passports | RocksDB size (est.) | Memory footprint |
 |----------|-------------------|-----------------|
-| 10,000 | ~50 MB | ~20 MB cache |
-| 100,000 | ~500 MB | ~50 MB cache |
-| 1,000,000 | ~5 GB | ~100 MB cache |
-| 10,000,000 | ~50 GB | ~200 MB cache |
+| 10,000 | ~10 MB | ~20 MB cache |
+| 1,000,000 | ~1 GB | ~100 MB cache |
 
 RocksDB handles the heavy lifting — only hot nodes are cached in memory.
