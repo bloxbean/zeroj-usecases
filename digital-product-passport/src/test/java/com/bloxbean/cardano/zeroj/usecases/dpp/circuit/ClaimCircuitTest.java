@@ -138,8 +138,14 @@ class ClaimCircuitTest {
         originInputs.put("country", List.of(BigInteger.valueOf(276).add(JubjubCurve.SUBGROUP_ORDER)));
         assertViolation(() -> witness(circuits.circuit(Claim.ORIGIN).circuit(), originInputs));
         var insp = ClaimOpening.fresh(Claim.INSPECTIONS, 11, 1000, 12, 2000, 13, 3000);
-        assertViolation(() -> witness(circuits.circuit(Claim.INSPECTIONS).circuit(), DppCircuits.inspectionInputs(insp, ApprovedSets.INSPECTORS)
-                .times(2, BigInteger.valueOf(3000).add(JubjubCurve.SUBGROUP_ORDER)).toWitnessMap()));
+        BigInteger aliasedTime = BigInteger.valueOf(3000).add(JubjubCurve.SUBGROUP_ORDER);
+        // The typed builder already refuses a time outside its declared 32-bit range...
+        assertThrows(IllegalArgumentException.class,
+                () -> DppCircuits.inspectionInputs(insp, ApprovedSets.INSPECTORS).times(2, aliasedTime));
+        // ...and the circuit refuses it too when a prover bypasses the builder.
+        Map<String, List<BigInteger>> inspInputs = new HashMap<>(DppCircuits.inspectionInputs(insp, ApprovedSets.INSPECTORS).toWitnessMap());
+        inspInputs.put("time_2", List.of(aliasedTime));
+        assertViolation(() -> witness(circuits.circuit(Claim.INSPECTIONS).circuit(), inspInputs));
     }
 
     @Test

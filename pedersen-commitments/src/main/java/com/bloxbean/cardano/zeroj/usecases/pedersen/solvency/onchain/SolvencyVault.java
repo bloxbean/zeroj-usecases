@@ -252,10 +252,13 @@ public class SolvencyVault {
     }
 
     private static PlutusData inlineDatum(TxOut output) {
+        // One PlutusData-typed value for both non-inline arms: JuLC 0.1.0-pre22 rejects switch arms
+        // of different types (JULC0012). Script behaviour is unchanged.
+        PlutusData none = Builtins.iData(BigInteger.ZERO);
         return switch (output.datum()) {
             case OutputDatum.OutputDatumInline inline -> inline.datum();
-            case OutputDatum.OutputDatumHash ignored -> Builtins.iData(BigInteger.ZERO);
-            case OutputDatum.NoOutputDatum ignored -> Builtins.iData(BigInteger.ZERO);
+            case OutputDatum.OutputDatumHash ignored -> none;
+            case OutputDatum.NoOutputDatum ignored -> none;
         };
     }
 

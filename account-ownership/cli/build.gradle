@@ -35,9 +35,9 @@ repositories {
     maven { url = uri("https://repo.spring.io/milestone") }
 }
 
-def zerojVersion = ver('zerojVersion', '0.1.0-pre13')
-def julcVersion  = ver('julcVersion', '0.1.0-pre18')
-def cclVersion   = ver('cclVersion', '0.8.0-pre5')
+def zerojVersion = ver('zerojVersion', '0.1.0-pre14')
+def julcVersion  = ver('julcVersion', '0.1.0-pre22')
+def cclVersion   = ver('cclVersion', '0.8.0-pre8')
 
 dependencies {
     // ZeroJ ZK: circuit DSL + gadgets, prover, on-chain julc verifier, blst prover backend.
